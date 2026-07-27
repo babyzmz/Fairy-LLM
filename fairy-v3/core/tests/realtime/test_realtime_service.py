@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from sqlalchemy import inspect
 
 from fairy_core.domain.errors import InvalidTransitionError, VersionConflictError
 from fairy_core.persistence import create_sqlite_core_engine
+from fairy_core.realtime.repository import SqlAlchemyRealtimeRepository
 from fairy_core.transports.stdio import build_local_service
+from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 
 
 def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
@@ -157,6 +160,77 @@ def test_voice_start_links_a_scratch_conversation(tmp_path) -> None:
         )
         assert other["conversation_id"] is not None
         assert other["conversation_id"] != started["conversation_id"]
+    finally:
+        service.close()
+
+
+def test_voice_start_rolls_back_scratch_state_when_session_save_fails(
+    tmp_path, monkeypatch
+) -> None:
+    def fail_session_save(self, session):
+        raise RuntimeError("injected realtime session failure")
+
+    monkeypatch.setattr(
+        SqlAlchemyRealtimeRepository,
+        "add_session",
+        fail_session_save,
+    )
+    service = build_local_service(tmp_path)
+    try:
+        with pytest.raises(RuntimeError, match="injected realtime session failure"):
+            service.invoke(
+                "realtime.sessions.start",
+                {
+                    "device_id": "desktop-1",
+                    "provider": "auto",
+                    "locale": "en-AU",
+                    "microphone_consent": True,
+                    "screen_consent": True,
+                    "game_audio_consent": False,
+                    "idempotency_key": "voice-session-failure",
+                },
+            )
+
+        assert service.invoke("conversations.list", {})["items"] == []
+        assert service.invoke("realtime.sessions.list", {})["items"] == []
+        _assert_no_scratch_artifacts(tmp_path)
+    finally:
+        service.close()
+
+
+def test_voice_start_rolls_back_scratch_state_when_workspace_creation_fails(
+    tmp_path, monkeypatch
+) -> None:
+    original_create = FileSystemWorkspaceProvisioner.create_initial_version
+
+    def fail_after_workspace_creation(self, project_id, version_id, *, source=None):
+        original_create(self, project_id, version_id, source=source)
+        raise RuntimeError("injected workspace creation failure")
+
+    monkeypatch.setattr(
+        FileSystemWorkspaceProvisioner,
+        "create_initial_version",
+        fail_after_workspace_creation,
+    )
+    service = build_local_service(tmp_path)
+    try:
+        with pytest.raises(RuntimeError, match="injected workspace creation failure"):
+            service.invoke(
+                "realtime.sessions.start",
+                {
+                    "device_id": "desktop-1",
+                    "provider": "auto",
+                    "locale": "en-AU",
+                    "microphone_consent": True,
+                    "screen_consent": True,
+                    "game_audio_consent": False,
+                    "idempotency_key": "voice-workspace-failure",
+                },
+            )
+
+        assert service.invoke("conversations.list", {})["items"] == []
+        assert service.invoke("realtime.sessions.list", {})["items"] == []
+        _assert_no_scratch_artifacts(tmp_path)
     finally:
         service.close()
 
@@ -331,3 +405,23 @@ def test_realtime_persistence_has_no_raw_context_columns(tmp_path) -> None:
         assert memory_columns.isdisjoint(forbidden)
     finally:
         engine.dispose()
+
+
+def _assert_no_scratch_artifacts(data_dir: Path) -> None:
+    engine = create_sqlite_core_engine(data_dir / "core.db")
+    try:
+        with engine.connect() as connection:
+            for table in (
+                "core_conversations",
+                "core_workspaces",
+                "core_versions",
+                "core_realtime_sessions",
+            ):
+                count = connection.exec_driver_sql(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).scalar_one()
+                assert count == 0, table
+    finally:
+        engine.dispose()
+    projects_root = data_dir / "workspaces" / "projects"
+    assert not projects_root.exists() or not any(projects_root.iterdir())

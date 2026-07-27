@@ -72,7 +72,7 @@ from fairy_core.domain.execution import (
     PreviewStatus,
     RuntimeStatus,
 )
-from fairy_core.domain.models import TaskStatus, WorkspaceType
+from fairy_core.domain.models import TaskStatus
 from fairy_core.execution.application import (
     ProjectExecutionApplication,
     ProjectExecutionToolExecutor,
@@ -308,9 +308,10 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         self._turn_trace_runtime = TurnTraceRuntime(unit_of_work_factory)
         self._realtime_service = RealtimeService(
             unit_of_work_factory,
-            conversation_factory=lambda: application.create_conversation(
-                project_id=None, workspace_type=WorkspaceType.CHAT_SCRATCH
+            scratch_conversation_factory=(
+                application.create_scratch_conversation_in_unit_of_work
             ),
+            scratch_conversation_cleanup=application.purge_scratch_conversation,
         )
         self._browser_service = browser_service
         self._execution_planning = application.execution_planning

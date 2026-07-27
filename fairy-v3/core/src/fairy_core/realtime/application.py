@@ -9,7 +9,7 @@ from fairy_core.contracts.realtime import (
     RealtimeTranscriptAppendInput,
 )
 from fairy_core.domain.errors import InvalidTransitionError, VersionConflictError
-from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
+from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.realtime.models import (
     GameMemoryDigest,
     RealtimeMemoryMode,
@@ -31,6 +31,16 @@ class RealtimeApplication:
         self._unit_of_work_factory = unit_of_work_factory
 
     def start(self, request: RealtimeSessionStartInput) -> RealtimeSession:
+        with self._unit_of_work_factory() as unit_of_work:
+            saved = self.start_in_unit_of_work(request, unit_of_work)
+            unit_of_work.commit()
+            return saved
+
+    def start_in_unit_of_work(
+        self,
+        request: RealtimeSessionStartInput,
+        unit_of_work: CoreUnitOfWork,
+    ) -> RealtimeSession:
         provider = _resolve_provider(request.provider, request.locale)
         candidate = RealtimeSession.create(
             device_id=request.device_id,
@@ -44,10 +54,7 @@ class RealtimeApplication:
             screen_consent=request.screen_consent,
             game_audio_consent=request.game_audio_consent,
         )
-        with self._unit_of_work_factory() as unit_of_work:
-            saved = unit_of_work.realtime.add_session(candidate)
-            unit_of_work.commit()
-            return saved
+        return unit_of_work.realtime.add_session(candidate)
 
     def get(self, session_id):
         with self._unit_of_work_factory() as unit_of_work:
@@ -55,10 +62,6 @@ class RealtimeApplication:
         if session is None:
             raise KeyError(f"realtime session not found: {session_id}")
         return session
-
-    def find_session_by_idempotency_key(self, key: str) -> RealtimeSession | None:
-        with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.realtime.get_session_by_idempotency_key(key)
 
     def list(self, *, limit: int) -> tuple[RealtimeSession, ...]:
         with self._unit_of_work_factory() as unit_of_work:

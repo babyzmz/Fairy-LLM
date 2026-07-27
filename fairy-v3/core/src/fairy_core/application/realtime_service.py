@@ -18,7 +18,7 @@ from fairy_core.contracts.realtime import (
     RealtimeTranscriptAppendInput,
     RealtimeTranscriptListInput,
 )
-from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
+from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.realtime.application import RealtimeApplication
 
 Handler = Callable[[BaseModel], Any]
@@ -29,10 +29,19 @@ class RealtimeService:
         self,
         unit_of_work_factory: CoreUnitOfWorkFactory,
         *,
-        conversation_factory: Callable[[], Any] | None = None,
+        scratch_conversation_factory: Callable[[CoreUnitOfWork], Any] | None = None,
+        scratch_conversation_cleanup: Callable[[Any], None] | None = None,
     ) -> None:
+        if (scratch_conversation_factory is None) != (
+            scratch_conversation_cleanup is None
+        ):
+            raise ValueError(
+                "scratch conversation factory and cleanup must be configured together"
+            )
+        self._unit_of_work_factory = unit_of_work_factory
         self._application = RealtimeApplication(unit_of_work_factory)
-        self._conversation_factory = conversation_factory
+        self._scratch_conversation_factory = scratch_conversation_factory
+        self._scratch_conversation_cleanup = scratch_conversation_cleanup
         self.handlers: Mapping[str, Handler] = MappingProxyType(
             {
                 "realtime.sessions.start": self.start,
@@ -50,16 +59,38 @@ class RealtimeService:
 
     def start(self, request: BaseModel):
         validated = cast(RealtimeSessionStartInput, request)
-        if validated.conversation_id is None and self._conversation_factory is not None:
+        if (
+            validated.conversation_id is None
+            and self._scratch_conversation_factory is not None
+        ):
             # Link the voice session to a fresh scratch conversation so it appears
-            # in history. Captions stay ephemeral; only the association is saved.
-            # Return an idempotent replay unchanged so a retry never leaks an
-            # extra empty conversation.
-            existing = self._application.find_session_by_idempotency_key(validated.idempotency_key)
-            if existing is not None:
-                return existing
-            conversation = self._conversation_factory()
-            validated = validated.model_copy(update={"conversation_id": conversation.id})
+            # in history. Conversation, Workspace, Version, and Session share one
+            # transaction; the new filesystem workspace is compensated on failure.
+            conversation = None
+            try:
+                with self._unit_of_work_factory() as unit_of_work:
+                    existing = unit_of_work.realtime.get_session_by_idempotency_key(
+                        validated.idempotency_key
+                    )
+                    if existing is not None:
+                        return existing
+                    conversation = self._scratch_conversation_factory(unit_of_work)
+                    linked = validated.model_copy(
+                        update={"conversation_id": conversation.id}
+                    )
+                    started = self._application.start_in_unit_of_work(
+                        linked,
+                        unit_of_work,
+                    )
+                    unit_of_work.commit()
+                    return started
+            except BaseException:
+                if (
+                    conversation is not None
+                    and self._scratch_conversation_cleanup is not None
+                ):
+                    self._scratch_conversation_cleanup(conversation)
+                raise
         return self._application.start(validated)
 
     def get(self, request: BaseModel):

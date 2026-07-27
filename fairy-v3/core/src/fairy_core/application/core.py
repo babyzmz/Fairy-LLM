@@ -64,7 +64,7 @@ from fairy_core.execution.plans import (
     TaskStepKind,
     TaskStepStatus,
 )
-from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
+from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.workspace.index import ProjectIndexer
 from fairy_core.workspace.mutations import (
     decode_mutation,
@@ -275,48 +275,81 @@ class CoreApplication(CoreContextMixin, CoreSupportMixin):
         project_id: UUID | None,
         workspace_type: WorkspaceType,
     ) -> Conversation:
-        with self._transaction() as (unit_of_work, _commands):
-            base_version_id = None
-            if workspace_type is WorkspaceType.PROJECT_CHAT:
-                if project_id is None:
-                    raise ValueError("project_chat requires project_id")
-                project = self._require_project(unit_of_work.state, project_id)
-                base_version_id = project.active_version_id
-            conversation = Conversation.create(
-                project_id=project_id,
-                workspace_id=(project.workspace_id if project_id is not None else None),
-                workspace_type=workspace_type,
-                base_version_id=base_version_id,
-            )
-            if workspace_type is WorkspaceType.CHAT_SCRATCH:
-                assert conversation.workspace_id is not None
-                unit_of_work.state.save_conversation(conversation)
-                version_id = new_id()
-                root = self._workspaces.create_initial_version(
-                    conversation.workspace_id,
-                    version_id,
-                    source=None,
-                )
-                version = Version.create(
-                    version_id=version_id,
-                    project_id=None,
-                    workspace_id=conversation.workspace_id,
-                    source_conversation_id=conversation.id,
-                    source_task_id=None,
-                    parent_version_id=None,
-                    project_root=root,
-                    visibility=VersionVisibility.PROJECT_ACTIVE,
-                )
-                conversation.base_version_id = version.id
-                workspace = unit_of_work.state.get_workspace(conversation.workspace_id)
-                if workspace is None:
-                    workspace = Workspace.create(workspace_id=conversation.workspace_id)
-                workspace.accept_version(version.id, expected_revision=workspace.revision)
-                unit_of_work.state.save_workspace(workspace)
-                unit_of_work.state.save_version(version)
-            unit_of_work.state.save_conversation(conversation)
-            unit_of_work.commit()
+        scratch_conversation = None
+        try:
+            with self._transaction() as (unit_of_work, _commands):
+                if workspace_type is WorkspaceType.CHAT_SCRATCH:
+                    scratch_conversation = (
+                        self.create_scratch_conversation_in_unit_of_work(unit_of_work)
+                    )
+                    conversation = scratch_conversation
+                else:
+                    if project_id is None:
+                        raise ValueError("project_chat requires project_id")
+                    project = self._require_project(unit_of_work.state, project_id)
+                    conversation = Conversation.create(
+                        project_id=project_id,
+                        workspace_id=project.workspace_id,
+                        workspace_type=workspace_type,
+                        base_version_id=project.active_version_id,
+                    )
+                    unit_of_work.state.save_conversation(conversation)
+                unit_of_work.commit()
+        except BaseException:
+            if scratch_conversation is not None:
+                self.purge_scratch_conversation(scratch_conversation)
+            raise
         return conversation
+
+    def create_scratch_conversation_in_unit_of_work(
+        self,
+        unit_of_work: CoreUnitOfWork,
+    ) -> Conversation:
+        conversation = Conversation.create(
+            project_id=None,
+            workspace_id=None,
+            workspace_type=WorkspaceType.CHAT_SCRATCH,
+            base_version_id=None,
+        )
+        assert conversation.workspace_id is not None
+        try:
+            unit_of_work.state.save_conversation(conversation)
+            version_id = new_id()
+            root = self._workspaces.create_initial_version(
+                conversation.workspace_id,
+                version_id,
+                source=None,
+            )
+            version = Version.create(
+                version_id=version_id,
+                project_id=None,
+                workspace_id=conversation.workspace_id,
+                source_conversation_id=conversation.id,
+                source_task_id=None,
+                parent_version_id=None,
+                project_root=root,
+                visibility=VersionVisibility.PROJECT_ACTIVE,
+            )
+            conversation.base_version_id = version.id
+            workspace = unit_of_work.state.get_workspace(conversation.workspace_id)
+            if workspace is None:
+                workspace = Workspace.create(workspace_id=conversation.workspace_id)
+            workspace.accept_version(version.id, expected_revision=workspace.revision)
+            unit_of_work.state.save_workspace(workspace)
+            unit_of_work.state.save_version(version)
+            unit_of_work.state.save_conversation(conversation)
+            return conversation
+        except BaseException:
+            self._workspaces.purge_workspace(conversation.workspace_id)
+            raise
+
+    def purge_scratch_conversation(self, conversation: Conversation) -> None:
+        if (
+            conversation.workspace_type is not WorkspaceType.CHAT_SCRATCH
+            or conversation.workspace_id is None
+        ):
+            raise ValueError("only a scratch conversation workspace can be purged")
+        self._workspaces.purge_workspace(conversation.workspace_id)
 
     def create_task(self, request: TaskCreate) -> TaskContext:
         idempotency_key = normalize_idempotency_key(request.idempotency_key)
