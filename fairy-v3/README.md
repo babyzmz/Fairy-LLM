@@ -167,13 +167,26 @@ Run only the dependency and layer boundary gate with:
 uv run --project core python scripts/check_boundaries.py .
 ```
 
-Build the signed-ready Windows installer inputs with:
+Build the unsigned, signed-ready Windows x64 MSI inputs with:
 
 ```powershell
 cd desktop
 npm run tauri build
 ```
 
-This produces MSI and NSIS bundles containing the generated Core sidecar and
-pinned MinGit runtime. Signing credentials are deployment secrets and are not
-stored in the repository.
+This produces one MSI plus external cabinet media containing the generated
+Core sidecar, governed local runtimes, and pinned MinGit. MiniCPM-o model
+weights are downloaded separately and are never bundled in the installer.
+Signing credentials are deployment secrets and are not stored in the
+repository.
+
+Realtime Companion Beta release policy and local documents:
+
+- [Support matrix](docs/release/realtime-companion-beta-support.md)
+- [Privacy disclosure](docs/release/realtime-companion-beta-privacy.md)
+- [Troubleshooting](docs/release/realtime-companion-beta-troubleshooting.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
+
+Packaging success does not approve a public Beta release. The four-hour local
+soak, native recovery, reference-GPU performance, installer lifecycle, signing,
+and malware gates must all have passing evidence.
