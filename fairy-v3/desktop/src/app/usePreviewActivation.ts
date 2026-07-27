@@ -1,12 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { PreviewActivation, Task, Workspace } from "../core/client";
+import { coreErrorCode } from "./workspaceModelUtils";
 import type { WorkspaceClient } from "./workspaceTypes";
 
 const READY_HEARTBEAT_MS = 120_000;
 const STARTING_RETRY_MS = 2_000;
 const WAITING_RETRY_MS = 15_000;
 const ERROR_RETRY_MS = 8_000;
+const MAX_ERROR_ATTEMPTS = 3;
+
+const TERMINAL_ERROR_CODES = new Set([
+  "APPROVAL_REQUIRED",
+  "CAPABILITY_NOT_AVAILABLE",
+  "IDEMPOTENCY_CONFLICT",
+  "INVALID_PARAMS",
+  "INVALID_REQUEST",
+  "METHOD_NOT_FOUND",
+  "NOT_FOUND",
+  "PATH_IDENTITY_CHANGED",
+  "PATH_OUT_OF_SCOPE",
+  "PERMISSION_DENIED",
+  "SCOPE_MISMATCH",
+  "VALIDATION_ERROR",
+  "VERSION_CONFLICT",
+]);
 
 const pendingActivations = new Map<string, Promise<PreviewActivation>>();
 
@@ -22,6 +40,13 @@ interface PreviewActivationState {
   activation: PreviewActivation | null;
   loading: boolean;
   error: string | null;
+  retry(): void;
+}
+
+interface PreviewActivationFailure {
+  code: string | null;
+  message: string;
+  terminal: boolean;
 }
 
 export function usePreviewActivation({
@@ -40,10 +65,11 @@ export function usePreviewActivation({
   const [stateIdentity, setStateIdentity] = useState<string | null>(null);
   const [activation, setActivation] = useState<PreviewActivation | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<PreviewActivationFailure | null>(null);
   const generationRef = useRef(0);
   const activationRef = useRef<PreviewActivation | null>(null);
   const inFlightRef = useRef(false);
+  const errorAttemptsRef = useRef(0);
   const onActivatedRef = useRef(onActivated);
   onActivatedRef.current = onActivated;
 
@@ -60,7 +86,7 @@ export function usePreviewActivation({
       const generation = generationRef.current;
       inFlightRef.current = true;
       if (showLoading) setLoading(true);
-      setError(null);
+      setFailure(null);
       try {
         const request = {
           task_id: taskId,
@@ -72,11 +98,13 @@ export function usePreviewActivation({
         const result = await sharedActivation(identity, () => activatePreview(request));
         if (generation !== generationRef.current) return;
         activationRef.current = result;
+        errorAttemptsRef.current = 0;
         setActivation(result);
         onActivatedRef.current?.(result);
       } catch (reason) {
         if (generation !== generationRef.current) return;
-        setError(previewActivationError(reason));
+        errorAttemptsRef.current += 1;
+        setFailure(previewActivationFailure(reason));
       } finally {
         if (generation === generationRef.current) {
           inFlightRef.current = false;
@@ -87,13 +115,20 @@ export function usePreviewActivation({
     [activatePreview, identity, taskId, versionId, workspaceId, workspaceRevision],
   );
 
+  const retry = useCallback(() => {
+    errorAttemptsRef.current = 0;
+    setFailure(null);
+    void activate(true);
+  }, [activate]);
+
   useEffect(() => {
     generationRef.current += 1;
     setStateIdentity(identity);
     activationRef.current = null;
     inFlightRef.current = false;
+    errorAttemptsRef.current = 0;
     setActivation(null);
-    setError(null);
+    setFailure(null);
     setLoading(identity !== null);
     if (identity === null) return undefined;
     void activate(true);
@@ -109,23 +144,24 @@ export function usePreviewActivation({
 
     const schedule = () => {
       if (cancelled) return;
-      const delay = retryDelay(activationRef.current, error !== null);
+      const delay = retryDelay(
+        activationRef.current,
+        failure,
+        errorAttemptsRef.current,
+      );
       if (delay === null) return;
-      timeout = window.setTimeout(async () => {
-        await activate(false);
-        schedule();
-      }, delay);
+      timeout = window.setTimeout(() => void activate(false), delay);
     };
     schedule();
     return () => {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [activate, activation, error, identity]);
+  }, [activate, activation, failure, identity]);
 
   return stateIdentity === identity
-    ? { activation, loading, error }
-    : { activation: null, loading: identity !== null, error: null };
+    ? { activation, loading, error: failure?.message ?? null, retry }
+    : { activation: null, loading: identity !== null, error: null, retry };
 }
 
 function activationIdentity(
@@ -137,11 +173,16 @@ function activationIdentity(
   return [task.id, task.workspace_id, task.target_version_id, workspace.revision].join(":");
 }
 
-function retryDelay(activation: PreviewActivation | null, hasError: boolean): number | null {
-  // A thrown activation (no result yet) auto-recovers on a bounded delay instead
-  // of leaving the preview stuck on the first transient failure until the user
-  // reselects the task.
-  if (activation === null) return hasError ? ERROR_RETRY_MS : null;
+function retryDelay(
+  activation: PreviewActivation | null,
+  failure: PreviewActivationFailure | null,
+  errorAttempts: number,
+): number | null {
+  if (failure !== null) {
+    if (failure.terminal || errorAttempts >= MAX_ERROR_ATTEMPTS) return null;
+    return ERROR_RETRY_MS * 2 ** Math.max(0, errorAttempts - 1);
+  }
+  if (activation === null) return null;
   if (activation.outcome === "starting") return STARTING_RETRY_MS;
   if (activation.outcome === "waiting_for_slot") return WAITING_RETRY_MS;
   if (activation.outcome === "ready") return READY_HEARTBEAT_MS;
@@ -159,7 +200,13 @@ function sharedActivation(
   return activation;
 }
 
-function previewActivationError(reason: unknown): string {
-  if (reason instanceof Error && reason.message.trim() !== "") return reason.message;
-  return "Preview could not be started automatically.";
+function previewActivationFailure(reason: unknown): PreviewActivationFailure {
+  const code = coreErrorCode(reason);
+  return {
+    code,
+    message: reason instanceof Error && reason.message.trim() !== ""
+      ? reason.message
+      : "Preview could not be started automatically.",
+    terminal: code !== null && TERMINAL_ERROR_CODES.has(code),
+  };
 }

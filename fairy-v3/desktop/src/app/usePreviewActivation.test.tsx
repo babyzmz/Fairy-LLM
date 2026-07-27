@@ -71,6 +71,142 @@ describe("usePreviewActivation", () => {
     }
   });
 
+  it("stops after the initial activation and two automatic retries", async () => {
+    vi.useFakeTimers();
+    try {
+      const activate = vi.fn(async () => {
+        throw new Error("preview host is offline");
+      });
+      const hook = renderHook(() => usePreviewActivation({
+        client: previewClient(activate),
+        enabled: true,
+        task: task(firstTaskId),
+        workspace: workspace(4),
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
+      expect(activate).toHaveBeenCalledTimes(3);
+      expect(hook.result.current.error).toBe("preview host is offline");
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      expect(activate).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    "CAPABILITY_NOT_AVAILABLE",
+    "PERMISSION_DENIED",
+    "VALIDATION_ERROR",
+    "NOT_FOUND",
+    "VERSION_CONFLICT",
+  ])("does not retry terminal Core error %s", async (errorCode) => {
+    vi.useFakeTimers();
+    try {
+      const activate = vi.fn(async () => {
+        throw Object.assign(new Error(`terminal ${errorCode}`), { errorCode });
+      });
+      renderHook(() => usePreviewActivation({
+        client: previewClient(activate),
+        enabled: true,
+        task: task(firstTaskId),
+        workspace: workspace(4),
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      expect(activate).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets an explicit retry reset an exhausted transient budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const activate = vi.fn().mockRejectedValue(new Error("offline"));
+      const hook = renderHook(() => usePreviewActivation({
+        client: previewClient(activate),
+        enabled: true,
+        task: task(firstTaskId),
+        workspace: workspace(4),
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
+      expect(activate).toHaveBeenCalledTimes(3);
+
+      activate.mockResolvedValue(activation("ready", "vite"));
+      await act(async () => {
+        hook.result.current.retry();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(activate).toHaveBeenCalledTimes(4);
+      expect(hook.result.current.activation?.outcome).toBe("ready");
+      expect(hook.result.current.error).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resets the retry budget for a new activation identity", async () => {
+    vi.useFakeTimers();
+    try {
+      const activate = vi.fn(async (input: { task_id: string }) => {
+        if (input.task_id === firstTaskId) throw new Error("offline");
+        return activation("ready", "astro");
+      });
+      const hook = renderHook(
+        ({ selectedTask }: { selectedTask: Task }) => usePreviewActivation({
+          client: previewClient(activate as (input: never) => Promise<PreviewActivation>),
+          enabled: true,
+          task: selectedTask,
+          workspace: workspace(4),
+        }),
+        { initialProps: { selectedTask: task(firstTaskId) } },
+      );
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
+      expect(activate).toHaveBeenCalledTimes(3);
+
+      hook.rerender({ selectedTask: task(secondTaskId) });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(activate).toHaveBeenCalledTimes(4);
+      expect(hook.result.current.activation?.adapter).toBe("astro");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry after unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      const activate = vi.fn(async () => {
+        throw new Error("offline");
+      });
+      const hook = renderHook(() => usePreviewActivation({
+        client: previewClient(activate),
+        enabled: true,
+        task: task(firstTaskId),
+        workspace: workspace(4),
+      }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(activate).toHaveBeenCalledOnce();
+      hook.unmount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      expect(activate).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ignores a late activation result after switching conversations", async () => {
     const first = deferred<PreviewActivation>();
     const second = deferred<PreviewActivation>();
