@@ -207,6 +207,12 @@ export interface RealtimeWorkerSetInputInput {
   video: boolean;
 }
 
+export interface RealtimeWorkerSetPolicyInput {
+  session_id: string;
+  activity_profile: RealtimeWorkerStartInput["activity_profile"];
+  interaction_intensity: RealtimeWorkerStartInput["interaction_intensity"];
+}
+
 export interface RealtimeWorkerWakeInput {
   session_id: string;
 }
@@ -262,6 +268,7 @@ export interface CoreTransport {
   realtimeWorkerStop?(sessionId: string): Promise<RealtimeWorkerStatus>;
   realtimeWorkerToolResult?(input: RealtimeWorkerToolResultInput): Promise<void>;
   realtimeWorkerSetInput?(input: RealtimeWorkerSetInputInput): Promise<void>;
+  realtimeWorkerSetPolicy?(input: RealtimeWorkerSetPolicyInput): Promise<RealtimeWorkerStatus>;
   realtimeWorkerWake?(input: RealtimeWorkerWakeInput): Promise<RealtimeWorkerStatus>;
   realtimeWorkerPausePrivacy?(input: RealtimeWorkerWakeInput): Promise<RealtimeWorkerStatus>;
   realtimeWorkerResumePrivacy?(input: RealtimeWorkerWakeInput): Promise<RealtimeWorkerStatus>;
@@ -733,6 +740,12 @@ export class CoreClient {
       setInput: (input: RealtimeWorkerSetInputInput) => {
         if (!this.transport.realtimeWorkerSetInput) throw new Error("Realtime requires Fairy desktop");
         return this.transport.realtimeWorkerSetInput(input);
+      },
+      setPolicy: (input: RealtimeWorkerSetPolicyInput) => {
+        if (!this.transport.realtimeWorkerSetPolicy) {
+          throw new Error("Realtime requires Fairy desktop");
+        }
+        return this.transport.realtimeWorkerSetPolicy(input);
       },
       wake: (input: RealtimeWorkerWakeInput) => {
         if (!this.transport.realtimeWorkerWake) throw new Error("Realtime requires Fairy desktop");

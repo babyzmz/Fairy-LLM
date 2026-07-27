@@ -203,6 +203,26 @@ async function installCoreFixture(page: Page) {
       };
       const timestamp = "2026-07-11T00:00:00Z";
       const fixtureParams = new URLSearchParams(window.location.search);
+      const companionActive = fixtureParams.get("companionActive");
+      const companionSessionId = "0198f4de-0114-7000-8000-000000000030";
+      let companionPresenceState:
+        | "listening"
+        | "standby"
+        | "privacy_paused" =
+        companionActive === "standby" || companionActive === "duration"
+          ? "standby"
+          : "listening";
+      let companionStandbyReason: "inactivity" | "duration_limit" | null =
+        companionActive === "duration"
+          ? "duration_limit"
+          : companionActive === "standby"
+            ? "inactivity"
+            : null;
+      let companionRequestedProfile: "auto" | "game" | "focus" = "auto";
+      let companionEffectiveActivity: "game" | "focus" = "game";
+      let companionInteractionIntensity: "quiet" | "standard" | "active" =
+        "standard";
+      let companionProjectionSequence = 7;
       const initialTaskStatus =
         fixtureParams.get("taskStatus") === "previewing"
           ? "previewing"
@@ -1607,6 +1627,67 @@ async function installCoreFixture(page: Page) {
         error_code: null,
         public_error: null,
       });
+      const companionSession = {
+        id: companionSessionId,
+        conversation_id: null,
+        device_id: "0198f4de-0114-7000-8000-000000000031",
+        provider: "glm_realtime_flash",
+        model_id: "glm-realtime-flash",
+        voice_mode: "fairy",
+        memory_mode: "none",
+        microphone_consent: true,
+        screen_consent: true,
+        game_audio_consent: false,
+        status: "active",
+        audio_input_ms: 1_250,
+        audio_output_ms: 400,
+        video_frame_count: 8,
+        interruption_count: 1,
+        tool_call_count: 0,
+        last_error_code: null,
+        started_at: "2026-07-20T00:00:00Z",
+        ended_at: null,
+        revision: 2,
+      };
+      const companionWorkerStatus = () => {
+        const durationLimit = companionStandbyReason === "duration_limit";
+        return {
+          running: companionActive !== null,
+          session_id: companionActive === null ? null : companionSessionId,
+          segment_id: companionActive === null ? null : "segment-fixture-1",
+          context_epoch: companionActive === null ? null : 1,
+          backend: companionActive === null ? null : "cloud_live",
+          cloud_provider:
+            companionActive === null ? null : "glm_realtime_flash",
+          action_required: false,
+          presence_projection: companionActive === null
+            ? null
+            : {
+                session_id: companionSessionId,
+                segment_id: "segment-fixture-1",
+                context_epoch: 1,
+                sequence: companionProjectionSequence,
+                state: companionPresenceState,
+                level: null,
+                persona_digest: "a".repeat(64),
+                requested_activity_profile: companionRequestedProfile,
+                effective_activity: companionEffectiveActivity,
+                interaction_intensity: companionInteractionIntensity,
+                backend: "cloud_live",
+                cloud_provider: "glm_realtime_flash",
+                standby_reason: companionStandbyReason,
+                wake_available:
+                  companionPresenceState === "standby" && !durationLimit,
+                duration_extension_required:
+                  companionPresenceState === "standby" && durationLimit,
+              },
+          audio_input_ms: companionSession.audio_input_ms,
+          audio_output_ms: companionSession.audio_output_ms,
+          video_frame_count: companionSession.video_frame_count,
+          interruption_count: companionSession.interruption_count,
+          tool_call_count: companionSession.tool_call_count,
+        };
+      };
 
       const tauriWindow = window as unknown as {
         __TAURI_INTERNALS__: {
@@ -1794,20 +1875,59 @@ async function installCoreFixture(page: Page) {
               method: "realtime.worker.status",
               params: {},
             });
-            return {
-              running: false,
-              session_id: null,
-              segment_id: null,
-              context_epoch: null,
-              backend: null,
-              cloud_provider: null,
-              action_required: false,
-              audio_input_ms: 0,
-              audio_output_ms: 0,
-              video_frame_count: 0,
-              interruption_count: 0,
-              tool_call_count: 0,
+            return companionWorkerStatus();
+          }
+          if (command === "realtime_worker_set_policy") {
+            const input = args.input as {
+              activity_profile: "auto" | "game" | "focus";
+              interaction_intensity: "quiet" | "standard" | "active";
             };
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: command,
+              params: input as unknown as Record<string, unknown>,
+            });
+            companionRequestedProfile = input.activity_profile;
+            companionEffectiveActivity =
+              input.activity_profile === "focus" ? "focus" : "game";
+            companionInteractionIntensity = input.interaction_intensity;
+            companionProjectionSequence += 1;
+            return companionWorkerStatus();
+          }
+          if (command === "realtime_worker_wake") {
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: command,
+              params: args.input as Record<string, unknown>,
+            });
+            companionPresenceState = "listening";
+            companionStandbyReason = null;
+            companionProjectionSequence += 1;
+            return companionWorkerStatus();
+          }
+          if (command === "realtime_worker_extend") {
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: command,
+              params: args.input as Record<string, unknown>,
+            });
+            companionPresenceState = "listening";
+            companionStandbyReason = null;
+            companionProjectionSequence += 1;
+            return companionWorkerStatus();
+          }
+          if (
+            command === "realtime_worker_pause_privacy"
+            || command === "realtime_worker_resume_privacy"
+          ) {
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: command,
+              params: args.input as Record<string, unknown>,
+            });
+            companionPresenceState =
+              command === "realtime_worker_pause_privacy"
+                ? "privacy_paused"
+                : "listening";
+            companionStandbyReason = null;
+            companionProjectionSequence += 1;
+            return companionWorkerStatus();
           }
           if (command === "hide_companion_window") return null;
           if (command === "omni_model_status") {
@@ -1901,7 +2021,9 @@ async function installCoreFixture(page: Page) {
             return {
               jsonrpc: "2.0",
               id: request.id,
-              result: { items: [] },
+              result: {
+                items: companionActive === null ? [] : [companionSession],
+              },
             };
           }
           if (

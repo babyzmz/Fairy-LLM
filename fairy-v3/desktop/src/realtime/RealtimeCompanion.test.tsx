@@ -81,6 +81,14 @@ const presenceProjection = (
   state,
   level: null,
   persona_digest: "a".repeat(64),
+  requested_activity_profile: "auto",
+  effective_activity: "focus",
+  interaction_intensity: "standard",
+  backend: "cloud_live",
+  cloud_provider: "glm_realtime_flash",
+  standby_reason: state === "standby" ? "inactivity" : null,
+  wake_available: state === "standby",
+  duration_extension_required: false,
 });
 
 const backendPreview = async (input: {
@@ -319,6 +327,104 @@ describe("RealtimeCompanion", () => {
     expect(client.worker.stop).not.toHaveBeenCalled();
   });
 
+  it("keeps requested Auto, effective activity, intensity and policy changes native", async () => {
+    const activeSession = session("active", 2);
+    const initialProjection = {
+      ...presenceProjection("listening", 7),
+      type: undefined,
+      effective_activity: "game",
+    } as unknown as RealtimeWorkerStatus["presence_projection"];
+    const updatedProjection = {
+      ...presenceProjection("preparing", 8),
+      type: undefined,
+      effective_activity: "focus",
+      interaction_intensity: "active",
+    } as unknown as RealtimeWorkerStatus["presence_projection"];
+    const setPolicy = vi.fn(async () => ({
+      ...workerStatus(true),
+      presence_projection: updatedProjection,
+    }));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [activeSession] })),
+        get: vi.fn(async () => activeSession),
+        report: vi.fn(),
+      },
+      memories: { save: vi.fn() },
+      transcript: { append: vi.fn(), list: vi.fn(async () => ({ items: [] })) },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => ({
+          ...workerStatus(true),
+          presence_projection: initialProjection,
+        })),
+        setPolicy,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+
+    const profile = await screen.findByRole("combobox", { name: "Profile" });
+    const intensity = screen.getByRole("combobox", { name: "Intensity" });
+    expect((profile as HTMLSelectElement).value).toBe("auto");
+    expect((intensity as HTMLSelectElement).value).toBe("standard");
+    expect(screen.getByText("Proactive Game comments wait at least 45 seconds; direct replies stay immediate.")).not.toBeNull();
+
+    fireEvent.change(intensity, { target: { value: "active" } });
+    await waitFor(() => expect(setPolicy).toHaveBeenCalledWith({
+      session_id: activeSession.id,
+      activity_profile: "auto",
+      interaction_intensity: "active",
+    }));
+    expect(await screen.findByText(
+      "Proactive Focus comments wait at least 3 minutes; direct replies stay immediate.",
+    )).not.toBeNull();
+  });
+
+  it("uses native wake and duration-extension actions from standby projection", async () => {
+    const activeSession = session("active", 2);
+    const standbyProjection = {
+      ...presenceProjection("standby", 7),
+      type: undefined,
+    } as unknown as RealtimeWorkerStatus["presence_projection"];
+    const wake = vi.fn(async () => ({
+      ...workerStatus(true),
+      presence_projection: {
+        ...presenceProjection("preparing", 8),
+        type: undefined,
+        standby_reason: null,
+        wake_available: false,
+      } as unknown as RealtimeWorkerStatus["presence_projection"],
+    }));
+    const extend = vi.fn(async () => workerStatus(true));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [activeSession] })),
+        get: vi.fn(async () => activeSession),
+        report: vi.fn(),
+      },
+      memories: { save: vi.fn() },
+      transcript: { append: vi.fn(), list: vi.fn(async () => ({ items: [] })) },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => ({
+          ...workerStatus(true),
+          presence_projection: standbyProjection,
+        })),
+        wake,
+        extend,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Wake" }));
+    await waitFor(() => expect(wake).toHaveBeenCalledWith({
+      session_id: activeSession.id,
+    }));
+    expect(extend).not.toHaveBeenCalled();
+  });
+
   it("persists stable captions to the linked transcript, never into the usage report", async () => {
     const report = vi.fn(async (input: { status: RealtimeSession["status"] }) =>
       session(input.status, input.status === "active" ? 2 : 4));
@@ -474,20 +580,39 @@ describe("RealtimeCompanion", () => {
     }));
     expect(screen.getByText("Thinking")).not.toBeNull();
 
-    await act(async () => eventListener?.({
-      payload: presenceProjection("speaking", 3),
-    }));
+    const stale = presenceProjection("speaking", 3);
+    stale.effective_activity = "game";
+    await act(async () => eventListener?.({ payload: stale }));
     const drift = presenceProjection("speaking", 5);
     drift.persona_digest = "b".repeat(64);
     await act(async () => eventListener?.({ payload: drift }));
     expect(screen.getByText("Thinking")).not.toBeNull();
     expect(screen.queryByText("Fairy is speaking")).toBeNull();
+    expect(screen.getByText(
+      "Proactive Focus comments wait at least 8 minutes; direct replies stay immediate.",
+    )).not.toBeNull();
   });
 
   it("routes mute and privacy pause through their separate native controls", async () => {
     const setInput = vi.fn(async () => undefined);
-    const pausePrivacy = vi.fn(async () => workerStatus(true));
-    const resumePrivacy = vi.fn(async () => workerStatus(true));
+    const pausePrivacy = vi.fn(async () => ({
+      ...workerStatus(true),
+      presence_projection: {
+        ...presenceProjection("privacy_paused", 3),
+        type: undefined,
+        standby_reason: null,
+        wake_available: true,
+      } as unknown as RealtimeWorkerStatus["presence_projection"],
+    }));
+    const resumePrivacy = vi.fn(async () => ({
+      ...workerStatus(true),
+      presence_projection: {
+        ...presenceProjection("standby", 4),
+        type: undefined,
+        standby_reason: null,
+        wake_available: false,
+      } as unknown as RealtimeWorkerStatus["presence_projection"],
+    }));
     const client = {
       sessions: {
         list: vi.fn(async () => ({ items: [] })),

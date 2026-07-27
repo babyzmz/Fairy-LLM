@@ -50,6 +50,14 @@ describe("realtime presence channel", () => {
     state,
     level: null,
     persona_digest: "a".repeat(64),
+    requested_activity_profile: "auto",
+    effective_activity: "focus",
+    interaction_intensity: "standard",
+    backend: "cloud_live",
+    cloud_provider: "glm_realtime_flash",
+    standby_reason: state === "standby" ? "inactivity" : null,
+    wake_available: state === "standby",
+    duration_extension_required: false,
   });
 
   it("replays current state to a late subscriber", () => {

@@ -21,6 +21,14 @@ export interface RealtimePresenceProjection {
   state: RealtimePresenceState;
   level: number | null;
   persona_digest: string;
+  requested_activity_profile: "auto" | "game" | "focus";
+  effective_activity: "game" | "focus";
+  interaction_intensity: "quiet" | "standard" | "active";
+  backend: "local_mini_cpm_o45" | "cloud_live";
+  cloud_provider: "gemini_live" | "glm_realtime_flash" | "glm_realtime_air" | null;
+  standby_reason: "inactivity" | "duration_limit" | null;
+  wake_available: boolean;
+  duration_extension_required: boolean;
 }
 
 type RealtimePresenceMessage =
@@ -62,6 +70,16 @@ const validStates = new Set<RealtimePresenceState>([
   "resource_limited",
   "error",
 ]);
+const validProfiles = new Set(["auto", "game", "focus"]);
+const validEffectiveActivities = new Set(["game", "focus"]);
+const validIntensities = new Set(["quiet", "standard", "active"]);
+const validBackends = new Set(["local_mini_cpm_o45", "cloud_live"]);
+const validCloudProviders = new Set([
+  "gemini_live",
+  "glm_realtime_flash",
+  "glm_realtime_air",
+]);
+const validStandbyReasons = new Set(["inactivity", "duration_limit"]);
 
 export function createRealtimePresencePublisher(
   createPort: () => BroadcastPort | null = createBroadcastPort,
@@ -160,6 +178,30 @@ export function isPresenceProjection(
     )
     && typeof candidate.persona_digest === "string"
     && /^[0-9a-f]{64}$/.test(candidate.persona_digest)
+    && typeof candidate.requested_activity_profile === "string"
+    && validProfiles.has(candidate.requested_activity_profile)
+    && typeof candidate.effective_activity === "string"
+    && validEffectiveActivities.has(candidate.effective_activity)
+    && typeof candidate.interaction_intensity === "string"
+    && validIntensities.has(candidate.interaction_intensity)
+    && typeof candidate.backend === "string"
+    && validBackends.has(candidate.backend)
+    && (
+      candidate.cloud_provider === null
+      || (
+        typeof candidate.cloud_provider === "string"
+        && validCloudProviders.has(candidate.cloud_provider)
+      )
+    )
+    && (
+      candidate.standby_reason === null
+      || (
+        typeof candidate.standby_reason === "string"
+        && validStandbyReasons.has(candidate.standby_reason)
+      )
+    )
+    && typeof candidate.wake_available === "boolean"
+    && typeof candidate.duration_extension_required === "boolean"
   );
 }
 

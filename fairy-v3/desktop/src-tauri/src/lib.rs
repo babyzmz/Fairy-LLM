@@ -53,9 +53,9 @@ use realtime_backend_resolver::{
 };
 use realtime_worker::{
     bundled_realtime_launch, development_realtime_launch, RealtimeWorkerExtendInput,
-    RealtimeWorkerManager, RealtimeWorkerSetInputInput, RealtimeWorkerSpeechStateInput,
-    RealtimeWorkerStartInput, RealtimeWorkerStatus, RealtimeWorkerStopInput,
-    RealtimeWorkerToolResultInput, RealtimeWorkerWakeInput,
+    RealtimeWorkerManager, RealtimeWorkerSetInputInput, RealtimeWorkerSetPolicyInput,
+    RealtimeWorkerSpeechStateInput, RealtimeWorkerStartInput, RealtimeWorkerStatus,
+    RealtimeWorkerStopInput, RealtimeWorkerToolResultInput, RealtimeWorkerWakeInput,
 };
 use voice_worker::{
     bundled_voice_launch, development_voice_launch, prepared_realtime_session,
@@ -908,6 +908,20 @@ async fn realtime_worker_set_input(
     state
         .realtime
         .set_input(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn realtime_worker_set_policy(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerSetPolicyInput,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .realtime
+        .set_policy(&app, input)
         .map_err(|error| error.to_string())
 }
 
@@ -5347,6 +5361,7 @@ pub fn run() {
             realtime_worker_stop,
             realtime_worker_tool_result,
             realtime_worker_set_input,
+            realtime_worker_set_policy,
             realtime_worker_wake,
             realtime_worker_pause_privacy,
             realtime_worker_resume_privacy,

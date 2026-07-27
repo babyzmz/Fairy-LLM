@@ -193,6 +193,18 @@ fn main() {
                     active.command(RuntimeCommand::SetInput { microphone, video });
                 }
             }
+            HostCommand::SetProfile {
+                session_id,
+                activity_profile,
+                interaction_intensity: _,
+            } if active_identity
+                .as_ref()
+                .is_some_and(|identity| identity.session_id == session_id) =>
+            {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::SetProfile { activity_profile });
+                }
+            }
             HostCommand::Pause { session_id }
                 if active_identity
                     .as_ref()

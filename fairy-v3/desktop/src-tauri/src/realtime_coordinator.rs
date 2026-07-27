@@ -58,6 +58,21 @@ pub struct RealtimePresenceProjection {
     pub state: RealtimePresenceState,
     pub level: Option<u8>,
     pub persona_digest: String,
+    pub requested_activity_profile: RealtimeActivityProfile,
+    pub effective_activity: RealtimeActivityProfile,
+    pub interaction_intensity: RealtimeInteractionIntensity,
+    pub backend: RealtimeBackendKind,
+    pub cloud_provider: Option<RealtimeCloudProviderKind>,
+    pub standby_reason: Option<RealtimeStandbyReason>,
+    pub wake_available: bool,
+    pub duration_extension_required: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimeStandbyReason {
+    Inactivity,
+    DurationLimit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -139,8 +154,9 @@ pub enum RealtimeCoordinatorEvent {
         cloud_provider: Option<RealtimeCloudProviderKind>,
         persona_digest: String,
     },
-    SetProfile {
+    SetPolicy {
         profile: RealtimeActivityProfile,
+        interaction_intensity: RealtimeInteractionIntensity,
     },
     PausePrivacy,
     ResumePrivacy,
@@ -200,6 +216,7 @@ pub struct RealtimeCoordinatorState {
     last_activity_at_ms: u64,
     local_unload_requested: bool,
     duration_extension_required: bool,
+    standby_reason: Option<RealtimeStandbyReason>,
 }
 
 impl RealtimeCoordinatorState {
@@ -253,6 +270,7 @@ impl RealtimeCoordinatorState {
             last_activity_at_ms: 0,
             local_unload_requested: false,
             duration_extension_required: false,
+            standby_reason: None,
         })
     }
 
@@ -306,18 +324,26 @@ impl RealtimeCoordinatorState {
                 self.media_generation_enabled = true;
                 self.status = RealtimeCoordinatorStatus::Active;
                 self.local_unload_requested = false;
+                self.standby_reason = None;
                 self.set_authoritative_presence(RealtimePresenceState::Preparing, None)?;
                 Ok(())
             }
-            RealtimeCoordinatorEvent::SetProfile { profile } => {
+            RealtimeCoordinatorEvent::SetPolicy {
+                profile,
+                interaction_intensity,
+            } => {
                 self.require_active()?;
-                if profile == self.activity_profile {
+                if profile == self.activity_profile
+                    && interaction_intensity == self.interaction_intensity
+                {
                     return Ok(());
                 }
                 self.activity_profile = profile;
                 self.activity_classifier = RealtimeActivityClassifier::new(profile);
-                self.prepare_context_rotation(ContextRotationReason::ProfileChanged)
-                    .map(|_| ())
+                self.interaction_intensity = interaction_intensity;
+                self.prepare_context_rotation(ContextRotationReason::ProfileChanged)?;
+                self.set_authoritative_presence(RealtimePresenceState::Preparing, None)?;
+                Ok(())
             }
             RealtimeCoordinatorEvent::PausePrivacy => {
                 if !matches!(
@@ -330,6 +356,7 @@ impl RealtimeCoordinatorState {
                 self.media_generation_enabled = false;
                 self.pending_context_rotation = None;
                 self.pending_cloud_wake = None;
+                self.standby_reason = None;
                 self.set_authoritative_presence(RealtimePresenceState::PrivacyPaused, None)?;
                 Ok(())
             }
@@ -360,6 +387,7 @@ impl RealtimeCoordinatorState {
                 self.media_generation_enabled = false;
                 self.pending_context_rotation = None;
                 self.pending_cloud_wake = None;
+                self.standby_reason = None;
                 self.set_authoritative_presence(RealtimePresenceState::Idle, None)?;
                 Ok(())
             }
@@ -447,6 +475,7 @@ impl RealtimeCoordinatorState {
             self.action_required = true;
             self.status = RealtimeCoordinatorStatus::Standby;
             self.media_generation_enabled = false;
+            self.standby_reason = Some(RealtimeStandbyReason::DurationLimit);
             let _ = self.set_authoritative_presence(RealtimePresenceState::Standby, None);
             return vec![RealtimeCoordinatorAction::RequireDurationExtension];
         }
@@ -457,6 +486,7 @@ impl RealtimeCoordinatorState {
         if self.status == RealtimeCoordinatorStatus::Active && idle_ms >= STANDBY_AFTER_MS {
             self.status = RealtimeCoordinatorStatus::Standby;
             self.media_generation_enabled = false;
+            self.standby_reason = Some(RealtimeStandbyReason::Inactivity);
             self.local_unload_requested = false;
             let _ = self.set_authoritative_presence(RealtimePresenceState::Standby, None);
             return vec![match self.backend {
@@ -582,6 +612,7 @@ impl RealtimeCoordinatorState {
             }
             self.last_activity_at_ms = now_ms.max(self.last_activity_at_ms);
             self.local_unload_requested = false;
+            self.standby_reason = None;
         }
         self.media_generation_enabled = true;
         self.set_authoritative_presence(RealtimePresenceState::Standby, None)?;
@@ -620,6 +651,7 @@ impl RealtimeCoordinatorState {
         self.last_activity_at_ms = now_ms.max(self.last_activity_at_ms);
         self.media_generation_enabled = true;
         self.local_unload_requested = false;
+        self.standby_reason = None;
         self.set_authoritative_presence(RealtimePresenceState::Standby, None)?;
         Ok(())
     }
@@ -629,6 +661,7 @@ impl RealtimeCoordinatorState {
         self.pending_cloud_wake = None;
         self.action_required = true;
         self.media_generation_enabled = false;
+        self.standby_reason = None;
         self.set_authoritative_presence(RealtimePresenceState::Error, None)?;
         Ok(())
     }
@@ -666,6 +699,17 @@ impl RealtimeCoordinatorState {
             state: self.presence_state,
             level: self.presence_level,
             persona_digest: self.persona_digest.clone(),
+            requested_activity_profile: self.activity_profile,
+            effective_activity: self.activity_classifier.effective_activity(),
+            interaction_intensity: self.interaction_intensity,
+            backend: self.backend,
+            cloud_provider: self.segment.cloud_provider,
+            standby_reason: self.standby_reason,
+            wake_available: matches!(
+                self.status,
+                RealtimeCoordinatorStatus::Standby | RealtimeCoordinatorStatus::PrivacyPaused
+            ) && !self.action_required,
+            duration_extension_required: self.duration_extension_required,
         }
     }
 
@@ -1122,6 +1166,17 @@ mod tests {
             state.interaction_intensity(),
             RealtimeInteractionIntensity::Standard
         );
+        let projection = state.presence_projection();
+        assert_eq!(
+            projection.requested_activity_profile,
+            RealtimeActivityProfile::Auto
+        );
+        assert_eq!(projection.effective_activity, RealtimeActivityProfile::Game);
+        assert_eq!(
+            projection.interaction_intensity,
+            RealtimeInteractionIntensity::Standard
+        );
+        assert_eq!(projection.backend, RealtimeBackendKind::CloudLive);
     }
 
     #[test]
@@ -1168,8 +1223,9 @@ mod tests {
     fn profile_change_and_privacy_resume_rotate_context() {
         let mut state = RealtimeCoordinatorState::start(start_request()).expect("start");
         state
-            .apply(RealtimeCoordinatorEvent::SetProfile {
+            .apply(RealtimeCoordinatorEvent::SetPolicy {
                 profile: RealtimeActivityProfile::Game,
+                interaction_intensity: RealtimeInteractionIntensity::Active,
             })
             .expect("profile");
         assert_eq!(state.active_identity().epoch, 1);
@@ -1182,6 +1238,10 @@ mod tests {
             .commit_context_rotation(profile_epoch)
             .expect("profile rotation acknowledgement");
         assert_eq!(state.active_identity().epoch, 2);
+        assert_eq!(
+            state.interaction_intensity(),
+            RealtimeInteractionIntensity::Active
+        );
 
         state
             .apply(RealtimeCoordinatorEvent::PausePrivacy)
@@ -1249,6 +1309,11 @@ mod tests {
         assert!(cloud.is_standby());
         assert!(!local.media_generation_enabled());
         assert!(!cloud.media_generation_enabled());
+        assert_eq!(
+            local.presence_projection().standby_reason,
+            Some(RealtimeStandbyReason::Inactivity)
+        );
+        assert!(local.presence_projection().wake_available);
     }
 
     #[test]
@@ -1339,6 +1404,11 @@ mod tests {
         );
         assert!(expiring.duration_extension_required());
         assert!(expiring.action_required());
+        assert_eq!(
+            expiring.presence_projection().standby_reason,
+            Some(RealtimeStandbyReason::DurationLimit)
+        );
+        assert!(!expiring.presence_projection().wake_available);
         expiring
             .apply(RealtimeCoordinatorEvent::ExtendPresence {
                 additional_minutes: 1,

@@ -197,6 +197,10 @@ pub trait RealtimeBackend: Send {
         reason: &str,
         public_summary: &str,
     ) -> Result<(), BackendError>;
+    fn set_activity_profile(
+        &mut self,
+        activity_profile: RealtimeActivityProfile,
+    ) -> Result<(), BackendError>;
     fn poll(&mut self) -> Result<Vec<BackendEvent>, BackendError>;
     fn pause(&mut self) -> Result<(), BackendError>;
     fn resume(&mut self) -> Result<(), BackendError>;

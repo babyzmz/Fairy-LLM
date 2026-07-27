@@ -100,6 +100,13 @@ pub struct RealtimeWorkerSetInputInput {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct RealtimeWorkerSetPolicyInput {
+    pub session_id: String,
+    pub activity_profile: RealtimeActivityProfile,
+    pub interaction_intensity: RealtimeInteractionIntensity,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct RealtimeWorkerWakeInput {
     pub session_id: String,
 }
@@ -530,6 +537,92 @@ impl RealtimeWorkerManager {
                 video: input.video,
             },
         )
+    }
+
+    pub fn set_policy(
+        &self,
+        app: &AppHandle,
+        input: RealtimeWorkerSetPolicyInput,
+    ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+        let guard = self
+            .process
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?;
+        let process = guard.as_ref().ok_or(RealtimeWorkerError::Unavailable)?;
+        if process.session_id.as_deref() != Some(input.session_id.as_str()) {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        let pending = {
+            let mut coordinator = self
+                .coordinator
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let coordinator = coordinator
+                .as_mut()
+                .ok_or(RealtimeWorkerError::Unavailable)?;
+            coordinator
+                .apply(RealtimeCoordinatorEvent::SetPolicy {
+                    profile: input.activity_profile,
+                    interaction_intensity: input.interaction_intensity,
+                })
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let pending = coordinator.pending_context_rotation().cloned();
+            let _ = app.emit(
+                REALTIME_WORKER_EVENT,
+                presence_projection_payload(coordinator.presence_projection()),
+            );
+            pending
+        };
+        let Some(pending) = pending else {
+            drop(guard);
+            return Ok(self.status());
+        };
+        if let Ok(mut dialogue) = self.dialogue.lock() {
+            if let Some(dialogue) = dialogue.as_mut() {
+                dialogue.reset_epoch_policy();
+            }
+        }
+        let profile_command = HostCommand::SetProfile {
+            session_id: pending.current.session_id.clone(),
+            activity_profile: input.activity_profile,
+            interaction_intensity: input.interaction_intensity,
+        };
+        let rotate_command = HostCommand::RotateContext {
+            session_id: pending.current.session_id.clone(),
+            segment_id: pending.current.segment_id.clone(),
+            current_context_epoch: pending.current.epoch,
+            next_context_epoch: pending.next_epoch,
+            reason: pending.reason.as_str().to_owned(),
+            public_summary: String::new(),
+        };
+        let send_result = {
+            let mut active = self
+                .active_identity
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let previous = active.clone();
+            *active = Some(ContextEpochIdentity {
+                session_id: pending.current.session_id,
+                segment_id: pending.current.segment_id,
+                epoch: pending.next_epoch,
+            });
+            let result = send_command(&process.input, &profile_command)
+                .and_then(|_| send_command(&process.input, &rotate_command));
+            if result.is_err() {
+                *active = previous;
+            }
+            result
+        };
+        if send_result.is_err() {
+            if let Ok(mut coordinator) = self.coordinator.lock() {
+                if let Some(coordinator) = coordinator.as_mut() {
+                    let _ = coordinator.fail_context_rotation();
+                }
+            }
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        drop(guard);
+        Ok(self.status())
     }
 
     pub fn wake(
@@ -1182,6 +1275,14 @@ fn presence_projection_payload(projection: RealtimePresenceProjection) -> Value 
         "state": projection.state,
         "level": projection.level,
         "persona_digest": projection.persona_digest,
+        "requested_activity_profile": projection.requested_activity_profile,
+        "effective_activity": projection.effective_activity,
+        "interaction_intensity": projection.interaction_intensity,
+        "backend": projection.backend,
+        "cloud_provider": projection.cloud_provider,
+        "standby_reason": projection.standby_reason,
+        "wake_available": projection.wake_available,
+        "duration_extension_required": projection.duration_extension_required,
     })
 }
 

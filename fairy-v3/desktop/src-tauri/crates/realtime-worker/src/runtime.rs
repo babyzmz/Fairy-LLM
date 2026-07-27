@@ -64,6 +64,9 @@ pub enum RuntimeCommand {
         microphone: bool,
         video: bool,
     },
+    SetProfile {
+        activity_profile: RealtimeActivityProfile,
+    },
     RotateContext {
         next_context_epoch: u64,
         reason: String,
@@ -488,6 +491,16 @@ fn run_session(
                 microphone_enabled = microphone;
                 video_enabled = video;
             }
+            Ok(RuntimeCommand::SetProfile { activity_profile }) => {
+                if active_backend
+                    .set_activity_profile(activity_profile)
+                    .is_err()
+                {
+                    emit_failed(&events, &identity, "REALTIME_BACKEND_PROTOCOL_FAILED");
+                    return;
+                }
+                identity.activity_profile = activity_profile;
+            }
             Err(mpsc::TryRecvError::Empty) => {}
         }
         if let Some(capture) = game_audio.as_mut() {
@@ -818,6 +831,7 @@ fn startup_cancel_requested(
             Ok(RuntimeCommand::Text { .. })
             | Ok(RuntimeCommand::ToolResult { .. })
             | Ok(RuntimeCommand::SetInput { .. })
+            | Ok(RuntimeCommand::SetProfile { .. })
             | Ok(RuntimeCommand::RotateContext { .. })
             | Ok(RuntimeCommand::Pause)
             | Ok(RuntimeCommand::Resume)

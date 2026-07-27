@@ -621,6 +621,14 @@ impl RealtimeBackend for LocalOmniBackend {
         self.rotate_context_acknowledged(next_context_epoch, reason, public_summary)
     }
 
+    fn set_activity_profile(
+        &mut self,
+        activity_profile: RealtimeActivityProfile,
+    ) -> Result<(), BackendError> {
+        self.activity_profile = activity_profile;
+        Ok(())
+    }
+
     fn poll(&mut self) -> Result<Vec<BackendEvent>, BackendError> {
         let mut output = Vec::new();
         loop {

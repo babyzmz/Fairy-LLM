@@ -96,6 +96,13 @@ impl RealtimeBackend for CloudLiveBackend {
         Ok(())
     }
 
+    fn set_activity_profile(
+        &mut self,
+        _activity_profile: crate::backend::RealtimeActivityProfile,
+    ) -> Result<(), BackendError> {
+        Ok(())
+    }
+
     fn poll(&mut self) -> Result<Vec<BackendEvent>, BackendError> {
         let Some(socket) = self.socket.as_mut() else {
             return Ok(Vec::new());

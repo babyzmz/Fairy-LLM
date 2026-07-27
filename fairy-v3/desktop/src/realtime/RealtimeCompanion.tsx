@@ -9,6 +9,7 @@ import type {
   RealtimeCredentialProvider,
   RealtimeSession,
   RealtimeSessionStatus,
+  RealtimeWorkerStatus,
 } from "../core/client";
 import type { InvokeFunction } from "../core/tauriTransport";
 import type { DesktopPreferences } from "../settings/client";
@@ -125,6 +126,14 @@ export function RealtimeCompanion({
     }).catch(() => undefined);
   }, [client.worker]);
 
+  const applyWorkerStatus = useCallback((status: RealtimeWorkerStatus) => {
+    setActiveBackend(status.running ? status.backend : null);
+    if (!isPresenceProjection(status.presence_projection)) return;
+    presenceProjectionRef.current = status.presence_projection;
+    setPresenceProjection(status.presence_projection);
+    setPaused(status.presence_projection.state === "privacy_paused");
+  }, []);
+
   const toggleMute = useCallback(() => {
     setMuted((current) => {
       const next = !current;
@@ -140,24 +149,74 @@ export function RealtimeCompanion({
     setError(null);
     try {
       if (paused) {
-        await client.worker.resumePrivacy({ session_id: current.id });
-        setPaused(false);
+        applyWorkerStatus(await client.worker.resumePrivacy({ session_id: current.id }));
         applyInput(muted, false);
       } else {
-        await client.worker.pausePrivacy({ session_id: current.id });
-        setPaused(true);
+        applyWorkerStatus(await client.worker.pausePrivacy({ session_id: current.id }));
       }
     } catch (caught) {
       setError(messageOf(caught));
     } finally {
       setBusy(false);
     }
-  }, [applyInput, busy, client.worker, muted, paused]);
+  }, [applyInput, applyWorkerStatus, busy, client.worker, muted, paused]);
 
   const updateSession = useCallback((value: RealtimeSession | null) => {
     sessionRef.current = value;
     setSession(value);
   }, []);
+
+  const updateLivePolicy = useCallback(async (
+    activityProfile: "auto" | "game" | "focus",
+    interactionIntensity: "quiet" | "standard" | "active",
+  ) => {
+    const current = sessionRef.current;
+    if (current === null || isTerminal(current.status) || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      applyWorkerStatus(await client.worker.setPolicy({
+        session_id: current.id,
+        activity_profile: activityProfile,
+        interaction_intensity: interactionIntensity,
+      }));
+    } catch (caught) {
+      setError(messageOf(caught));
+    } finally {
+      setBusy(false);
+    }
+  }, [applyWorkerStatus, busy, client.worker]);
+
+  const wakeStandby = useCallback(async () => {
+    const current = sessionRef.current;
+    if (current === null || isTerminal(current.status) || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      applyWorkerStatus(await client.worker.wake({ session_id: current.id }));
+    } catch (caught) {
+      setError(messageOf(caught));
+    } finally {
+      setBusy(false);
+    }
+  }, [applyWorkerStatus, busy, client.worker]);
+
+  const extendPresence = useCallback(async () => {
+    const current = sessionRef.current;
+    if (current === null || isTerminal(current.status) || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      applyWorkerStatus(await client.worker.extend({
+        session_id: current.id,
+        additional_minutes: 30,
+      }));
+    } catch (caught) {
+      setError(messageOf(caught));
+    } finally {
+      setBusy(false);
+    }
+  }, [applyWorkerStatus, busy, client.worker]);
 
   const fairySpeech = useMemo(
     () => new RealtimeSpeechPipeline(
@@ -239,21 +298,17 @@ export function RealtimeCompanion({
           tool_call_count: workerStatus.tool_call_count,
         };
         setLiveUsage(usage.current);
-        if (isPresenceProjection(workerStatus.presence_projection)) {
-          presenceProjectionRef.current = workerStatus.presence_projection;
-          setPresenceProjection(workerStatus.presence_projection);
-          setPaused(workerStatus.presence_projection.state === "privacy_paused");
-        }
+        applyWorkerStatus(workerStatus);
       }
       const windows = captureSurfaces.filter((item) => item.kind === "window");
       setPreferences(nextPreferences);
-      setActiveBackend(workerStatus.running ? workerStatus.backend : null);
+      if (!workerStatus.running) setActiveBackend(null);
       setSurfaces(windows);
       setSourceId((current) => current || windows[0]?.source_id || "");
     } catch (caught) {
       setError(messageOf(caught));
     }
-  }, [client.sessions, client.worker, hostInvoke, updateSession]);
+  }, [applyWorkerStatus, client.sessions, client.worker, hostInvoke, updateSession]);
 
   useEffect(() => {
     if (open) void load();
@@ -511,7 +566,7 @@ export function RealtimeCompanion({
         cloud_microphone_upload_consent: microphoneConsent,
         cloud_screen_upload_consent: screenConsent,
       });
-      setActiveBackend(worker.backend ?? resolution.backend);
+      applyWorkerStatus(worker);
     } catch (caught) {
       setError(realtimeProviderErrorMessage(messageOf(caught)));
       if (sessionRef.current !== null) await report("failed", "REALTIME_START_FAILED");
@@ -614,6 +669,17 @@ export function RealtimeCompanion({
   };
 
   const active = session !== null && !isTerminal(session.status);
+  const requestedProfile = presenceProjection?.requested_activity_profile
+    ?? preferences?.realtime_activity_profile
+    ?? "auto";
+  const effectiveActivity = presenceProjection?.effective_activity
+    ?? (requestedProfile === "game" ? "game" : "focus");
+  const interactionIntensity = presenceProjection?.interaction_intensity
+    ?? preferences?.realtime_interaction_intensity
+    ?? "standard";
+  const authoritativeBackend = presenceProjection?.backend
+    ?? activeBackend
+    ?? (session?.provider === "local_mini_cpm_o45" ? "local_mini_cpm_o45" : "cloud_live");
   const cloudPrivacy = resolution?.requires_cloud_upload_consent
     ?? preferences?.realtime_backend !== "local_mini_cpm_o45";
   const close = () => {
@@ -645,7 +711,99 @@ export function RealtimeCompanion({
             <label className="realtime-consent"><input type="checkbox" checked={applicationAudioConsent} onChange={(event) => setApplicationAudioConsent(event.target.checked)} /><Volume2 size={15} /><span>{cloudPrivacy ? "Upload selected application audio" : "Process selected application audio locally"}</span></label>
             <p className="realtime-note">System-wide audio is never captured. Each enabled source remains scoped to this session.</p>
             <button className="realtime-primary" type="button" disabled={busy || resolution?.available !== true || !microphoneConsent || !screenConsent || sourceId === ""} onClick={() => void start()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Mic size={15} />} Start Realtime</button>
-          </div> : <div className="realtime-live"><div className="realtime-live-status"><span className={`realtime-pulse ${presence}`} /><div><strong>{presenceLabel(presence)}</strong><small>{backendLabel(activeBackend ?? (session.provider === "local_mini_cpm_o45" ? "local_mini_cpm_o45" : "cloud_live"), false, preferences?.realtime_cloud_provider)}</small></div><button type="button" disabled={busy} onClick={() => void stop()}><Square size={14} /> Stop</button></div><div className="realtime-usage" aria-label="Session usage"><span>Voice {formatUsageMinutes(liveUsage.audio_input_ms + liveUsage.audio_output_ms)}</span><span>Frames {liveUsage.video_frame_count}</span></div><div className="realtime-captions" aria-live="polite">{captions.length === 0 && draftCaption === "" ? <span>Listening for the conversation and game context…</span> : <>{captions.map((text, index) => <p key={`${index}-${text.slice(0, 16)}`}>{text}</p>)}{draftCaption ? <p className="is-streaming">{draftCaption}</p> : null}</>}</div></div>}
+          </div> : (
+            <div className="realtime-live">
+              <div className="realtime-live-status">
+                <span className={`realtime-pulse ${presence}`} />
+                <div>
+                  <strong>{presenceLabel(presence)}</strong>
+                  <small>{backendLabel(
+                    authoritativeBackend,
+                    false,
+                    presenceProjection?.cloud_provider ?? preferences?.realtime_cloud_provider,
+                  )}</small>
+                </div>
+                <button type="button" disabled={busy} onClick={() => void stop()}>
+                  <Square size={14} /> Stop
+                </button>
+              </div>
+              <div className="realtime-session-policy" aria-label="Realtime activity policy">
+                <label>
+                  <span>Profile</span>
+                  <select
+                    value={requestedProfile}
+                    disabled={busy || presence === "privacy_paused"}
+                    onChange={(event) => void updateLivePolicy(
+                      event.target.value as "auto" | "game" | "focus",
+                      interactionIntensity,
+                    )}
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="game">Game</option>
+                    <option value="focus">Focus</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Intensity</span>
+                  <select
+                    value={interactionIntensity}
+                    disabled={busy || presence === "privacy_paused"}
+                    onChange={(event) => void updateLivePolicy(
+                      requestedProfile,
+                      event.target.value as "quiet" | "standard" | "active",
+                    )}
+                  >
+                    <option value="quiet">Quiet</option>
+                    <option value="standard">Standard</option>
+                    <option value="active">Active</option>
+                  </select>
+                </label>
+                <div>
+                  <span>Effective</span>
+                  <strong>{activityLabel(effectiveActivity)}</strong>
+                </div>
+                <div>
+                  <span>Backend</span>
+                  <strong>{authoritativeBackend === "local_mini_cpm_o45" ? "Local" : "Cloud"}</strong>
+                </div>
+              </div>
+              <p className="realtime-policy-help">
+                {cooldownHelp(effectiveActivity, interactionIntensity)}
+              </p>
+              {presence === "standby" ? (
+                <div className="realtime-standby" role="status">
+                  <span>{standbyMessage(presenceProjection?.standby_reason ?? null)}</span>
+                  {presenceProjection?.duration_extension_required ? (
+                    <button type="button" disabled={busy} onClick={() => void extendPresence()}>
+                      Extend 30 min
+                    </button>
+                  ) : presenceProjection?.wake_available ? (
+                    <button type="button" disabled={busy} onClick={() => void wakeStandby()}>
+                      Wake
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="realtime-usage" aria-label="Session usage">
+                <span>Voice {formatUsageMinutes(
+                  liveUsage.audio_input_ms + liveUsage.audio_output_ms,
+                )}</span>
+                <span>Frames {liveUsage.video_frame_count}</span>
+              </div>
+              <div className="realtime-captions" aria-live="polite">
+                {captions.length === 0 && draftCaption === "" ? (
+                  <span>Listening for the conversation and game context…</span>
+                ) : (
+                  <>
+                    {captions.map((text, index) => (
+                      <p key={`${index}-${text.slice(0, 16)}`}>{text}</p>
+                    ))}
+                    {draftCaption ? <p className="is-streaming">{draftCaption}</p> : null}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
           {memory ? <div className="realtime-memory"><h3>Save game progress</h3><label>Game<input value={memory.gameTitle} maxLength={160} onChange={(event) => setMemory({ ...memory, gameTitle: event.target.value })} /></label><label>Progress<textarea value={memory.progress} maxLength={800} onChange={(event) => setMemory({ ...memory, progress: event.target.value })} /></label><label>Next goal<input value={memory.nextGoal} maxLength={300} onChange={(event) => setMemory({ ...memory, nextGoal: event.target.value })} /></label><button type="button" disabled={busy || !memory.gameTitle.trim() || !memory.progress.trim()} onClick={() => void saveMemory()}><Save size={14} /> Save summary</button></div> : null}
           {unsavedCount > 0 ? <div className="realtime-transcript-warning" role="status"><span>{unsavedCount} {unsavedCount === 1 ? "caption" : "captions"} unsaved</span><button type="button" onClick={retryUnsaved}><RotateCcw size={13} /> Retry saving</button></div> : null}
           {voiceWarning ? <div className="realtime-warning" role="status">{voiceWarning}</div> : null}
@@ -691,6 +849,29 @@ function formatUsageMinutes(totalMs: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function activityLabel(value: "game" | "focus"): string {
+  return value === "game" ? "Game" : "Focus";
+}
+
+function cooldownHelp(
+  activity: "game" | "focus",
+  intensity: "quiet" | "standard" | "active",
+): string {
+  if (activity === "game") {
+    const seconds = intensity === "quiet" ? 90 : intensity === "standard" ? 45 : 20;
+    return `Proactive Game comments wait at least ${seconds} seconds; direct replies stay immediate.`;
+  }
+  const minutes = intensity === "active" ? 3 : 8;
+  return `Proactive Focus comments wait at least ${minutes} minutes; direct replies stay immediate.`;
+}
+
+function standbyMessage(reason: "inactivity" | "duration_limit" | null): string {
+  if (reason === "duration_limit") {
+    return "Presence duration reached. Extend explicitly before waking Fairy.";
+  }
+  return "Fairy paused media after three quiet minutes.";
 }
 
 export async function todaysRealtimeMinutes(client: CoreClient["realtime"]): Promise<number> {

@@ -27,6 +27,15 @@
 .realtime-live-status { display: flex; align-items: center; gap: 11px; padding: 12px; border: 1px solid #36413e; }
 .realtime-live-status > div { min-width: 0; flex: 1; display: grid; gap: 3px; }.realtime-live-status small { color: #84908c; }
 .realtime-live-status button { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid #774b47; background: #351b19; color: #ffc0b8; }
+.realtime-session-policy { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.realtime-session-policy > label, .realtime-session-policy > div { min-width: 0; display: grid; gap: 5px; padding: 9px 10px; border: 1px solid #303936; background: #101412; }
+.realtime-session-policy span { color: #7f8c88; font: 600 10px/1.2 monospace; letter-spacing: .04em; text-transform: uppercase; }
+.realtime-session-policy strong { overflow: hidden; color: #dce7e3; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.realtime-session-policy select { width: 100%; min-width: 0; height: 30px; padding: 4px 7px; border: 1px solid #3a4743; background: #171d1b; color: #e4eeeb; }
+.realtime-session-policy select:disabled { opacity: .55; }
+.realtime-policy-help { margin: -4px 1px 0; color: #84908c; font-size: 11px; line-height: 1.45; }
+.realtime-standby { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border-left: 2px solid #8ebcaf; background: #13201c; color: #bed2cc; font-size: 12px; }
+.realtime-standby button { flex: 0 0 auto; min-height: 30px; padding: 5px 10px; border: 1px solid #5fa99d; background: #1c3933; color: #d9f4ed; }
 .realtime-pulse { width: 10px; height: 10px; border-radius: 50%; background: #65cfc1; box-shadow: 0 0 0 5px #65cfc11c; animation: realtime-pulse 1.4s ease-in-out infinite; }
 .realtime-pulse.speaking { background: #8bbcff; }
 .realtime-pulse.preparing, .realtime-pulse.loading_model, .realtime-pulse.connecting { background: #d5b97d; }
@@ -57,3 +66,7 @@
 @keyframes realtime-controls-in { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
 @keyframes realtime-pulse { 50% { transform: scale(.72); opacity: .65; } }
 @media (prefers-reduced-motion: reduce) { .realtime-pulse, .realtime-controls-cluster { animation: none; } }
+@media (max-width: 430px) {
+  .realtime-session-policy { grid-template-columns: minmax(0, 1fr); }
+  .realtime-standby { align-items: stretch; flex-direction: column; }
+}
