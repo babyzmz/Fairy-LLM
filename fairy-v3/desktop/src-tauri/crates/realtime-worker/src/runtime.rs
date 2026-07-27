@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -6,14 +5,14 @@ use std::time::{Duration, Instant};
 
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::backend::{RealtimeBackendKind, RealtimeCloudProviderKind, RealtimeVoiceOutput};
+use crate::backend::{
+    BackendCaptionSpeaker, BackendEvent, CloudBackendLaunch, CloudLiveBackend, RealtimeBackend,
+    RealtimeBackendKind, RealtimeCloudProviderKind, RealtimeVoiceOutput,
+};
 use crate::media::{
-    mix_pcm16_queue, resample_pcm16, AudioPlayback, MicrophoneCapture, ProcessLoopbackCapture,
-    VideoCapture,
+    resample_pcm16, AudioPlayback, MicrophoneCapture, ProcessLoopbackCapture, VideoCapture,
 };
 use crate::protocol::WorkerEvent;
-use crate::provider::{CaptionSpeaker, ProviderOutput};
-use crate::transport::ProviderSocket;
 
 // Absolute worker-side ceiling as defense in depth: the renderer enforces the
 // user's configurable maximum, and this backstop stops a runaway session if the
@@ -25,34 +24,6 @@ fn frame_hash(bytes: &[u8]) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut hasher);
     hasher.finish()
-}
-
-struct EphemeralAudioQueue(VecDeque<i16>);
-
-impl EphemeralAudioQueue {
-    fn with_capacity(capacity: usize) -> Self {
-        Self(VecDeque::with_capacity(capacity))
-    }
-
-    fn extend_bounded(&mut self, samples: impl IntoIterator<Item = i16>, maximum: usize) {
-        self.0.extend(samples);
-        while self.0.len() > maximum {
-            self.0.pop_front();
-        }
-    }
-
-    fn mix_into(&mut self, target: &mut [i16], gain: f32) {
-        mix_pcm16_queue(target, &mut self.0, gain);
-    }
-}
-
-impl Drop for EphemeralAudioQueue {
-    fn drop(&mut self) {
-        for sample in &mut self.0 {
-            *sample = 0;
-        }
-        self.0.clear();
-    }
 }
 
 pub struct RuntimeLaunch {
@@ -81,6 +52,9 @@ struct RuntimeIdentity {
 
 pub enum RuntimeCommand {
     Stop,
+    Text {
+        text: String,
+    },
     ToolResult {
         call_id: String,
         public_summary: String,
@@ -166,21 +140,22 @@ fn run_session(
         cloud_provider,
     };
     let native_audio = voice_output == RealtimeVoiceOutput::ProviderNativeVoice;
-    let (provider_sender, provider_receiver) = mpsc::sync_channel(1);
+    let (backend_sender, backend_receiver) = mpsc::sync_channel(1);
     let connect_cancelled = Arc::clone(&cancelled);
     let connect_provider = identity.cloud_provider;
     if thread::Builder::new()
         .name("fairy-realtime-connect".to_owned())
         .spawn(move || {
-            let result = ProviderSocket::connect(
-                connect_provider,
+            let result = CloudLiveBackend::connect(CloudBackendLaunch {
+                provider: connect_provider,
                 credential,
                 system_instruction,
-                screen_enabled,
+                video_enabled: screen_enabled,
                 native_audio,
-            );
+            })
+            .map(|backend| Box::new(backend) as Box<dyn RealtimeBackend>);
             if !connect_cancelled.load(Ordering::Acquire) {
-                let _ = provider_sender.send(result);
+                let _ = backend_sender.send(result);
             }
         })
         .is_err()
@@ -188,19 +163,19 @@ fn run_session(
         emit_failed(&events, &identity, "WORKER_INTERRUPTED");
         return;
     }
-    let provider_deadline = Instant::now() + Duration::from_secs(15);
-    let mut provider = loop {
+    let backend_deadline = Instant::now() + Duration::from_secs(15);
+    let mut active_backend = loop {
         if startup_cancel_requested(&commands, &cancelled) {
             emit_cancelled(&events, &identity);
             return;
         }
-        match provider_receiver.recv_timeout(Duration::from_millis(5)) {
-            Ok(Ok(provider)) => break provider,
+        match backend_receiver.recv_timeout(Duration::from_millis(5)) {
+            Ok(Ok(backend)) => break backend,
             Ok(Err(error)) => {
                 emit_failed(&events, &identity, error.public_code());
                 return;
             }
-            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < provider_deadline => {}
+            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < backend_deadline => {}
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 cancelled.store(true, Ordering::Release);
                 emit_failed(&events, &identity, "REALTIME_PROVIDER_TIMEOUT");
@@ -289,7 +264,6 @@ fn run_session(
     // controls. Both default on; muted/paused input is not sent to the provider.
     let mut microphone_enabled = initial_microphone_enabled;
     let mut video_enabled = true;
-    let mut game_audio_queue = EphemeralAudioQueue::with_capacity(32_000);
     let mut audio_input_samples = 0_u64;
     let mut audio_output_samples = 0_u64;
     let mut video_frame_count = 0_u64;
@@ -305,11 +279,18 @@ fn run_session(
         }
         match commands.try_recv() {
             Ok(RuntimeCommand::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
+            Ok(RuntimeCommand::Text { text }) => {
+                if let Err(error) = active_backend.push_text(&text) {
+                    emit_failed(&events, &identity, error.public_code());
+                    return;
+                }
+            }
             Ok(RuntimeCommand::ToolResult {
                 call_id,
                 public_summary,
             }) => {
-                if let Err(error) = provider.send_tool_result(&call_id, &public_summary) {
+                if let Err(error) = active_backend.push_assistance_result(&call_id, &public_summary)
+                {
                     emit_failed(&events, &identity, error.public_code());
                     return;
                 }
@@ -317,15 +298,33 @@ fn run_session(
             Ok(RuntimeCommand::SetInput { microphone, video }) => {
                 microphone_enabled = microphone;
                 video_enabled = video;
+                if !microphone && !video {
+                    if let Err(error) = active_backend.pause() {
+                        emit_failed(&events, &identity, error.public_code());
+                        return;
+                    }
+                }
             }
             Err(mpsc::TryRecvError::Empty) => {}
         }
         if let Some(capture) = game_audio.as_mut() {
             while let Some(packet) = capture.try_recv() {
-                game_audio_queue.extend_bounded(
-                    resample_pcm16(&packet.pcm16, packet.sample_rate, 16_000),
-                    32_000,
-                );
+                if !microphone_enabled && !video_enabled {
+                    drop(packet);
+                    continue;
+                }
+                let mut samples = resample_pcm16(&packet.pcm16, packet.sample_rate, 16_000);
+                let mut bytes = Vec::with_capacity(samples.len() * 2);
+                for sample in &samples {
+                    bytes.extend_from_slice(&sample.to_le_bytes());
+                }
+                samples.zeroize();
+                if let Err(error) = active_backend.push_application_audio(&bytes) {
+                    bytes.zeroize();
+                    emit_failed(&events, &identity, error.public_code());
+                    return;
+                }
+                bytes.zeroize();
             }
         }
         while let Some(packet) = microphone.try_recv() {
@@ -336,14 +335,13 @@ fn run_session(
                 continue;
             }
             let mut samples = resample_pcm16(&packet.pcm16, packet.sample_rate, 16_000);
-            game_audio_queue.mix_into(&mut samples, 0.35);
             audio_input_samples = audio_input_samples.saturating_add(samples.len() as u64);
             let mut bytes = Vec::with_capacity(samples.len() * 2);
             for sample in &samples {
                 bytes.extend_from_slice(&sample.to_le_bytes());
             }
             samples.zeroize();
-            if let Err(error) = provider.send_audio(&bytes) {
+            if let Err(error) = active_backend.push_microphone(&bytes) {
                 bytes.zeroize();
                 emit_failed(&events, &identity, error.public_code());
                 return;
@@ -359,7 +357,7 @@ fn run_session(
                     frame.jpeg.zeroize();
                     last_video_sent = Instant::now();
                 } else {
-                    if let Err(error) = provider.send_video(&frame.jpeg) {
+                    if let Err(error) = active_backend.push_video(&frame.jpeg) {
                         frame.jpeg.zeroize();
                         emit_failed(&events, &identity, error.public_code());
                         return;
@@ -371,7 +369,7 @@ fn run_session(
                 }
             }
         }
-        let outputs = match provider.receive() {
+        let outputs = match active_backend.poll() {
             Ok(outputs) => outputs,
             Err(error) => {
                 emit_failed(&events, &identity, error.public_code());
@@ -380,8 +378,8 @@ fn run_session(
         };
         for output in outputs {
             match output {
-                ProviderOutput::Ready => {}
-                ProviderOutput::Audio(mut bytes) => {
+                BackendEvent::Ready => {}
+                BackendEvent::Audio(mut bytes) => {
                     audio_output_samples =
                         audio_output_samples.saturating_add((bytes.len() / 2) as u64);
                     // In Fairy voice mode there is no local playback (Fairy speaks
@@ -404,7 +402,7 @@ fn run_session(
                         level: None,
                     });
                 }
-                ProviderOutput::PublicCaption {
+                BackendEvent::PublicCaption {
                     text,
                     stable,
                     speaker,
@@ -418,12 +416,12 @@ fn run_session(
                         text,
                         stable,
                         speaker: match speaker {
-                            CaptionSpeaker::User => "user".to_owned(),
-                            CaptionSpeaker::Assistant => "assistant".to_owned(),
+                            BackendCaptionSpeaker::User => "user".to_owned(),
+                            BackendCaptionSpeaker::Assistant => "assistant".to_owned(),
                         },
                     });
                 }
-                ProviderOutput::SpeechStarted => {
+                BackendEvent::SpeechStarted => {
                     interruption_count = interruption_count.saturating_add(1);
                     if let Some(playback) = playback.as_ref() {
                         playback.clear();
@@ -441,7 +439,7 @@ fn run_session(
                         level: None,
                     });
                 }
-                ProviderOutput::SpeechStopped => {
+                BackendEvent::SpeechStopped => {
                     let _ = events.send(WorkerEvent::Presence {
                         session_id: identity.session_id.clone(),
                         segment_id: identity.segment_id.clone(),
@@ -450,7 +448,7 @@ fn run_session(
                         level: None,
                     });
                 }
-                ProviderOutput::ToolCall {
+                BackendEvent::ToolCall {
                     call_id,
                     name,
                     arguments: _,
@@ -465,8 +463,8 @@ fn run_session(
                         public_intent: "Fairy wants to use a companion tool".to_owned(),
                     });
                 }
-                ProviderOutput::Usage(_) => {}
-                ProviderOutput::GoAway => {
+                BackendEvent::Usage(_) => {}
+                BackendEvent::GoAway => {
                     emit_failed(&events, &identity, "REALTIME_PROVIDER_GOING_AWAY");
                     return;
                 }
@@ -488,6 +486,7 @@ fn run_session(
     if let Some(playback) = playback.as_ref() {
         playback.clear();
     }
+    let _ = active_backend.stop();
     emit_usage(
         &events,
         &identity,
@@ -521,7 +520,9 @@ fn startup_cancel_requested(
                 cancelled.store(true, Ordering::Release);
                 return true;
             }
-            Ok(RuntimeCommand::ToolResult { .. }) | Ok(RuntimeCommand::SetInput { .. }) => {}
+            Ok(RuntimeCommand::Text { .. })
+            | Ok(RuntimeCommand::ToolResult { .. })
+            | Ok(RuntimeCommand::SetInput { .. }) => {}
             Err(mpsc::TryRecvError::Empty) => return false,
         }
     }

@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
+
+mod cloud;
+
+pub use cloud::{CloudBackendLaunch, CloudLiveBackend};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +43,61 @@ pub enum RealtimeVoiceOutput {
     FairyVoice,
     ProviderNativeVoice,
     TextOnly,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BackendCaptionSpeaker {
+    User,
+    Assistant,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BackendEvent {
+    Ready,
+    Audio(Vec<u8>),
+    PublicCaption {
+        text: String,
+        stable: bool,
+        speaker: BackendCaptionSpeaker,
+    },
+    SpeechStarted,
+    SpeechStopped,
+    ToolCall {
+        call_id: String,
+        name: String,
+        arguments: Value,
+    },
+    Usage(Value),
+    GoAway,
+}
+
+#[derive(Debug, Error)]
+pub enum BackendError {
+    #[error("the realtime cloud backend failed")]
+    Cloud(#[from] crate::transport::ProviderTransportError),
+}
+
+impl BackendError {
+    pub const fn public_code(&self) -> &'static str {
+        match self {
+            Self::Cloud(error) => error.public_code(),
+        }
+    }
+}
+
+pub trait RealtimeBackend: Send {
+    fn push_microphone(&mut self, pcm16_le: &[u8]) -> Result<(), BackendError>;
+    fn push_application_audio(&mut self, pcm16_le: &[u8]) -> Result<(), BackendError>;
+    fn push_video(&mut self, jpeg: &[u8]) -> Result<(), BackendError>;
+    fn push_text(&mut self, text: &str) -> Result<(), BackendError>;
+    fn push_assistance_result(
+        &mut self,
+        call_id: &str,
+        public_summary: &str,
+    ) -> Result<(), BackendError>;
+    fn poll(&mut self) -> Result<Vec<BackendEvent>, BackendError>;
+    fn pause(&mut self) -> Result<(), BackendError>;
+    fn stop(&mut self) -> Result<(), BackendError>;
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
