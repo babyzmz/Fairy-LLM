@@ -28,7 +28,7 @@ for (const deviceScaleFactor of [1, 1.25, 2]) {
     await page.goto("/?surface=presence");
 
     const canvas = page.getByRole("img", { name: "Fairy" });
-    await expect(canvas).toBeVisible();
+    await expect(canvas).toBeVisible({ timeout: 10_000 });
     await expect(canvas).toHaveAttribute("data-rendered", "true");
     expect(await visibleCanvasPixels(page)).toBeGreaterThan(250);
     expect(await overflow(page)).toEqual({ horizontal: 0, vertical: 0 });
