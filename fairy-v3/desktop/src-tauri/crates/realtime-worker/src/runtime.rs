@@ -11,6 +11,7 @@ use crate::backend::{
     RealtimeCandidateDecision, RealtimeCloudProviderKind, RealtimeDialogueCandidate,
     RealtimeVoiceOutput,
 };
+use crate::frame_gate::{FrameGate, FrameGateDecision};
 use crate::media::{
     resample_pcm16, AudioPlayback, MicrophoneCapture, ProcessLoopbackCapture, VideoCapture,
 };
@@ -21,13 +22,7 @@ use crate::ValidatedRealtimePersona;
 // user's configurable maximum, and this backstop stops a runaway session if the
 // renderer timer ever fails to fire. It sits above the maximum renderer setting.
 const SESSION_HARD_LIMIT: Duration = Duration::from_secs(250 * 60);
-
-fn frame_hash(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
-}
+const VIDEO_CAPTURE_FPS: u16 = 15;
 
 pub struct RuntimeLaunch {
     pub session_id: String,
@@ -150,6 +145,10 @@ fn run_session(
         persona_digest: persona.digest().to_owned(),
         activity_profile,
     };
+    if !application_audio_scope_supported(identity.backend, application_audio_enabled) {
+        emit_failed(&events, &identity, "APPLICATION_AUDIO_SCOPE_UNAVAILABLE");
+        return;
+    }
     let native_audio = backend == RealtimeBackendKind::CloudLive
         && voice_output == RealtimeVoiceOutput::ProviderNativeVoice;
     let (backend_sender, backend_receiver) = mpsc::sync_channel(1);
@@ -268,7 +267,7 @@ fn run_session(
         return;
     }
     let video = if screen_enabled {
-        match source_id.and_then(|id| VideoCapture::start(id, 30).ok()) {
+        match source_id.and_then(|id| VideoCapture::start(id, VIDEO_CAPTURE_FPS).ok()) {
             Some(video) => Some(video),
             None => {
                 emit_failed(&events, &identity, "CAPTURE_SOURCE_UNAVAILABLE");
@@ -292,9 +291,8 @@ fn run_session(
         error_code: None,
     });
     let session_start = Instant::now();
-    let mut last_video_sent = Instant::now() - Duration::from_secs(1);
+    let mut frame_gate = FrameGate::new(identity.context_epoch);
     let mut last_usage_sent = Instant::now();
-    let mut last_frame_hash: Option<u64> = None;
     // Input gating for the mute (microphone) and pause (microphone + screen)
     // controls. Both default on; muted/paused input is not sent to the provider.
     let mut microphone_enabled = initial_microphone_enabled;
@@ -316,6 +314,7 @@ fn run_session(
         match commands.try_recv() {
             Ok(RuntimeCommand::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
             Ok(RuntimeCommand::Text { text }) => {
+                frame_gate.note_user_question(elapsed_ms(session_start));
                 if let Err(error) = active_backend.push_text(&text) {
                     emit_failed(&events, &identity, error.public_code());
                     return;
@@ -332,6 +331,9 @@ fn run_session(
                 }
             }
             Ok(RuntimeCommand::SetInput { microphone, video }) => {
+                if video != video_enabled {
+                    frame_gate.reset(identity.context_epoch);
+                }
                 microphone_enabled = microphone;
                 video_enabled = video;
                 if !microphone && !video {
@@ -355,6 +357,7 @@ fn run_session(
                     bytes.extend_from_slice(&sample.to_le_bytes());
                 }
                 samples.zeroize();
+                frame_gate.note_audio_activity(elapsed_ms(session_start));
                 if let Err(error) = active_backend.push_application_audio(&bytes) {
                     bytes.zeroize();
                     emit_failed(&events, &identity, error.public_code());
@@ -384,25 +387,21 @@ fn run_session(
             }
             bytes.zeroize();
         }
-        if video_enabled && last_video_sent.elapsed() >= Duration::from_secs(1) {
+        let now_ms = elapsed_ms(session_start);
+        if video_enabled && frame_gate.should_inspect(now_ms) {
             if let Some(mut frame) = video.as_ref().and_then(VideoCapture::take_latest) {
-                let hash = frame_hash(&frame.jpeg);
-                if last_frame_hash == Some(hash) {
-                    // Identical to the last sent frame (a static screen); skip the
-                    // send to avoid re-billing image tokens for an unchanged view.
-                    frame.jpeg.zeroize();
-                    last_video_sent = Instant::now();
-                } else {
-                    if let Err(error) = active_backend.push_video(&frame.jpeg) {
-                        frame.jpeg.zeroize();
-                        emit_failed(&events, &identity, error.public_code());
-                        return;
+                match frame_gate.inspect(&frame.jpeg, now_ms) {
+                    Ok(FrameGateDecision::Send { .. }) => {
+                        if let Err(error) = active_backend.push_video(&frame.jpeg) {
+                            frame.jpeg.zeroize();
+                            emit_failed(&events, &identity, error.public_code());
+                            return;
+                        }
+                        video_frame_count = video_frame_count.saturating_add(1);
                     }
-                    frame.jpeg.zeroize();
-                    last_frame_hash = Some(hash);
-                    video_frame_count = video_frame_count.saturating_add(1);
-                    last_video_sent = Instant::now();
+                    Ok(FrameGateDecision::SuppressStatic) | Err(_) => {}
                 }
+                frame.jpeg.zeroize();
             }
         }
         let outputs = match active_backend.poll() {
@@ -496,6 +495,7 @@ fn run_session(
                     }
                 }
                 BackendEvent::SpeechStarted => {
+                    frame_gate.note_user_question(elapsed_ms(session_start));
                     interruption_count = interruption_count.saturating_add(1);
                     if let Some(playback) = playback.as_ref() {
                         playback.clear();
@@ -579,6 +579,17 @@ fn run_session(
         cloud_provider: identity.cloud_provider,
         error_code: None,
     });
+}
+
+fn elapsed_ms(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn application_audio_scope_supported(
+    backend: RealtimeBackendKind,
+    application_audio_enabled: bool,
+) -> bool {
+    !application_audio_enabled || backend == RealtimeBackendKind::LocalMiniCpmO45
 }
 
 fn assistant_caption_candidate(
@@ -689,9 +700,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn identical_frames_hash_equal_and_changed_frames_differ() {
-        assert_eq!(frame_hash(&[1, 2, 3, 4]), frame_hash(&[1, 2, 3, 4]));
-        assert_ne!(frame_hash(&[1, 2, 3, 4]), frame_hash(&[1, 2, 3, 5]));
+    fn cloud_application_audio_never_enters_the_microphone_transport() {
+        assert!(application_audio_scope_supported(
+            RealtimeBackendKind::CloudLive,
+            false,
+        ));
+        assert!(!application_audio_scope_supported(
+            RealtimeBackendKind::CloudLive,
+            true,
+        ));
+        assert!(application_audio_scope_supported(
+            RealtimeBackendKind::LocalMiniCpmO45,
+            true,
+        ));
     }
 
     #[test]
@@ -699,6 +720,11 @@ mod tests {
         // The Presence maximum is 240 minutes; the worker ceiling sits above it
         // so the renderer normally stops first and this only catches a runaway.
         assert!(SESSION_HARD_LIMIT > Duration::from_secs(240 * 60));
+    }
+
+    #[test]
+    fn capture_rate_stays_inside_the_frozen_latest_frame_range() {
+        assert!((10..=15).contains(&VIDEO_CAPTURE_FPS));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 mod backend;
+mod frame_gate;
 mod media;
 mod persona;
 mod protocol;

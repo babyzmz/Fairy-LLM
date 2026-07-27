@@ -528,28 +528,6 @@ fn encode_frame(mut image: RgbaImage, sequence: u64) -> Result<VideoFrame, Media
 }
 
 #[cfg(test)]
-pub fn mix_pcm16(target: &mut [i16], source: &[i16], gain: f32) {
-    for (target_sample, source_sample) in target.iter_mut().zip(source) {
-        let mixed = f32::from(*target_sample) + f32::from(*source_sample) * gain;
-        *target_sample = mixed
-            .round()
-            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
-    }
-}
-
-pub fn mix_pcm16_queue(target: &mut [i16], source: &mut VecDeque<i16>, gain: f32) {
-    for target_sample in target {
-        let Some(source_sample) = source.pop_front() else {
-            break;
-        };
-        let mixed = f32::from(*target_sample) + f32::from(source_sample) * gain;
-        *target_sample = mixed
-            .round()
-            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -577,18 +555,5 @@ mod tests {
         assert_eq!(output.len(), 6);
         assert_eq!(output[0], i16::MIN);
         assert!(output[4] > 30_000);
-    }
-
-    #[test]
-    fn microphone_and_game_audio_mix_without_overflow() {
-        let mut microphone = vec![30_000, -30_000, 100];
-        mix_pcm16(&mut microphone, &[30_000, -30_000, 1_000], 0.35);
-        assert_eq!(microphone, [i16::MAX, i16::MIN, 450]);
-
-        let mut queued = VecDeque::from([30_000, -30_000, 1_000]);
-        let mut microphone = vec![30_000, -30_000, 100, 200];
-        mix_pcm16_queue(&mut microphone, &mut queued, 0.35);
-        assert_eq!(microphone, [i16::MAX, i16::MIN, 450, 200]);
-        assert!(queued.is_empty());
     }
 }

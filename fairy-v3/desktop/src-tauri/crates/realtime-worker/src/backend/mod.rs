@@ -159,6 +159,8 @@ pub enum BackendError {
     LocalProtocol,
     #[error("the realtime dialogue candidate protocol failed")]
     DialogueProtocol,
+    #[error("the selected application audio scope is unavailable for this backend")]
+    ApplicationAudioScopeUnavailable,
     #[error("the local Omni backend operation timed out")]
     LocalTimeout,
     #[error("the local Omni backend process failed")]
@@ -172,6 +174,7 @@ impl BackendError {
             Self::LocalUnavailable => "LOCAL_BACKEND_NOT_READY",
             Self::LocalProtocol => "LOCAL_BACKEND_PROTOCOL_FAILED",
             Self::DialogueProtocol => "REALTIME_BACKEND_PROTOCOL_FAILED",
+            Self::ApplicationAudioScopeUnavailable => "APPLICATION_AUDIO_SCOPE_UNAVAILABLE",
             Self::LocalTimeout => "LOCAL_BACKEND_TIMEOUT",
             Self::LocalIo(_) => "LOCAL_BACKEND_INTERRUPTED",
         }

@@ -1,23 +1,10 @@
-use std::collections::VecDeque;
-
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use super::{
     BackendCaptionSpeaker, BackendError, BackendEvent, RealtimeBackend, RealtimeCloudProviderKind,
 };
-use crate::media::mix_pcm16_queue;
 use crate::provider::{CaptionSpeaker, ProviderOutput};
 use crate::transport::ProviderSocket;
-
-const APPLICATION_AUDIO_SAMPLE_LIMIT: usize = 32_000;
-const APPLICATION_AUDIO_GAIN: f32 = 0.35;
-
-fn clear_audio_queue(queue: &mut VecDeque<i16>) {
-    for sample in queue.iter_mut() {
-        *sample = 0;
-    }
-    queue.clear();
-}
 
 pub struct CloudBackendLaunch {
     pub provider: RealtimeCloudProviderKind,
@@ -29,7 +16,6 @@ pub struct CloudBackendLaunch {
 
 pub struct CloudLiveBackend {
     socket: ProviderSocket,
-    application_audio: VecDeque<i16>,
 }
 
 impl CloudLiveBackend {
@@ -42,46 +28,17 @@ impl CloudLiveBackend {
                 launch.video_enabled,
                 launch.native_audio,
             )?,
-            application_audio: VecDeque::with_capacity(APPLICATION_AUDIO_SAMPLE_LIMIT),
         })
-    }
-
-    fn clear_application_audio(&mut self) {
-        clear_audio_queue(&mut self.application_audio);
     }
 }
 
 impl RealtimeBackend for CloudLiveBackend {
     fn push_microphone(&mut self, pcm16_le: &[u8]) -> Result<(), BackendError> {
-        let mut samples = pcm16_le
-            .chunks_exact(2)
-            .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        mix_pcm16_queue(
-            &mut samples,
-            &mut self.application_audio,
-            APPLICATION_AUDIO_GAIN,
-        );
-        let mut bytes = Vec::with_capacity(samples.len() * 2);
-        for sample in &samples {
-            bytes.extend_from_slice(&sample.to_le_bytes());
-        }
-        samples.zeroize();
-        let result = self.socket.send_audio(&bytes).map_err(BackendError::from);
-        bytes.zeroize();
-        result
+        self.socket.send_audio(pcm16_le).map_err(BackendError::from)
     }
 
-    fn push_application_audio(&mut self, pcm16_le: &[u8]) -> Result<(), BackendError> {
-        self.application_audio.extend(
-            pcm16_le
-                .chunks_exact(2)
-                .map(|pair| i16::from_le_bytes([pair[0], pair[1]])),
-        );
-        while self.application_audio.len() > APPLICATION_AUDIO_SAMPLE_LIMIT {
-            self.application_audio.pop_front();
-        }
-        Ok(())
+    fn push_application_audio(&mut self, _pcm16_le: &[u8]) -> Result<(), BackendError> {
+        distinct_application_audio_unavailable()
     }
 
     fn push_video(&mut self, jpeg: &[u8]) -> Result<(), BackendError> {
@@ -141,20 +98,16 @@ impl RealtimeBackend for CloudLiveBackend {
     }
 
     fn pause(&mut self) -> Result<(), BackendError> {
-        self.clear_application_audio();
         Ok(())
     }
 
     fn stop(&mut self) -> Result<(), BackendError> {
-        self.clear_application_audio();
         Ok(())
     }
 }
 
-impl Drop for CloudLiveBackend {
-    fn drop(&mut self) {
-        self.clear_application_audio();
-    }
+fn distinct_application_audio_unavailable() -> Result<(), BackendError> {
+    Err(BackendError::ApplicationAudioScopeUnavailable)
 }
 
 #[cfg(test)]
@@ -162,13 +115,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn application_audio_queue_is_bounded_and_zeroized_on_pause() {
-        let mut queue = VecDeque::from(vec![1_i16; APPLICATION_AUDIO_SAMPLE_LIMIT + 1]);
-        while queue.len() > APPLICATION_AUDIO_SAMPLE_LIMIT {
-            queue.pop_front();
-        }
-        assert_eq!(queue.len(), APPLICATION_AUDIO_SAMPLE_LIMIT);
-        clear_audio_queue(&mut queue);
-        assert!(queue.is_empty());
+    fn application_audio_fails_closed_instead_of_entering_microphone_speech() {
+        assert!(matches!(
+            distinct_application_audio_unavailable(),
+            Err(BackendError::ApplicationAudioScopeUnavailable)
+        ));
+        assert_eq!(
+            BackendError::ApplicationAudioScopeUnavailable.public_code(),
+            "APPLICATION_AUDIO_SCOPE_UNAVAILABLE"
+        );
     }
 }
