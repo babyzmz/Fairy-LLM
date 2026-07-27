@@ -7,7 +7,7 @@ import type { InvokeFunction } from "../core/tauriTransport";
 import { RealtimeCompanion } from "./RealtimeCompanion";
 import {
   createRealtimePresencePublisher,
-  type RealtimePresenceState,
+  type RealtimePresenceProjection,
 } from "./realtimePresence";
 
 export function RealtimeCompanionWindowApp({
@@ -20,7 +20,7 @@ export function RealtimeCompanionWindowApp({
   const publisher = useRef<ReturnType<typeof createRealtimePresencePublisher> | null>(
     null,
   );
-  const lastPresence = useRef<RealtimePresenceState>("idle");
+  const lastPresence = useRef<RealtimePresenceProjection | null>(null);
   useEffect(() => {
     const current = createRealtimePresencePublisher();
     publisher.current = current;
@@ -30,9 +30,9 @@ export function RealtimeCompanionWindowApp({
       current.close();
     };
   }, []);
-  const publishPresence = useCallback((state: RealtimePresenceState) => {
-    lastPresence.current = state;
-    publisher.current?.publish(state);
+  const publishPresence = useCallback((projection: RealtimePresenceProjection | null) => {
+    lastPresence.current = projection;
+    publisher.current?.publish(projection);
   }, []);
   const hideWindow = useCallback(
     () => void invoke<void>("hide_companion_window"),

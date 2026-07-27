@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createRealtimePresencePublisher,
   subscribeRealtimePresence,
-  type RealtimePresenceState,
+  type RealtimePresenceProjection,
 } from "./realtimePresence";
 
 interface TestPort {
@@ -39,18 +39,31 @@ afterEach(() => {
 });
 
 describe("realtime presence channel", () => {
+  const projection = (
+    state: RealtimePresenceProjection["state"],
+    sequence: number,
+  ): RealtimePresenceProjection => ({
+    session_id: "session-1",
+    segment_id: "segment-1",
+    context_epoch: 1,
+    sequence,
+    state,
+    level: null,
+    persona_digest: "a".repeat(64),
+  });
+
   it("replays current state to a late subscriber", () => {
     const broadcast = broadcastHarness();
     const publisher = createRealtimePresencePublisher(broadcast.createPort);
-    publisher.publish("listening");
-    const observed: RealtimePresenceState[] = [];
+    publisher.publish(projection("listening", 2));
+    const observed: Array<RealtimePresenceProjection | null> = [];
 
     const unsubscribe = subscribeRealtimePresence(
       (state) => observed.push(state),
       broadcast.createPort,
     );
 
-    expect(observed).toEqual(["listening"]);
+    expect(observed).toEqual([projection("listening", 2)]);
     unsubscribe();
     publisher.close();
   });
@@ -60,20 +73,24 @@ describe("realtime presence channel", () => {
     vi.setSystemTime(1_000);
     const broadcast = broadcastHarness();
     const oldPublisher = createRealtimePresencePublisher(broadcast.createPort);
-    const observed: RealtimePresenceState[] = [];
+    const observed: Array<RealtimePresenceProjection | null> = [];
     const unsubscribe = subscribeRealtimePresence(
       (state) => observed.push(state),
       broadcast.createPort,
     );
-    oldPublisher.publish("connecting");
+    oldPublisher.publish(projection("connecting", 1));
 
     vi.setSystemTime(2_000);
     const currentPublisher = createRealtimePresencePublisher(broadcast.createPort);
-    currentPublisher.publish("speaking");
-    oldPublisher.publish("error");
+    currentPublisher.publish(projection("speaking", 2));
+    oldPublisher.publish(projection("error", 3));
     oldPublisher.close();
 
-    expect(observed).toEqual(["idle", "connecting", "speaking"]);
+    expect(observed).toEqual([
+      null,
+      projection("connecting", 1),
+      projection("speaking", 2),
+    ]);
     unsubscribe();
     currentPublisher.close();
   });

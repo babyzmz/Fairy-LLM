@@ -28,7 +28,11 @@
 .realtime-live-status > div { min-width: 0; flex: 1; display: grid; gap: 3px; }.realtime-live-status small { color: #84908c; }
 .realtime-live-status button { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid #774b47; background: #351b19; color: #ffc0b8; }
 .realtime-pulse { width: 10px; height: 10px; border-radius: 50%; background: #65cfc1; box-shadow: 0 0 0 5px #65cfc11c; animation: realtime-pulse 1.4s ease-in-out infinite; }
-.realtime-pulse.speaking { background: #8bbcff; }.realtime-pulse.error, .realtime-pulse.failed { background: #ff796d; }
+.realtime-pulse.speaking { background: #8bbcff; }
+.realtime-pulse.preparing, .realtime-pulse.loading_model, .realtime-pulse.connecting { background: #d5b97d; }
+.realtime-pulse.privacy_paused, .realtime-pulse.resource_limited { background: #c7a477; animation: none; }
+.realtime-pulse.idle, .realtime-pulse.standby { opacity: .72; animation: none; }
+.realtime-pulse.error { background: #ff796d; animation: none; }
 .realtime-note { margin: 0; color: #84908c; font-size: 11px; line-height: 1.45; }
 .realtime-usage { display: flex; gap: 14px; padding: 2px 2px 0; color: #84908c; font: 600 10px/1.4 monospace; text-transform: uppercase; letter-spacing: 0.04em; }
 .realtime-usage span { display: inline-flex; gap: 5px; }

@@ -1,6 +1,6 @@
 use fairy_realtime_worker::{
     RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
-    RealtimeInteractionIntensity,
+    RealtimeInteractionIntensity, WorkerEvent,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -24,6 +24,35 @@ pub struct ContextEpochIdentity {
     pub session_id: String,
     pub segment_id: String,
     pub epoch: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimePresenceState {
+    Idle,
+    Preparing,
+    LoadingModel,
+    Connecting,
+    Listening,
+    Observing,
+    Thinking,
+    Searching,
+    Speaking,
+    Standby,
+    PrivacyPaused,
+    ResourceLimited,
+    Error,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RealtimePresenceProjection {
+    pub session_id: String,
+    pub segment_id: String,
+    pub context_epoch: u64,
+    pub sequence: u64,
+    pub state: RealtimePresenceState,
+    pub level: Option<u8>,
+    pub persona_digest: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -111,6 +140,9 @@ pub struct RealtimeCoordinatorState {
     status: RealtimeCoordinatorStatus,
     media_generation_enabled: bool,
     action_required: bool,
+    presence_sequence: u64,
+    presence_state: RealtimePresenceState,
+    presence_level: Option<u8>,
 }
 
 impl RealtimeCoordinatorState {
@@ -151,6 +183,9 @@ impl RealtimeCoordinatorState {
             status: RealtimeCoordinatorStatus::Active,
             media_generation_enabled: true,
             action_required: false,
+            presence_sequence: 1,
+            presence_state: RealtimePresenceState::Preparing,
+            presence_level: None,
         })
     }
 
@@ -200,6 +235,7 @@ impl RealtimeCoordinatorState {
                 };
                 self.action_required = false;
                 self.media_generation_enabled = true;
+                self.set_presence(RealtimePresenceState::Preparing, None)?;
                 Ok(())
             }
             RealtimeCoordinatorEvent::SetProfile { profile } => {
@@ -214,6 +250,7 @@ impl RealtimeCoordinatorState {
                 self.require_active()?;
                 self.status = RealtimeCoordinatorStatus::PrivacyPaused;
                 self.media_generation_enabled = false;
+                self.set_presence(RealtimePresenceState::PrivacyPaused, None)?;
                 Ok(())
             }
             RealtimeCoordinatorEvent::ResumePrivacy => {
@@ -223,6 +260,7 @@ impl RealtimeCoordinatorState {
                 self.rotate_context()?;
                 self.status = RealtimeCoordinatorStatus::Active;
                 self.media_generation_enabled = true;
+                self.set_presence(RealtimePresenceState::Standby, None)?;
                 Ok(())
             }
             RealtimeCoordinatorEvent::ExtendPresence { additional_minutes } => {
@@ -238,12 +276,14 @@ impl RealtimeCoordinatorState {
             RealtimeCoordinatorEvent::End => {
                 self.status = RealtimeCoordinatorStatus::Ended;
                 self.media_generation_enabled = false;
+                self.set_presence(RealtimePresenceState::Idle, None)?;
                 Ok(())
             }
             RealtimeCoordinatorEvent::BackendFailed => {
                 self.require_active()?;
                 self.action_required = true;
                 self.media_generation_enabled = false;
+                self.set_presence(RealtimePresenceState::Error, None)?;
                 Ok(())
             }
         }
@@ -277,6 +317,48 @@ impl RealtimeCoordinatorState {
         self.presence_max_minutes
     }
 
+    pub fn presence_projection(&self) -> RealtimePresenceProjection {
+        RealtimePresenceProjection {
+            session_id: self.identity.session_id.clone(),
+            segment_id: self.identity.segment_id.clone(),
+            context_epoch: self.identity.epoch,
+            sequence: self.presence_sequence,
+            state: self.presence_state,
+            level: self.presence_level,
+            persona_digest: self.persona_digest.clone(),
+        }
+    }
+
+    pub fn project_worker_event(
+        &mut self,
+        event: &WorkerEvent,
+    ) -> Option<RealtimePresenceProjection> {
+        let (session_id, segment_id, context_epoch, state, level) = worker_presence_input(event)?;
+        if self.status == RealtimeCoordinatorStatus::Ended
+            || session_id != self.identity.session_id
+            || segment_id != self.identity.segment_id
+            || context_epoch != self.identity.epoch
+        {
+            return None;
+        }
+        if !self.set_presence(state, level).ok()? {
+            return None;
+        }
+        Some(self.presence_projection())
+    }
+
+    pub fn project_host_state(
+        &mut self,
+        state: RealtimePresenceState,
+    ) -> Option<RealtimePresenceProjection> {
+        if self.status == RealtimeCoordinatorStatus::Ended
+            || !self.set_presence(state, None).ok()?
+        {
+            return None;
+        }
+        Some(self.presence_projection())
+    }
+
     pub fn accepts_result(&self, session_id: &str, segment_id: &str, epoch: u64) -> bool {
         self.status == RealtimeCoordinatorStatus::Active
             && !self.action_required
@@ -300,6 +382,227 @@ impl RealtimeCoordinatorState {
             .checked_add(1)
             .ok_or(RealtimeCoordinatorError::EpochOverflow)?;
         Ok(())
+    }
+
+    fn set_presence(
+        &mut self,
+        state: RealtimePresenceState,
+        level: Option<u8>,
+    ) -> Result<bool, RealtimeCoordinatorError> {
+        if self.presence_state == state && self.presence_level == level {
+            return Ok(false);
+        }
+        self.presence_sequence = self
+            .presence_sequence
+            .checked_add(1)
+            .ok_or(RealtimeCoordinatorError::InvalidTransition)?;
+        self.presence_state = state;
+        self.presence_level = level;
+        Ok(true)
+    }
+}
+
+fn worker_presence_input(
+    event: &WorkerEvent,
+) -> Option<(&str, &str, u64, RealtimePresenceState, Option<u8>)> {
+    match event {
+        WorkerEvent::BackendState {
+            session_id,
+            segment_id,
+            context_epoch,
+            status,
+            ..
+        } => map_backend_state(status).map(|state| {
+            (
+                session_id.as_str(),
+                segment_id.as_str(),
+                *context_epoch,
+                state,
+                None,
+            )
+        }),
+        WorkerEvent::ModelLoadProgress {
+            session_id,
+            segment_id,
+            context_epoch,
+            ..
+        } => Some((
+            session_id,
+            segment_id,
+            *context_epoch,
+            RealtimePresenceState::LoadingModel,
+            None,
+        )),
+        WorkerEvent::SessionState {
+            session_id,
+            segment_id,
+            context_epoch,
+            status,
+            ..
+        } => map_session_state(status).map(|state| {
+            (
+                session_id.as_str(),
+                segment_id.as_str(),
+                *context_epoch,
+                state,
+                None,
+            )
+        }),
+        WorkerEvent::Presence {
+            session_id,
+            segment_id,
+            context_epoch,
+            state,
+            level,
+        } => map_worker_presence(state).map(|mapped| {
+            (
+                session_id.as_str(),
+                segment_id.as_str(),
+                *context_epoch,
+                mapped,
+                *level,
+            )
+        }),
+        WorkerEvent::BargeIn {
+            session_id,
+            segment_id,
+            context_epoch,
+        }
+        | WorkerEvent::PublicCaption {
+            session_id,
+            segment_id,
+            context_epoch,
+            speaker: _,
+            ..
+        } => Some((
+            session_id,
+            segment_id,
+            *context_epoch,
+            RealtimePresenceState::Listening,
+            None,
+        )),
+        WorkerEvent::PerceptionCandidate {
+            session_id,
+            segment_id,
+            context_epoch,
+            ..
+        } => Some((
+            session_id,
+            segment_id,
+            *context_epoch,
+            RealtimePresenceState::Thinking,
+            None,
+        )),
+        WorkerEvent::AssistanceRequest {
+            session_id,
+            segment_id,
+            context_epoch,
+            ..
+        }
+        | WorkerEvent::ToolRequest {
+            session_id,
+            segment_id,
+            context_epoch,
+            ..
+        } => Some((
+            session_id,
+            segment_id,
+            *context_epoch,
+            RealtimePresenceState::Searching,
+            None,
+        )),
+        WorkerEvent::AssistanceState {
+            session_id,
+            segment_id,
+            context_epoch,
+            status,
+            ..
+        } => Some((
+            session_id,
+            segment_id,
+            *context_epoch,
+            if status == "pending" || status == "running" {
+                RealtimePresenceState::Searching
+            } else {
+                RealtimePresenceState::Thinking
+            },
+            None,
+        )),
+        WorkerEvent::ResourcePressure {
+            session_id,
+            segment_id,
+            context_epoch,
+            ..
+        } => Some((
+            session_id,
+            segment_id,
+            *context_epoch,
+            RealtimePresenceState::ResourceLimited,
+            None,
+        )),
+        WorkerEvent::ContextRotated {
+            session_id,
+            segment_id,
+            context_epoch,
+            ..
+        } => Some((
+            session_id,
+            segment_id,
+            *context_epoch,
+            RealtimePresenceState::Standby,
+            None,
+        )),
+        WorkerEvent::PrivacyPaused {
+            session_id,
+            segment_id,
+            context_epoch,
+        } => Some((
+            session_id,
+            segment_id,
+            *context_epoch,
+            RealtimePresenceState::PrivacyPaused,
+            None,
+        )),
+        WorkerEvent::Ready { .. }
+        | WorkerEvent::Usage { .. }
+        | WorkerEvent::Diagnostic { .. }
+        | WorkerEvent::Pong => None,
+    }
+}
+
+fn map_backend_state(status: &str) -> Option<RealtimePresenceState> {
+    match status {
+        "preparing" | "starting" => Some(RealtimePresenceState::Preparing),
+        "loading" | "loading_model" => Some(RealtimePresenceState::LoadingModel),
+        "connecting" | "ready" => Some(RealtimePresenceState::Connecting),
+        "failed" | "interrupted" => Some(RealtimePresenceState::Error),
+        _ => None,
+    }
+}
+
+fn map_session_state(status: &str) -> Option<RealtimePresenceState> {
+    match status {
+        "starting" => Some(RealtimePresenceState::Preparing),
+        "active" => Some(RealtimePresenceState::Standby),
+        "stopping" => Some(RealtimePresenceState::Standby),
+        "completed" | "cancelled" => Some(RealtimePresenceState::Idle),
+        "failed" | "interrupted" => Some(RealtimePresenceState::Error),
+        _ => None,
+    }
+}
+
+fn map_worker_presence(state: &str) -> Option<RealtimePresenceState> {
+    match state {
+        "active" | "idle" | "standby" => Some(RealtimePresenceState::Standby),
+        "listening" => Some(RealtimePresenceState::Listening),
+        "observing" => Some(RealtimePresenceState::Observing),
+        "analyzing" | "thinking" => Some(RealtimePresenceState::Thinking),
+        "searching" => Some(RealtimePresenceState::Searching),
+        "speaking" => Some(RealtimePresenceState::Speaking),
+        "privacy_paused" => Some(RealtimePresenceState::PrivacyPaused),
+        "resource_limited" => Some(RealtimePresenceState::ResourceLimited),
+        "error" => Some(RealtimePresenceState::Error),
+        _ => None,
     }
 }
 
@@ -469,6 +772,82 @@ mod tests {
         assert_eq!(
             state.active_segment().creation_reason,
             BackendSegmentCreationReason::UserApprovedContinuation
+        );
+    }
+
+    #[test]
+    fn presence_projection_is_identity_and_persona_fenced() {
+        let mut state = RealtimeCoordinatorState::start(start_request()).expect("start");
+        let initial = state.presence_projection();
+        assert_eq!(initial.sequence, 1);
+        assert_eq!(initial.state, RealtimePresenceState::Preparing);
+        assert_eq!(initial.persona_digest, "a".repeat(64));
+
+        let active = WorkerEvent::SessionState {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            status: "active".to_owned(),
+            backend: RealtimeBackendKind::CloudLive,
+            cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
+            error_code: None,
+        };
+        let projected = state
+            .project_worker_event(&active)
+            .expect("active projection");
+        assert_eq!(projected.sequence, 2);
+        assert_eq!(projected.state, RealtimePresenceState::Standby);
+        assert!(state.project_worker_event(&active).is_none());
+
+        let stale = WorkerEvent::Presence {
+            session_id: "session-1".to_owned(),
+            segment_id: "stale-segment".to_owned(),
+            context_epoch: 1,
+            state: "speaking".to_owned(),
+            level: Some(4),
+        };
+        assert!(state.project_worker_event(&stale).is_none());
+        assert_eq!(state.presence_projection(), projected);
+    }
+
+    #[test]
+    fn worker_presence_maps_to_the_bounded_coordinator_vocabulary() {
+        let mut state = RealtimeCoordinatorState::start(start_request()).expect("start");
+        let listening = WorkerEvent::Presence {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            state: "listening".to_owned(),
+            level: Some(7),
+        };
+        let projected = state
+            .project_worker_event(&listening)
+            .expect("listening projection");
+        assert_eq!(projected.state, RealtimePresenceState::Listening);
+        assert_eq!(projected.level, Some(7));
+
+        let unknown = WorkerEvent::Presence {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            state: "provider_secret_state".to_owned(),
+            level: Some(7),
+        };
+        assert!(state.project_worker_event(&unknown).is_none());
+        assert_eq!(state.presence_projection(), projected);
+
+        let pressure = WorkerEvent::ResourcePressure {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            code: "GPU_BUDGET_LOW".to_owned(),
+        };
+        assert_eq!(
+            state
+                .project_worker_event(&pressure)
+                .expect("pressure projection")
+                .state,
+            RealtimePresenceState::ResourceLimited
         );
     }
 }

@@ -13,7 +13,11 @@ import type {
 import type { InvokeFunction } from "../core/tauriTransport";
 import type { DesktopPreferences } from "../settings/client";
 import { startRealtimeVoice, type NativeVoicePlayback } from "../voice/nativeVoice";
-import type { RealtimePresenceState } from "./realtimePresence";
+import {
+  isPresenceProjection,
+  type RealtimePresenceProjection,
+  type RealtimePresenceState,
+} from "./realtimePresence";
 import { useTranscriptPersistence } from "./useTranscriptPersistence";
 import "./realtime-companion.css";
 
@@ -28,7 +32,7 @@ interface CaptureSurface {
 type WorkerEvent =
   | { type: "session_state"; session_id: string; segment_id: string; context_epoch: number; status: string; backend: "local_mini_cpm_o45" | "cloud_live"; cloud_provider?: string | null; error_code?: string | null }
   | { type: "public_caption"; session_id: string; segment_id: string; context_epoch: number; sequence: number; text: string; stable: boolean; speaker: "user" | "assistant" }
-  | { type: "presence"; session_id: string; segment_id: string; context_epoch: number; state: string; level?: number | null }
+  | ({ type: "presence_projection" } & RealtimePresenceProjection)
   | { type: "barge_in"; session_id: string; segment_id: string; context_epoch: number }
   | { type: "tool_request"; session_id: string; segment_id: string; context_epoch: number; call_id: string; tool_name: string; public_intent: string }
   | { type: "usage"; session_id: string; segment_id: string; context_epoch: number; audio_input_ms: number; audio_output_ms: number; video_frame_count: number; interruption_count: number; tool_call_count: number }
@@ -73,7 +77,7 @@ export function RealtimeCompanion({
   client: CoreClient["realtime"];
   hostInvoke?: InvokeFunction;
   onClose?(): void;
-  onPresenceChange?(state: RealtimePresenceState): void;
+  onPresenceChange?(projection: RealtimePresenceProjection | null): void;
   openRequest?: number;
   windowMode?: boolean;
 }) {
@@ -88,7 +92,10 @@ export function RealtimeCompanion({
   const [applicationAudioConsent, setApplicationAudioConsent] = useState(false);
   const [session, setSession] = useState<RealtimeSession | null>(null);
   const sessionRef = useRef<RealtimeSession | null>(null);
-  const [presence, setPresence] = useState<RealtimePresenceState>("idle");
+  const [presenceProjection, setPresenceProjection] =
+    useState<RealtimePresenceProjection | null>(null);
+  const presenceProjectionRef = useRef<RealtimePresenceProjection | null>(null);
+  const presence: RealtimePresenceState = presenceProjection?.state ?? "idle";
   const [captions, setCaptions] = useState<string[]>([]);
   const [draftCaption, setDraftCaption] = useState("");
   const draftCaptionRef = useRef("");
@@ -157,9 +164,9 @@ export function RealtimeCompanion({
   useEffect(() => () => stopFairyVoice(), [stopFairyVoice]);
 
   useEffect(() => {
-    onPresenceChange?.(presence);
-    return () => onPresenceChange?.("idle");
-  }, [onPresenceChange, presence]);
+    onPresenceChange?.(presenceProjection);
+    return () => onPresenceChange?.(null);
+  }, [onPresenceChange, presenceProjection]);
 
   useEffect(() => {
     if (windowMode || openRequest > 0) setOpen(true);
@@ -284,7 +291,6 @@ export function RealtimeCompanion({
       if (payload.type === "worker_interrupted") {
         if (current === null || isTerminal(current.status)) return;
         void report("interrupted", payload.error_code);
-        setPresence("error");
         setError(realtimeProviderErrorMessage(payload.error_code));
         return;
       }
@@ -292,7 +298,6 @@ export function RealtimeCompanion({
       if (isTerminal(current.status)) return;
       if (payload.type === "session_state") {
         setActiveBackend(payload.backend);
-        setPresence(normalizePresence(payload.status));
         if (payload.status === "active") void report("active");
         if (payload.status === "interrupted") void report("interrupted", payload.error_code ?? "WORKER_INTERRUPTED");
         if (payload.status === "failed") {
@@ -302,12 +307,24 @@ export function RealtimeCompanion({
             await client.worker.stop(payload.session_id).catch(() => undefined);
           })();
         }
-      } else if (payload.type === "presence") {
-        setPresence(normalizePresence(payload.state));
+      } else if (payload.type === "presence_projection") {
+        if (!isPresenceProjection(payload)) return;
+        const previous = presenceProjectionRef.current;
+        if (
+          previous !== null
+          && (
+            payload.sequence <= previous.sequence
+            || (
+              previous.session_id === payload.session_id
+              && payload.persona_digest !== previous.persona_digest
+            )
+          )
+        ) return;
+        presenceProjectionRef.current = payload;
+        setPresenceProjection(payload);
       } else if (payload.type === "barge_in") {
         lastUserActivity.current = Date.now();
         stopFairyVoice();
-        setPresence("listening");
       } else if (payload.type === "public_caption") {
         if (payload.speaker === "user") lastUserActivity.current = Date.now();
         if (payload.stable) {
@@ -429,6 +446,8 @@ export function RealtimeCompanion({
     setPaused(false);
     setControlsOpen(false);
     setMemory(null);
+    presenceProjectionRef.current = null;
+    setPresenceProjection(null);
     try {
       const priorMinutes = await todaysRealtimeMinutes(client);
       const resolution = await client.worker.preview({
@@ -483,7 +502,6 @@ export function RealtimeCompanion({
         cloud_screen_upload_consent: screenConsent,
       });
       setActiveBackend(worker.backend ?? resolution.backend);
-      setPresence("connecting");
     } catch (caught) {
       setError(realtimeProviderErrorMessage(messageOf(caught)));
       if (sessionRef.current !== null) await report("failed", "REALTIME_START_FAILED");
@@ -547,12 +565,10 @@ export function RealtimeCompanion({
         tool_call_count: workerStatus.tool_call_count,
       };
       if (stopping.status !== "stopping") {
-        setPresence("completed");
         return;
       }
       await report("completed");
       if (sessionRef.current?.status !== "completed") return;
-      setPresence("completed");
       setActiveBackend(null);
       const surface = surfaces.find((item) => item.source_id === sourceId);
       if (preferences?.realtime_memory_enabled) {
@@ -775,18 +791,17 @@ export function realtimeProviderErrorMessage(code?: string | null): string {
 
 function presenceLabel(value: string): string {
   if (value === "listening") return "Listening";
-  if (value === "analyzing") return "Understanding the game";
+  if (value === "observing") return "Observing";
+  if (value === "thinking") return "Thinking";
+  if (value === "searching") return "Searching";
   if (value === "speaking") return "Fairy is speaking";
-  if (value === "connecting" || value === "starting") return "Connecting";
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function normalizePresence(value: string): RealtimePresenceState {
-  if (["starting", "connecting", "active", "listening", "analyzing", "speaking", "stopping", "completed", "error"].includes(value)) {
-    return value as RealtimePresenceState;
-  }
-  if (value === "failed" || value === "interrupted") return "error";
-  return "idle";
+  if (value === "preparing") return "Preparing";
+  if (value === "loading_model") return "Loading local model";
+  if (value === "connecting") return "Connecting";
+  if (value === "standby") return "Standing by";
+  if (value === "privacy_paused") return "Privacy paused";
+  if (value === "resource_limited") return "Resources limited";
+  return value === "idle" ? "Idle" : "Needs attention";
 }
 
 function messageOf(value: unknown): string {

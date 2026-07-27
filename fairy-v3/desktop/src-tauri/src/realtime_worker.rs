@@ -22,7 +22,7 @@ use zeroize::Zeroizing;
 use crate::omni_model_manifest::OmniModelManifest;
 use crate::realtime_coordinator::{
     ContextEpochIdentity, RealtimeCoordinatorEvent, RealtimeCoordinatorStart,
-    RealtimeCoordinatorState,
+    RealtimeCoordinatorState, RealtimePresenceProjection, RealtimePresenceState,
 };
 use crate::realtime_dialogue::{RealtimeDialogueDecision, RealtimeDialogueDirector};
 
@@ -350,6 +350,12 @@ impl RealtimeWorkerManager {
             self.restore_dialogue(previous_dialogue);
             return Err(RealtimeWorkerError::Protocol);
         }
+        if let Some(projection) = self.current_presence_projection() {
+            let _ = app.emit(
+                REALTIME_WORKER_EVENT,
+                presence_projection_payload(projection),
+            );
+        }
         process.session_id = Some(input.session_id);
         let status = RealtimeWorkerStatus {
             running: true,
@@ -365,12 +371,17 @@ impl RealtimeWorkerManager {
         Ok(status)
     }
 
-    pub fn stop(&self, session_id: &str) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+    pub fn stop(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+    ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
         let mut guard = self
             .process
             .lock()
             .map_err(|_| RealtimeWorkerError::Protocol)?;
         let Some(mut process) = guard.take() else {
+            self.emit_terminal_presence(app);
             self.finish_governance();
             return Ok(RealtimeWorkerStatus {
                 running: false,
@@ -397,6 +408,7 @@ impl RealtimeWorkerManager {
         let deadline = Instant::now() + WORKER_STOP_GRACE;
         while Instant::now() < deadline {
             if process.child.try_wait()?.is_some() {
+                self.emit_terminal_presence(app);
                 self.finish_governance();
                 return Ok(RealtimeWorkerStatus {
                     running: false,
@@ -413,6 +425,7 @@ impl RealtimeWorkerManager {
         }
         let _ = process.child.kill();
         let _ = process.child.wait();
+        self.emit_terminal_presence(app);
         self.finish_governance();
         Ok(RealtimeWorkerStatus {
             running: false,
@@ -490,6 +503,30 @@ impl RealtimeWorkerManager {
                 director.invalidate_speech();
             }
             *dialogue = None;
+        }
+    }
+
+    fn current_presence_projection(&self) -> Option<RealtimePresenceProjection> {
+        self.coordinator.lock().ok().and_then(|state| {
+            state
+                .as_ref()
+                .map(RealtimeCoordinatorState::presence_projection)
+        })
+    }
+
+    fn emit_terminal_presence(&self, app: &AppHandle) {
+        let projection = self.coordinator.lock().ok().and_then(|mut coordinator| {
+            let state = coordinator.as_mut()?;
+            let previous_sequence = state.presence_projection().sequence;
+            state.apply(RealtimeCoordinatorEvent::End).ok()?;
+            let projection = state.presence_projection();
+            (projection.sequence != previous_sequence).then_some(projection)
+        });
+        if let Some(projection) = projection {
+            let _ = app.emit(
+                REALTIME_WORKER_EVENT,
+                presence_projection_payload(projection),
+            );
         }
     }
 
@@ -642,13 +679,16 @@ fn spawn_worker(
                     if !worker_event_matches_active_identity(&value, &active_identity) {
                         continue;
                     }
+                    let value = govern_speech_state(value, &dialogue);
+                    if let Some(projection) = govern_presence_event(&value, &coordinator) {
+                        let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                    }
                     if value.get("type").and_then(Value::as_str) == Some("perception_candidate") {
                         if let Some(projected) = govern_dialogue_candidate(&value, &dialogue) {
                             let _ = app.emit(REALTIME_WORKER_EVENT, projected);
                         }
                         continue;
                     }
-                    let value = govern_speech_state(value, &dialogue);
                     if is_terminal_worker_event(&value) {
                         reader_terminal.store(true, Ordering::Release);
                     }
@@ -671,10 +711,18 @@ fn spawn_worker(
                             }
                         }
                     }
+                    if value.get("type").and_then(Value::as_str) == Some("presence") {
+                        continue;
+                    }
                     let _ = app.emit(REALTIME_WORKER_EVENT, value);
                 }
                 Ok(None) | Err(_) => {
                     if !reader_expected_shutdown.load(Ordering::Acquire) {
+                        if let Some(projection) =
+                            govern_host_presence(RealtimePresenceState::Error, &coordinator)
+                        {
+                            let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                        }
                         let _ = app.emit(
                             REALTIME_WORKER_EVENT,
                             serde_json::json!({
@@ -702,6 +750,44 @@ fn spawn_worker(
             Err(RealtimeWorkerError::Protocol)
         }
     }
+}
+
+fn govern_presence_event(
+    value: &Value,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+) -> Option<Value> {
+    let event = serde_json::from_value::<WorkerEvent>(value.clone()).ok()?;
+    let projection = coordinator
+        .lock()
+        .ok()?
+        .as_mut()?
+        .project_worker_event(&event)?;
+    Some(presence_projection_payload(projection))
+}
+
+fn govern_host_presence(
+    state: RealtimePresenceState,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+) -> Option<Value> {
+    let projection = coordinator
+        .lock()
+        .ok()?
+        .as_mut()?
+        .project_host_state(state)?;
+    Some(presence_projection_payload(projection))
+}
+
+fn presence_projection_payload(projection: RealtimePresenceProjection) -> Value {
+    serde_json::json!({
+        "type": "presence_projection",
+        "session_id": projection.session_id,
+        "segment_id": projection.segment_id,
+        "context_epoch": projection.context_epoch,
+        "sequence": projection.sequence,
+        "state": projection.state,
+        "level": projection.level,
+        "persona_digest": projection.persona_digest,
+    })
 }
 
 fn govern_dialogue_candidate(
@@ -1026,6 +1112,22 @@ mod tests {
         ))
     }
 
+    fn coordinator() -> Mutex<Option<RealtimeCoordinatorState>> {
+        Mutex::new(Some(
+            RealtimeCoordinatorState::start(RealtimeCoordinatorStart {
+                session_id: "session-1".to_owned(),
+                segment_id: "segment-1".to_owned(),
+                persona_digest: "a".repeat(64),
+                backend: RealtimeBackendKind::CloudLive,
+                cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
+                activity_profile: RealtimeActivityProfile::Game,
+                interaction_intensity: RealtimeInteractionIntensity::Standard,
+                presence_max_minutes: 240,
+            })
+            .expect("coordinator"),
+        ))
+    }
+
     fn candidate_event(grounding: serde_json::Value) -> Value {
         serde_json::json!({
             "type": "perception_candidate",
@@ -1093,5 +1195,50 @@ mod tests {
         assert_eq!(projected["needs_online_assistance"], true);
         assert!(projected.get("tool_name").is_none());
         assert!(projected.get("arguments").is_none());
+    }
+
+    #[test]
+    fn raw_worker_presence_becomes_an_identity_bound_projection() {
+        let coordinator = coordinator();
+        let projected = govern_presence_event(
+            &serde_json::json!({
+                "type": "presence",
+                "session_id": "session-1",
+                "segment_id": "segment-1",
+                "context_epoch": 1,
+                "state": "listening",
+                "level": 5
+            }),
+            &coordinator,
+        )
+        .expect("presence projection");
+        assert_eq!(projected["type"], "presence_projection");
+        assert_eq!(projected["state"], "listening");
+        assert_eq!(projected["sequence"], 2);
+        assert_eq!(projected["level"], 5);
+        assert_eq!(projected["persona_digest"], "a".repeat(64));
+        assert!(govern_presence_event(
+            &serde_json::json!({
+                "type": "presence",
+                "session_id": "session-1",
+                "segment_id": "segment-1",
+                "context_epoch": 1,
+                "state": "listening",
+                "level": 5
+            }),
+            &coordinator,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn host_interruption_projects_only_the_bounded_error_state() {
+        let coordinator = coordinator();
+        let projected = govern_host_presence(RealtimePresenceState::Error, &coordinator)
+            .expect("error projection");
+        assert_eq!(projected["type"], "presence_projection");
+        assert_eq!(projected["state"], "error");
+        assert!(projected.get("error_code").is_none());
+        assert!(projected.get("provider_payload").is_none());
     }
 }

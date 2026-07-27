@@ -56,7 +56,9 @@ function Workspace({
   const model = useWorkspaceModel(client);
   const [realtimePresence, setRealtimePresence] = useState<RealtimePresenceState>("idle");
   useEffect(
-    () => subscribeRealtimePresence(setRealtimePresence),
+    () => subscribeRealtimePresence(
+      (projection) => setRealtimePresence(projection?.state ?? "idle"),
+    ),
     [],
   );
   const shellModel = useMemo(
@@ -116,7 +118,7 @@ function WorkspacePresence({
   const [ambientDialogue, setAmbientDialogue] = useState<AmbientDialogueProjection | null>(null);
   const visibleAmbientDialogueRef = useRef<AmbientDialogueProjection | null>(null);
   const [petInputOpen, setPetInputOpen] = useState(false);
-  const realtimeActive = !["idle", "completed", "error"].includes(realtimePresence);
+  const realtimeActive = !["idle", "error"].includes(realtimePresence);
   const updateAmbientDialogue = useCallback((projection: AmbientDialogueProjection | null) => {
     setAmbientDialogue(projection);
   }, []);

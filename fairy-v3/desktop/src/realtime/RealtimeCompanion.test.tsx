@@ -68,6 +68,20 @@ const workerStatus = (running: boolean): RealtimeWorkerStatus => ({
   tool_call_count: 0,
 });
 
+const presenceProjection = (
+  state: string,
+  sequence: number,
+): Record<string, unknown> => ({
+  type: "presence_projection",
+  session_id: session("active", 2).id,
+  segment_id: "segment-1",
+  context_epoch: 1,
+  sequence,
+  state,
+  level: null,
+  persona_digest: "a".repeat(64),
+});
+
 const backendPreview = async (input: {
   cloud_microphone_upload_consent: boolean;
   cloud_screen_upload_consent: boolean;
@@ -302,6 +316,9 @@ describe("RealtimeCompanion", () => {
     await act(async () => eventListener?.({ payload: {
       type: "session_state", session_id: session("active", 2).id, status: "active",
     } }));
+    await act(async () => eventListener?.({
+      payload: presenceProjection("standby", 2),
+    }));
     // A partial caption only updates the live draft; nothing is persisted yet.
     await act(async () => eventListener?.({ payload: {
       type: "public_caption", session_id: session("active", 2).id,
@@ -362,6 +379,9 @@ describe("RealtimeCompanion", () => {
     await act(async () => eventListener?.({ payload: {
       type: "session_state", session_id: session("active", 2).id, status: "active",
     } }));
+    await act(async () => eventListener?.({
+      payload: presenceProjection("standby", 2),
+    }));
     await act(async () => eventListener?.({ payload: {
       type: "public_caption",
       session_id: session("active", 2).id,
@@ -374,14 +394,60 @@ describe("RealtimeCompanion", () => {
       await screen.findByText("1 caption unsaved", {}, { timeout: 3_000 }),
     ).not.toBeNull();
     expect(append).toHaveBeenCalledTimes(3);
-    expect(screen.getByText("Active")).not.toBeNull();
+    expect(screen.getByText("Standing by")).not.toBeNull();
 
     append.mockResolvedValue({});
     fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
 
     await waitFor(() => expect(append).toHaveBeenCalledTimes(4));
     await waitFor(() => expect(screen.queryByText("1 caption unsaved")).toBeNull());
-    expect(screen.getByText("Active")).not.toBeNull();
+    expect(screen.getByText("Standing by")).not.toBeNull();
+  });
+
+  it("renders only fresh persona-bound Coordinator presence projections", async () => {
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        get: vi.fn(async () => session("active", 2)),
+        report: vi.fn(async () => session("active", 2)),
+        stop: vi.fn(),
+      },
+      memories: { save: vi.fn() },
+      transcript: { append: vi.fn(), list: vi.fn(async () => ({ items: [] })) },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => workerStatus(false)),
+        start: vi.fn(async () => workerStatus(true)),
+        stop: vi.fn(),
+        toolResult: vi.fn(),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: /Test Game/ });
+    await grantMediaConsentAndStart();
+    await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
+    await act(async () => eventListener?.({ payload: {
+      type: "session_state",
+      session_id: session("active", 2).id,
+      status: "active",
+    } }));
+    expect(screen.getByText("Idle")).not.toBeNull();
+
+    await act(async () => eventListener?.({
+      payload: presenceProjection("thinking", 4),
+    }));
+    expect(screen.getByText("Thinking")).not.toBeNull();
+
+    await act(async () => eventListener?.({
+      payload: presenceProjection("speaking", 3),
+    }));
+    const drift = presenceProjection("speaking", 5);
+    drift.persona_digest = "b".repeat(64);
+    await act(async () => eventListener?.({ payload: drift }));
+    expect(screen.getByText("Thinking")).not.toBeNull();
+    expect(screen.queryByText("Fairy is speaking")).toBeNull();
   });
 
   it("gates microphone and screen input through the collapsible session controls", async () => {
@@ -619,6 +685,9 @@ describe("RealtimeCompanion", () => {
     await act(async () => eventListener?.({ payload: {
       type: "barge_in", session_id: session("active", 2).id,
     } }));
+    await act(async () => eventListener?.({
+      payload: presenceProjection("listening", 3),
+    }));
 
     expect(stopPlayback).toHaveBeenCalledOnce();
     expect(screen.getByText("Listening")).not.toBeNull();

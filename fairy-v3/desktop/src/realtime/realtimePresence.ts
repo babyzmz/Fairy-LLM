@@ -1,25 +1,38 @@
 export type RealtimePresenceState =
   | "idle"
-  | "starting"
+  | "preparing"
+  | "loading_model"
   | "connecting"
-  | "active"
   | "listening"
-  | "analyzing"
+  | "observing"
+  | "thinking"
+  | "searching"
   | "speaking"
-  | "stopping"
-  | "completed"
+  | "standby"
+  | "privacy_paused"
+  | "resource_limited"
   | "error";
+
+export interface RealtimePresenceProjection {
+  session_id: string;
+  segment_id: string;
+  context_epoch: number;
+  sequence: number;
+  state: RealtimePresenceState;
+  level: number | null;
+  persona_digest: string;
+}
 
 type RealtimePresenceMessage =
   | {
       kind: "realtime.presence.request";
     }
   | {
-      kind: "realtime.presence.state";
+      kind: "realtime.presence.projection";
       instance_id: string;
       instance_started_at: number;
       sequence: number;
-      state: RealtimePresenceState;
+      projection: RealtimePresenceProjection | null;
     };
 
 interface BroadcastPort {
@@ -29,21 +42,24 @@ interface BroadcastPort {
 }
 
 export interface RealtimePresencePublisher {
-  publish(state: RealtimePresenceState): void;
+  publish(projection: RealtimePresenceProjection | null): void;
   close(): void;
 }
 
-const channelName = "fairy.realtime-presence.v1";
+const channelName = "fairy.realtime-presence.v2";
 const validStates = new Set<RealtimePresenceState>([
   "idle",
-  "starting",
+  "preparing",
+  "loading_model",
   "connecting",
-  "active",
   "listening",
-  "analyzing",
+  "observing",
+  "thinking",
+  "searching",
   "speaking",
-  "stopping",
-  "completed",
+  "standby",
+  "privacy_paused",
+  "resource_limited",
   "error",
 ]);
 
@@ -53,17 +69,17 @@ export function createRealtimePresencePublisher(
   const port = createPort();
   const instanceId = createInstanceId();
   const instanceStartedAt = Date.now();
-  let current: RealtimePresenceState = "idle";
+  let current: RealtimePresenceProjection | null = null;
   let sequence = 0;
 
   const publishCurrent = () => {
     sequence += 1;
     port?.postMessage({
-      kind: "realtime.presence.state",
+      kind: "realtime.presence.projection",
       instance_id: instanceId,
       instance_started_at: instanceStartedAt,
       sequence,
-      state: current,
+      projection: current,
     });
   };
 
@@ -74,12 +90,13 @@ export function createRealtimePresencePublisher(
   }
 
   return {
-    publish(state) {
-      current = state;
+    publish(projection) {
+      if (projection !== null && !isPresenceProjection(projection)) return;
+      current = projection;
       publishCurrent();
     },
     close() {
-      current = "idle";
+      current = null;
       publishCurrent();
       port?.close();
     },
@@ -87,7 +104,7 @@ export function createRealtimePresencePublisher(
 }
 
 export function subscribeRealtimePresence(
-  listener: (state: RealtimePresenceState) => void,
+  listener: (projection: RealtimePresenceProjection | null) => void,
   createPort: () => BroadcastPort | null = createBroadcastPort,
 ): () => void {
   const port = createPort();
@@ -97,7 +114,7 @@ export function subscribeRealtimePresence(
   let latestSequence = -1;
 
   port.onmessage = (event) => {
-    const message = parseStateMessage(event.data);
+    const message = parseProjectionMessage(event.data);
     if (message === null) return;
     const sameInstance =
       message.instance_started_at === latestStartedAt
@@ -111,10 +128,39 @@ export function subscribeRealtimePresence(
     latestStartedAt = message.instance_started_at;
     latestInstanceId = message.instance_id;
     latestSequence = message.sequence;
-    listener(message.state);
+    listener(message.projection);
   };
   port.postMessage({ kind: "realtime.presence.request" });
   return () => port.close();
+}
+
+export function isPresenceProjection(
+  value: unknown,
+): value is RealtimePresenceProjection {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<RealtimePresenceProjection>;
+  return (
+    typeof candidate.session_id === "string"
+    && candidate.session_id.length > 0
+    && typeof candidate.segment_id === "string"
+    && candidate.segment_id.length > 0
+    && Number.isSafeInteger(candidate.context_epoch)
+    && (candidate.context_epoch ?? 0) > 0
+    && Number.isSafeInteger(candidate.sequence)
+    && (candidate.sequence ?? 0) > 0
+    && typeof candidate.state === "string"
+    && validStates.has(candidate.state as RealtimePresenceState)
+    && (
+      candidate.level === null
+      || (
+        Number.isSafeInteger(candidate.level)
+        && (candidate.level ?? -1) >= 0
+        && (candidate.level ?? 256) <= 255
+      )
+    )
+    && typeof candidate.persona_digest === "string"
+    && /^[0-9a-f]{64}$/.test(candidate.persona_digest)
+  );
 }
 
 function createBroadcastPort(): BroadcastPort | null {
@@ -138,14 +184,17 @@ function isRequestMessage(value: unknown): value is RealtimePresenceMessage {
   );
 }
 
-function parseStateMessage(
+function parseProjectionMessage(
   value: unknown,
-): Extract<RealtimePresenceMessage, { kind: "realtime.presence.state" }> | null {
+): Extract<
+  RealtimePresenceMessage,
+  { kind: "realtime.presence.projection" }
+> | null {
   if (
     typeof value !== "object"
     || value === null
     || !("kind" in value)
-    || value.kind !== "realtime.presence.state"
+    || value.kind !== "realtime.presence.projection"
     || !("instance_id" in value)
     || typeof value.instance_id !== "string"
     || !("instance_started_at" in value)
@@ -154,14 +203,13 @@ function parseStateMessage(
     || !("sequence" in value)
     || typeof value.sequence !== "number"
     || !Number.isSafeInteger(value.sequence)
-    || !("state" in value)
-    || typeof value.state !== "string"
-    || !validStates.has(value.state as RealtimePresenceState)
+    || !("projection" in value)
+    || (value.projection !== null && !isPresenceProjection(value.projection))
   ) {
     return null;
   }
   return value as Extract<
     RealtimePresenceMessage,
-    { kind: "realtime.presence.state" }
+    { kind: "realtime.presence.projection" }
   >;
 }

@@ -864,13 +864,14 @@ async fn realtime_backend_resolution_preview(
 #[tauri::command]
 async fn realtime_worker_stop(
     window: WebviewWindow,
+    app: tauri::AppHandle,
     state: State<'_, DesktopState>,
     input: RealtimeWorkerStopInput,
 ) -> Result<RealtimeWorkerStatus, String> {
     authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
     state
         .realtime
-        .stop(&input.session_id)
+        .stop(&app, &input.session_id)
         .map_err(|error| error.to_string())
 }
 

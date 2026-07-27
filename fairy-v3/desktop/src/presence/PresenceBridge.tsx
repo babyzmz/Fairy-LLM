@@ -134,23 +134,33 @@ function withEphemeralPresence(
 function realtimePresenceWorkState(
   state: RealtimePresenceState,
 ): PresenceProjectionState["work_state"] | null {
-  if (state === "starting" || state === "connecting" || state === "analyzing") return "analyzing";
-  if (state === "active" || state === "listening") return "ready";
+  if (
+    state === "preparing"
+    || state === "loading_model"
+    || state === "connecting"
+    || state === "observing"
+    || state === "thinking"
+    || state === "searching"
+  ) return "analyzing";
+  if (state === "listening" || state === "standby" || state === "privacy_paused") return "ready";
   if (state === "speaking") return "streaming";
-  if (state === "stopping") return "analyzing";
-  if (state === "completed") return "ready";
-  if (state === "error") return "error";
+  if (state === "resource_limited" || state === "error") return "error";
   return null;
 }
 
 function realtimeStatusText(state: RealtimePresenceState): string | null {
-  if (state === "starting" || state === "connecting") return "Fairy is connecting";
-  if (state === "active" || state === "listening") return "Fairy is listening";
-  if (state === "analyzing") return "Fairy is watching the game";
+  if (state === "preparing") return "Fairy is preparing";
+  if (state === "loading_model") return "Fairy is loading the local model";
+  if (state === "connecting") return "Fairy is connecting";
+  if (state === "listening") return "Fairy is listening";
+  if (state === "observing") return "Fairy is observing";
+  if (state === "thinking") return "Fairy is thinking";
+  if (state === "searching") return "Fairy is searching";
   if (state === "speaking") return "Fairy is speaking";
-  if (state === "stopping") return "Fairy is wrapping up";
-  if (state === "completed") return "Game session complete";
-  if (state === "error") return "Game companion needs attention";
+  if (state === "standby") return "Fairy is standing by";
+  if (state === "privacy_paused") return "Realtime privacy pause is active";
+  if (state === "resource_limited") return "Realtime resources are limited";
+  if (state === "error") return "Realtime companion needs attention";
   return null;
 }
 
