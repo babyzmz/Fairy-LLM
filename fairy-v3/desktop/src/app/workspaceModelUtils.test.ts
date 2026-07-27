@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Task } from "../core/client";
-import { selectWorkspaceTask } from "./workspaceModelUtils";
+import { selectWorkspaceTask, workspaceDisplayError } from "./workspaceModelUtils";
 
 describe("selectWorkspaceTask", () => {
   it("keeps an active Task bound while a new candidate is being produced", () => {
@@ -22,6 +22,26 @@ describe("selectWorkspaceTask", () => {
     const failed = task("failed", "failed", null, "2026-07-22T00:02:00Z");
 
     expect(selectWorkspaceTask([failed], null)?.id).toBe(failed.id);
+  });
+});
+
+describe("workspaceDisplayError", () => {
+  it("gives explicit action failures priority over Event Stream recovery state", () => {
+    expect(workspaceDisplayError(
+      { message: "Action failed", code: "VERSION_CONFLICT" },
+      { message: "Event Stream offline", code: "TRANSPORT_ERROR" },
+    )).toEqual({ message: "Action failed", code: "VERSION_CONFLICT" });
+  });
+
+  it("falls back to the Event Stream failure and clears when both sources recover", () => {
+    expect(workspaceDisplayError(
+      { message: null, code: null },
+      { message: "Event Stream offline", code: "TRANSPORT_ERROR" },
+    )).toEqual({ message: "Event Stream offline", code: "TRANSPORT_ERROR" });
+    expect(workspaceDisplayError(
+      { message: null, code: null },
+      { message: null, code: null },
+    )).toEqual({ message: null, code: null });
   });
 });
 

@@ -43,6 +43,7 @@ import {
   requireId,
   selectedItem,
   selectWorkspaceTask,
+  workspaceDisplayError,
   workspaceKey,
 } from "./workspaceModelUtils";
 import {
@@ -67,6 +68,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const eventCheckpoint = useRef(readEventCheckpoint());
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionErrorCode, setActionErrorCode] = useState<string | null>(null);
+  const [eventStreamError, setEventStreamError] = useState<string | null>(null);
+  const [eventStreamErrorCode, setEventStreamErrorCode] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
   const [chatTaskId, setChatTaskId] = useState<string | null>(null);
   const chatTaskIdRef = useRef<string | null>(null);
@@ -403,6 +406,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   useEffect(() => {
     if (!healthQuery.isSuccess) return;
     const controller = new AbortController();
+    setEventStreamError(null);
+    setEventStreamErrorCode(null);
     void runResilientEventDelivery(
       {
         sourceId: client.events.sourceId(),
@@ -425,8 +430,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         },
         onError(error) {
           if (controller.signal.aborted) return;
-          setActionError(errorMessage(error));
-          setActionErrorCode(coreErrorCode(error));
+          setEventStreamError(errorMessage(error));
+          setEventStreamErrorCode(coreErrorCode(error));
+        },
+        onRecovered() {
+          if (controller.signal.aborted) return;
+          setEventStreamError(null);
+          setEventStreamErrorCode(null);
         },
       },
     );
@@ -896,6 +906,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         : projectMessagesQuery.isError
           ? "error"
           : "loading";
+  const displayError = workspaceDisplayError(
+    { message: actionError, code: actionErrorCode },
+    { message: eventStreamError, code: eventStreamErrorCode },
+  );
 
   return {
     state,
@@ -914,8 +928,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         ? "Core starting"
         : "Core ready",
     errorMessage: queryError === null ? null : errorMessage(queryError),
-    actionError,
-    actionErrorCode,
+    actionError: displayError.message,
+    actionErrorCode: displayError.code,
     isActing,
     permissionProfile,
     permissionSettings: permissionsQuery.data ?? null,

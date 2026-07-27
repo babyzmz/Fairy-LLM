@@ -96,3 +96,15 @@ export function coreErrorCode(error: unknown): string | null {
   }
   return typeof error.errorCode === "string" ? error.errorCode : null;
 }
+
+interface WorkspaceErrorSource {
+  message: string | null;
+  code: string | null;
+}
+
+export function workspaceDisplayError(
+  action: WorkspaceErrorSource,
+  eventStream: WorkspaceErrorSource,
+): WorkspaceErrorSource {
+  return action.message !== null ? action : eventStream;
+}

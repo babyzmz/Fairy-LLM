@@ -25,6 +25,7 @@ export interface EventDeliveryOptions {
   pageSize?: number;
   onEvent(event: EventEnvelope): void | Promise<void>;
   onCheckpoint(checkpoint: EventCheckpoint): void | Promise<void>;
+  onReady?(): void | Promise<void>;
 }
 
 export function reconcileEventCheckpoint(
@@ -78,6 +79,7 @@ export async function runEventDelivery(
     }
   }
 
+  await options.onReady?.();
   for await (const event of client.subscribe(cursor, { signal: options.signal })) {
     options.signal?.throwIfAborted();
     if (event.cursor <= cursor) continue;
@@ -93,6 +95,7 @@ function checkpointFor(sourceId: string, ledgerId: string, cursor: number): Even
 
 export interface ResilientDeliveryOptions extends EventDeliveryOptions {
   onError?(error: unknown, attempt: number): void | Promise<void>;
+  onRecovered?(): void | Promise<void>;
   reconnectDelayMs?(attempt: number): number;
 }
 
@@ -116,6 +119,7 @@ export async function runResilientEventDelivery(
   const reconnectDelay = options.reconnectDelayMs ?? defaultReconnectDelay;
   let checkpoint = options.checkpoint;
   let attempt = 0;
+  let recovering = false;
 
   const onCheckpoint = async (next: EventCheckpoint) => {
     checkpoint = next;
@@ -125,6 +129,13 @@ export async function runResilientEventDelivery(
     attempt = 0;
     await options.onEvent(event);
   };
+  const onReady = async () => {
+    await options.onReady?.();
+    if (!recovering) return;
+    recovering = false;
+    attempt = 0;
+    await options.onRecovered?.();
+  };
 
   while (!options.signal?.aborted) {
     try {
@@ -133,9 +144,11 @@ export async function runResilientEventDelivery(
         checkpoint,
         onEvent,
         onCheckpoint,
+        onReady,
       });
     } catch (error) {
       if (options.signal?.aborted) return;
+      recovering = true;
       await options.onError?.(error, attempt + 1);
     }
     if (options.signal?.aborted) return;

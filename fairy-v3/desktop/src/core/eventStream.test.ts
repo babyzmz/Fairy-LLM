@@ -197,6 +197,81 @@ it("reconnects and resumes from the latest checkpoint after a stream error", asy
   expect(errors).toEqual([1]);
 });
 
+it("reports recovery after catch-up succeeds even when no new event arrives", async () => {
+  const controller = new AbortController();
+  const errors: number[] = [];
+  let recoveries = 0;
+  let stateCalls = 0;
+  const client: EventDeliveryClient = {
+    sourceId: "local:stdio",
+    async state() {
+      stateCalls += 1;
+      if (stateCalls === 1) throw new Error("transport unavailable");
+      return {
+        ledger_id: "019f4b33-c7fb-7652-a127-759143030010",
+        oldest_cursor: 0,
+        latest_cursor: 0,
+      };
+    },
+    async list(cursor) {
+      return { items: [], next_cursor: cursor };
+    },
+    async *subscribe() {
+      controller.abort();
+    },
+  };
+
+  await runResilientEventDelivery(client, {
+    checkpoint: null,
+    signal: controller.signal,
+    reconnectDelayMs: () => 0,
+    onEvent() {},
+    onCheckpoint() {},
+    onError(_error, retryAttempt) {
+      errors.push(retryAttempt);
+    },
+    onRecovered() {
+      recoveries += 1;
+    },
+  });
+
+  expect(errors).toEqual([1]);
+  expect(recoveries).toBe(1);
+});
+
+it("does not report a false recovery during a healthy initial connection", async () => {
+  const controller = new AbortController();
+  let recoveries = 0;
+  const client: EventDeliveryClient = {
+    sourceId: "local:stdio",
+    async state() {
+      return {
+        ledger_id: "019f4b33-c7fb-7652-a127-759143030010",
+        oldest_cursor: 0,
+        latest_cursor: 0,
+      };
+    },
+    async list(cursor) {
+      return { items: [], next_cursor: cursor };
+    },
+    async *subscribe() {
+      controller.abort();
+    },
+  };
+
+  await runResilientEventDelivery(client, {
+    checkpoint: null,
+    signal: controller.signal,
+    onEvent() {},
+    onCheckpoint() {},
+    onRecovered() {
+      recoveries += 1;
+    },
+  });
+
+  expect(recoveries).toBe(0);
+});
+
 it("uses a capped exponential reconnect backoff", () => {
   expect(defaultReconnectDelay(1)).toBe(500);
   expect(defaultReconnectDelay(2)).toBe(1_000);
