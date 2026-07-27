@@ -62,6 +62,7 @@ pub mod hardware_capabilities;
 pub mod hardware_probe;
 pub mod obsidian_path_registry;
 pub mod omni_model_catalog;
+pub mod omni_model_download;
 pub mod omni_model_manager;
 pub mod omni_model_manifest;
 pub mod omni_model_store;

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::omni_model_download::{OmniArtifactTransfer, OmniModelDownloadError};
 use crate::omni_model_manifest::{ManifestError, OmniModelFile, OmniModelManifest};
 use crate::omni_model_store::{
     OmniModelInstallPhase, OmniModelInstallState, OmniModelStore, OmniModelStoreError,
@@ -28,6 +29,10 @@ enum ActiveOperation {
 pub struct OmniCancellationToken(Arc<AtomicBool>);
 
 impl OmniCancellationToken {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+
     pub fn cancel(&self) {
         self.0.store(true, Ordering::Release);
     }
@@ -60,6 +65,8 @@ pub enum OmniModelManagerError {
     Store(#[from] OmniModelStoreError),
     #[error("the Omni model filesystem failed: {0}")]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Download(#[from] OmniModelDownloadError),
 }
 
 pub struct OmniModelManager {
@@ -93,7 +100,7 @@ impl OmniModelManager {
             manifest,
             state,
             active: None,
-            cancellation: OmniCancellationToken(Arc::new(AtomicBool::new(false))),
+            cancellation: OmniCancellationToken::new(),
         })
     }
 
@@ -140,7 +147,7 @@ impl OmniModelManager {
             });
         }
         self.store.prepare_staging(&self.manifest)?;
-        self.cancellation = OmniCancellationToken(Arc::new(AtomicBool::new(false)));
+        self.cancellation = OmniCancellationToken::new();
         self.active = Some(ActiveOperation::Install);
         self.transition(
             OmniModelInstallPhase::Downloading,
@@ -153,7 +160,7 @@ impl OmniModelManager {
 
     pub fn begin_verify(&mut self) -> Result<OmniCancellationToken, OmniModelManagerError> {
         self.require_idle()?;
-        self.cancellation = OmniCancellationToken(Arc::new(AtomicBool::new(false)));
+        self.cancellation = OmniCancellationToken::new();
         self.active = Some(ActiveOperation::Verify);
         self.transition(
             OmniModelInstallPhase::Verifying,
@@ -183,6 +190,70 @@ impl OmniModelManager {
             None,
             received_bytes,
         )
+    }
+
+    pub fn download_and_install<T: OmniArtifactTransfer>(
+        &mut self,
+        transfer: &T,
+    ) -> Result<(), OmniModelManagerError> {
+        if self.active != Some(ActiveOperation::Install) {
+            return Err(OmniModelManagerError::NotActive);
+        }
+        let mut completed = 0_u64;
+        for file in self.manifest.files.clone() {
+            if self.cancellation.is_cancelled() {
+                self.finish_cancel()?;
+                return Err(OmniModelManagerError::Cancelled);
+            }
+            let artifact = self.store.staging_artifact_path(&self.manifest, &file)?;
+            if artifact.exists() {
+                match verify_file(&artifact, &file, &self.cancellation) {
+                    Ok(()) => {
+                        completed = completed.saturating_add(file.size);
+                        self.update_download_progress(&file, completed)?;
+                        continue;
+                    }
+                    Err(OmniModelManagerError::Verification(_)) => {
+                        let metadata = fs::symlink_metadata(&artifact)?;
+                        if metadata.file_type().is_symlink() || !metadata.is_file() {
+                            return self.fail_download(
+                                OmniModelManagerError::Verification("MODEL_ARTIFACT_UNSAFE"),
+                                OmniModelInstallPhase::Corrupt,
+                            );
+                        }
+                        fs::remove_file(&artifact)?;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+
+            let partial = self.store.staging_partial_path(&self.manifest, &file)?;
+            let cancellation = self.cancellation.clone();
+            let download =
+                transfer.download(&file, &partial, &cancellation, &mut |file_received| {
+                    self.update_download_progress(&file, completed.saturating_add(file_received))
+                        .map_err(|_| OmniModelDownloadError::ProgressState)
+                });
+            if let Err(error) = download {
+                let phase = if matches!(error, OmniModelDownloadError::Cancelled) {
+                    OmniModelInstallPhase::Partial
+                } else if download_error_is_corrupt(&error) {
+                    OmniModelInstallPhase::Corrupt
+                } else {
+                    OmniModelInstallPhase::Partial
+                };
+                return self.fail_download(OmniModelManagerError::Download(error), phase);
+            }
+            if let Err(error) = verify_file(&partial, &file, &cancellation) {
+                return self.fail_download(error, OmniModelInstallPhase::Corrupt);
+            }
+            self.store.finalize_partial(&self.manifest, &file)?;
+            completed = completed
+                .checked_add(file.size)
+                .ok_or(OmniModelManagerError::Verification("MODEL_SIZE_OVERFLOW"))?;
+            self.update_download_progress(&file, completed)?;
+        }
+        self.verify_staging_and_promote()
     }
 
     pub fn request_cancel(&mut self) -> Result<(), OmniModelManagerError> {
@@ -397,6 +468,22 @@ impl OmniModelManager {
         }
     }
 
+    fn fail_download<T>(
+        &mut self,
+        error: OmniModelManagerError,
+        phase: OmniModelInstallPhase,
+    ) -> Result<T, OmniModelManagerError> {
+        self.active = None;
+        let code = verification_error_code(&error);
+        self.transition(
+            phase,
+            None,
+            Some(code),
+            self.store.partial_bytes(&self.manifest)?,
+        )?;
+        Err(error)
+    }
+
     fn transition(
         &mut self,
         phase: OmniModelInstallPhase,
@@ -426,11 +513,31 @@ fn verification_error_code(error: &OmniModelManagerError) -> &'static str {
         OmniModelManagerError::Manifest(_) => "MODEL_MANIFEST_INVALID",
         OmniModelManagerError::Store(_) => "MODEL_STORE_FAILED",
         OmniModelManagerError::Io(_) => "MODEL_IO_FAILED",
+        OmniModelManagerError::Download(download) => match download {
+            OmniModelDownloadError::UrlNotAllowed => "MODEL_DOWNLOAD_URL_DENIED",
+            OmniModelDownloadError::Client(_) => "MODEL_DOWNLOAD_NETWORK_FAILED",
+            OmniModelDownloadError::InvalidResponse => "MODEL_DOWNLOAD_INVALID_RESPONSE",
+            OmniModelDownloadError::InvalidRange => "MODEL_DOWNLOAD_INVALID_RANGE",
+            OmniModelDownloadError::SizeExceeded => "MODEL_DOWNLOAD_SIZE_EXCEEDED",
+            OmniModelDownloadError::Cancelled => "MODEL_DOWNLOAD_CANCELLED",
+            OmniModelDownloadError::ProgressState => "MODEL_PROGRESS_STATE_FAILED",
+            OmniModelDownloadError::Io(_) => "MODEL_DOWNLOAD_IO_FAILED",
+        },
         OmniModelManagerError::Cancelled => "MODEL_VERIFICATION_CANCELLED",
         OmniModelManagerError::InsufficientDisk { .. } => "MODEL_DISK_INSUFFICIENT",
         OmniModelManagerError::Busy => "MODEL_OPERATION_BUSY",
         OmniModelManagerError::NotActive => "MODEL_OPERATION_NOT_ACTIVE",
     }
+}
+
+fn download_error_is_corrupt(error: &OmniModelDownloadError) -> bool {
+    matches!(
+        error,
+        OmniModelDownloadError::UrlNotAllowed
+            | OmniModelDownloadError::InvalidResponse
+            | OmniModelDownloadError::InvalidRange
+            | OmniModelDownloadError::SizeExceeded
+    )
 }
 
 fn verify_file(
@@ -501,8 +608,55 @@ fn collect_relative_files(root: &Path) -> Result<HashSet<String>, OmniModelManag
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
     use crate::omni_model_catalog::bundled_minicpm_o45_manifest;
+
+    struct FixtureTransfer {
+        payloads: Vec<(String, Vec<u8>)>,
+        requested: Mutex<Vec<String>>,
+    }
+
+    impl FixtureTransfer {
+        fn new(manifest: &OmniModelManifest, contents: &[&[u8]; 3]) -> Self {
+            Self {
+                payloads: manifest
+                    .files
+                    .iter()
+                    .zip(contents)
+                    .map(|(file, content)| (file.path.clone(), content.to_vec()))
+                    .collect(),
+                requested: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl OmniArtifactTransfer for FixtureTransfer {
+        fn download(
+            &self,
+            file: &OmniModelFile,
+            partial_path: &Path,
+            cancellation: &OmniCancellationToken,
+            progress: &mut dyn FnMut(u64) -> Result<(), OmniModelDownloadError>,
+        ) -> Result<(), OmniModelDownloadError> {
+            if cancellation.is_cancelled() {
+                return Err(OmniModelDownloadError::Cancelled);
+            }
+            self.requested
+                .lock()
+                .expect("requested lock")
+                .push(file.path.clone());
+            let payload = self
+                .payloads
+                .iter()
+                .find(|(path, _)| path == &file.path)
+                .map(|(_, payload)| payload)
+                .ok_or(OmniModelDownloadError::InvalidResponse)?;
+            fs::write(partial_path, payload)?;
+            progress(payload.len() as u64)
+        }
+    }
 
     fn fixture_manifest(contents: &[&[u8]; 3]) -> OmniModelManifest {
         let mut manifest = bundled_minicpm_o45_manifest().expect("manifest");
@@ -622,6 +776,54 @@ mod tests {
             .staging_dir(&manager.manifest)
             .expect("staging")
             .exists());
+    }
+
+    #[test]
+    fn transfer_downloads_in_manifest_order_and_cannot_mark_runtime_ready() {
+        let contents: [&[u8]; 3] = [b"llm", b"vision", b"audio"];
+        let directory = tempfile::tempdir().expect("models root");
+        let manifest = fixture_manifest(&contents);
+        let transfer = FixtureTransfer::new(&manifest, &contents);
+        let expected_order: Vec<String> = manifest
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect();
+        let mut manager = OmniModelManager::new(directory.path(), manifest).expect("manager");
+
+        manager.begin_install(8 * GIB).expect("begin install");
+        manager
+            .download_and_install(&transfer)
+            .expect("download and install");
+
+        assert_eq!(
+            *transfer.requested.lock().expect("requested lock"),
+            expected_order
+        );
+        assert_eq!(
+            manager.status().phase,
+            OmniModelInstallPhase::RuntimeMissing
+        );
+        assert_eq!(
+            manager.status().error_code.as_deref(),
+            Some("OMNI_RUNTIME_MISSING")
+        );
+        assert_eq!(
+            manager.status().received_bytes,
+            manager.manifest.total_size()
+        );
+        for (file, content) in manager.manifest.files.iter().zip(contents) {
+            assert_eq!(
+                fs::read(
+                    manager
+                        .store
+                        .installed_artifact_path(&manager.manifest, file)
+                        .expect("installed path")
+                )
+                .expect("installed artifact"),
+                content
+            );
+        }
     }
 
     #[test]

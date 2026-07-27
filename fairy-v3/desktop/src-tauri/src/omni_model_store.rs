@@ -204,6 +204,25 @@ impl OmniModelStore {
         Ok(partial_path(&artifact))
     }
 
+    pub fn finalize_partial(
+        &self,
+        manifest: &OmniModelManifest,
+        file: &OmniModelFile,
+    ) -> Result<PathBuf, OmniModelStoreError> {
+        let artifact = self.staging_artifact_path(manifest, file)?;
+        let partial = partial_path(&artifact);
+        self.ensure_managed_path(&partial)?;
+        reject_symlink(&partial)?;
+        if artifact.exists() {
+            reject_symlink(&artifact)?;
+        }
+        replace_file(&partial, &artifact)?;
+        if let Some(parent) = artifact.parent() {
+            sync_directory(parent);
+        }
+        Ok(artifact)
+    }
+
     pub fn write_staged_manifest(
         &self,
         manifest: &OmniModelManifest,
