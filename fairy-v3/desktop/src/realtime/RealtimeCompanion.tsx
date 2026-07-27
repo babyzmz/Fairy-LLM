@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { LoaderCircle, Mic, MicOff, Monitor, Pause, Play, Save, ShieldCheck, SlidersHorizontal, Square, X } from "lucide-react";
+import { LoaderCircle, Mic, MicOff, Monitor, Pause, Play, RotateCcw, Save, ShieldCheck, SlidersHorizontal, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
@@ -15,6 +15,7 @@ import type { InvokeFunction } from "../core/tauriTransport";
 import type { DesktopPreferences } from "../settings/client";
 import { startRealtimeVoice, type NativeVoicePlayback } from "../voice/nativeVoice";
 import type { RealtimePresenceState } from "./realtimePresence";
+import { useTranscriptPersistence } from "./useTranscriptPersistence";
 import "./realtime-companion.css";
 
 interface CaptureSurface {
@@ -105,6 +106,15 @@ export function RealtimeCompanion({
   const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const {
+    enqueue: enqueueTranscript,
+    reset: resetTranscriptPersistence,
+    retryUnsaved,
+    unsavedCount,
+  } = useTranscriptPersistence({
+    sessionId: session?.id ?? null,
+    append: (request) => client.transcript.append(request),
+  });
 
   const applyInput = useCallback((nextMuted: boolean, nextPaused: boolean) => {
     const current = sessionRef.current;
@@ -292,11 +302,11 @@ export function RealtimeCompanion({
           const finished = completed.trim();
           if (finished) {
             setCaptions((items) => [...items.slice(-7), completed]);
-            // Persist the finished caption so the linked conversation stays
-            // reviewable. Best-effort: a failed write never interrupts the call.
-            void client.transcript
-              .append({ session_id: payload.session_id, speaker: payload.speaker, text: finished })
-              .catch(() => undefined);
+            enqueueTranscript({
+              session_id: payload.session_id,
+              speaker: payload.speaker,
+              text: finished,
+            });
           }
         } else {
           const merged = mergeCaptionDelta(draftCaptionRef.current, payload.text);
@@ -352,7 +362,13 @@ export function RealtimeCompanion({
       disposed = true;
       unlisten?.();
     };
-  }, [client.worker, preferences?.realtime_voice_mode, report, stopFairyVoice]);
+  }, [
+    client.worker,
+    enqueueTranscript,
+    preferences?.realtime_voice_mode,
+    report,
+    stopFairyVoice,
+  ]);
 
   useEffect(() => {
     if (session?.status !== "active" || preferences === null) return;
@@ -386,6 +402,7 @@ export function RealtimeCompanion({
     setError(null);
     setVoiceWarning(null);
     stopFairyVoice();
+    resetTranscriptPersistence();
     setCaptions([]);
     setDraftCaption("");
     draftCaptionRef.current = "";
@@ -558,6 +575,7 @@ export function RealtimeCompanion({
             <button className="realtime-primary" type="button" disabled={busy || credentialReady !== true || !microphoneConsent || !screenConsent || sourceId === ""} onClick={() => void start()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Mic size={15} />} Start companion</button>
           </div> : <div className="realtime-live"><div className="realtime-live-status"><span className={`realtime-pulse ${presence}`} /><div><strong>{presenceLabel(presence)}</strong><small>{session.provider.replaceAll("_", " ")}</small></div><button type="button" disabled={busy} onClick={() => void stop()}><Square size={14} /> Stop</button></div><div className="realtime-usage" aria-label="Session usage"><span>Voice {formatUsageMinutes(liveUsage.audio_input_ms + liveUsage.audio_output_ms)}</span><span>Frames {liveUsage.video_frame_count}</span></div><div className="realtime-captions" aria-live="polite">{captions.length === 0 && draftCaption === "" ? <span>Listening for the conversation and game context…</span> : <>{captions.map((text, index) => <p key={`${index}-${text.slice(0, 16)}`}>{text}</p>)}{draftCaption ? <p className="is-streaming">{draftCaption}</p> : null}</>}</div></div>}
           {memory ? <div className="realtime-memory"><h3>Save game progress</h3><label>Game<input value={memory.gameTitle} maxLength={160} onChange={(event) => setMemory({ ...memory, gameTitle: event.target.value })} /></label><label>Progress<textarea value={memory.progress} maxLength={800} onChange={(event) => setMemory({ ...memory, progress: event.target.value })} /></label><label>Next goal<input value={memory.nextGoal} maxLength={300} onChange={(event) => setMemory({ ...memory, nextGoal: event.target.value })} /></label><button type="button" disabled={busy || !memory.gameTitle.trim() || !memory.progress.trim()} onClick={() => void saveMemory()}><Save size={14} /> Save summary</button></div> : null}
+          {unsavedCount > 0 ? <div className="realtime-transcript-warning" role="status"><span>{unsavedCount} {unsavedCount === 1 ? "caption" : "captions"} unsaved</span><button type="button" onClick={retryUnsaved}><RotateCcw size={13} /> Retry saving</button></div> : null}
           {voiceWarning ? <div className="realtime-warning" role="status">{voiceWarning}</div> : null}
           {error ? <div className="realtime-error" role="alert">{error}</div> : null}
         </section>

@@ -181,6 +181,58 @@ describe("RealtimeCompanion", () => {
     expect(JSON.stringify(report.mock.calls)).not.toContain("Boss at half health");
   });
 
+  it("keeps the session active while an unsaved caption is retried manually", async () => {
+    const append = vi.fn().mockRejectedValue(new Error("offline"));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        get: vi.fn(async () => session("active", 2)),
+        report: vi.fn(async () => session("active", 2)),
+        stop: vi.fn(),
+      },
+      memories: { save: vi.fn() },
+      transcript: { append, list: vi.fn(async () => ({ items: [] })) },
+      worker: {
+        status: vi.fn(async () => workerStatus(false)),
+        start: vi.fn(async () => workerStatus(true)),
+        stop: vi.fn(),
+        toolResult: vi.fn(),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: /Test Game/ });
+    const consents = screen.getAllByRole("checkbox");
+    fireEvent.click(consents[0]);
+    fireEvent.click(consents[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
+    await act(async () => eventListener?.({ payload: {
+      type: "session_state", session_id: session("active", 2).id, status: "active",
+    } }));
+    await act(async () => eventListener?.({ payload: {
+      type: "public_caption",
+      session_id: session("active", 2).id,
+      text: "Hold this position.",
+      stable: true,
+      speaker: "assistant",
+    } }));
+
+    expect(
+      await screen.findByText("1 caption unsaved", {}, { timeout: 3_000 }),
+    ).not.toBeNull();
+    expect(append).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("Active")).not.toBeNull();
+
+    append.mockResolvedValue({});
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+
+    await waitFor(() => expect(append).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(screen.queryByText("1 caption unsaved")).toBeNull());
+    expect(screen.getByText("Active")).not.toBeNull();
+  });
+
   it("gates microphone and screen input through the collapsible session controls", async () => {
     const setInput = vi.fn(async () => undefined);
     const client = {

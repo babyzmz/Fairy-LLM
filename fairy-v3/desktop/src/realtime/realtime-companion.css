@@ -34,6 +34,9 @@
 .realtime-memory { border-top: 1px solid #303735; }.realtime-memory h3 { margin: 0; font-size: 15px; }
 .realtime-error { margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #ef7369; background: #341c1a; color: #ffc4bd; font-size: 12px; }
 .realtime-warning { margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #d5a94f; background: #2d2818; color: #f1d797; font-size: 12px; }
+.realtime-transcript-warning { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 20px 20px; padding: 9px 11px; border-left: 2px solid #d5a94f; background: #242116; color: #e5cd91; font-size: 12px; }
+.realtime-transcript-warning button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 8px; border: 1px solid #766638; background: #302a19; color: #f1d797; }
+.realtime-transcript-warning button:hover { border-color: #a68b43; background: #38301c; }
 .realtime-controls { position: absolute; right: 16px; bottom: 16px; z-index: 3; display: flex; align-items: center; gap: 8px; }
 .realtime-controls-cluster { display: flex; align-items: center; gap: 6px; padding: 6px; background: #141817f2; border: 1px solid #36413e; box-shadow: 0 10px 30px #0009; animation: realtime-controls-in 140ms ease; }
 .realtime-controls-cluster button { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; min-width: 52px; padding: 7px 8px; border: 1px solid #33403c; background: #1a201e; color: #d6e2de; font-size: 11px; cursor: pointer; }
