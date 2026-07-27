@@ -18,12 +18,46 @@
         "FAIRY_OMNI_BUILD_PROFILE": "contract",
         "FAIRY_OMNI_UPSTREAM_SOURCE": "${sourceDir}/_deps/llama.cpp-omni-source"
       }
+    },
+    {
+      "name": "upstream-cpu",
+      "displayName": "Fairy Omni pinned upstream CPU compatibility",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/upstream-cpu",
+      "cacheVariables": {
+        "BUILD_TESTING": "OFF",
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "FAIRY_OMNI_BUILD_PROFILE": "upstream-cpu"
+      }
+    },
+    {
+      "name": "production-cuda",
+      "displayName": "Fairy Omni production CUDA",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/production-cuda",
+      "cacheVariables": {
+        "BUILD_TESTING": "OFF",
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "FAIRY_OMNI_BUILD_PROFILE": "production-cuda"
+      }
     }
   ],
   "buildPresets": [
     {
       "name": "contract",
       "configurePreset": "contract",
+      "configuration": "Release"
+    },
+    {
+      "name": "upstream-cpu",
+      "configurePreset": "upstream-cpu",
+      "configuration": "Release"
+    },
+    {
+      "name": "production-cuda",
+      "configurePreset": "production-cuda",
       "configuration": "Release"
     }
   ],

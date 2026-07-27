@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_digest": "24e50625b05f497169e2fb9b73df4ffed1ae6400fac3704dbbb92350457f31e7",
+  "manifest_digest": "b98f9ed77e63edbb00b7a35c88fec694292148e66dda7ed3de8ff318252f36fb",
   "model_id": "openbmb/minicpm-o-4.5-fairy-beta",
   "version": "4.5-q4-502eec5",
   "model_revision": "502eec5b03eaee9d0d2ce17a176e3490103c9a63",
@@ -8,7 +8,7 @@
   "license": "Apache-2.0",
   "predicted_peak_vram_mb": 9500,
   "upstream_runtime_revision": "74699a53df6ca0f4947ff37066f851532c20b12d",
-  "patch_set_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "patch_set_digest": "72b89b34a81b2a49abb5079bd411fc6676650e750873e2ec51cb796f49a597bd",
   "files": [
     {
       "path": "MiniCPM-o-4_5-Q4_K_M.gguf",

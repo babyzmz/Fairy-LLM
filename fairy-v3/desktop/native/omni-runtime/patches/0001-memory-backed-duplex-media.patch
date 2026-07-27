@@ -1,0 +1,242 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fairy <fairy@local>
+Date: Tue, 28 Jul 2026 01:36:23 +1000
+Subject: [PATCH 1/3] fairy: accept memory-backed duplex media
+
+---
+ tools/omni/omni.cpp | 86 +++++++++++++++++++++++++++++----------------
+ tools/omni/omni.h   | 19 ++++++++--
+ 2 files changed, 73 insertions(+), 32 deletions(-)
+
+diff --git a/tools/omni/omni.cpp b/tools/omni/omni.cpp
+index c14ed35..caa4c38 100644
+--- a/tools/omni/omni.cpp
++++ b/tools/omni/omni.cpp
+@@ -858,29 +858,39 @@ struct omni_embed * omni_image_embed_make_with_filename(struct vision_ctx * ctx_
+ 
+ // 🔧 [高清模式] 创建带 chunks 的 vision embed（用于 V2.6 slice schema）
+ // 返回的 vector: [0] = overview, [1..n] = slices
+-bool omni_image_embed_make_chunks_with_filename(struct vision_ctx * ctx_vision, int n_threads, 
+-                                                 std::string image_path, 
+-                                                 std::vector<std::vector<float>> & vision_chunks) {
+-    unsigned char* image_bytes;
+-    long image_bytes_length;
+-    auto loaded = load_file_to_bytes(image_path.c_str(), &image_bytes, &image_bytes_length);
+-    if (!loaded) {
+-        LOG_ERR("%s: failed to load %s\n", __func__, image_path.c_str());
++bool omni_image_embed_make_chunks_with_bytes(struct vision_ctx * ctx_vision, int n_threads,
++                                              const unsigned char * image_bytes, size_t image_bytes_length,
++                                              std::vector<std::vector<float>> & vision_chunks) {
++    if (image_bytes == nullptr || image_bytes_length == 0) {
++        LOG_ERR("%s: empty image buffer\n", __func__);
+         return false;
+     }
+-    
++
+     vision_image_u8 * img = vision_image_u8_init();
+     if (!vision_image_load_from_bytes(image_bytes, image_bytes_length, img)) {
+         vision_image_u8_free(img);
+-        free(image_bytes);
+         LOG_ERR("%s: can't load image from bytes, is it a valid image?", __func__);
+         return false;
+     }
+-    free(image_bytes);
+-    
++
+     bool success = encode_image_with_vision_chunks(ctx_vision, n_threads, img, vision_chunks);
+     vision_image_u8_free(img);
+-    
++    return success;
++}
++
++bool omni_image_embed_make_chunks_with_filename(struct vision_ctx * ctx_vision, int n_threads,
++                                                 std::string image_path,
++                                                 std::vector<std::vector<float>> & vision_chunks) {
++    unsigned char * image_bytes;
++    long image_bytes_length;
++    auto loaded = load_file_to_bytes(image_path.c_str(), &image_bytes, &image_bytes_length);
++    if (!loaded) {
++        LOG_ERR("%s: failed to load %s\n", __func__, image_path.c_str());
++        return false;
++    }
++    bool success = omni_image_embed_make_chunks_with_bytes(
++        ctx_vision, n_threads, image_bytes, static_cast<size_t>(image_bytes_length), vision_chunks);
++    free(image_bytes);
+     if (success) {
+         LOG_INF("%s: created %d vision chunks from %s\n", __func__, (int)vision_chunks.size(), image_path.c_str());
+     }
+@@ -3880,6 +3890,8 @@ std::atomic<bool> t2w_thread_running(true);
+ struct DuplexEncodeReq {
+     std::string aud_fname;
+     std::string img_fname;
++    std::vector<uint8_t> aud_bytes;
++    std::vector<uint8_t> img_bytes;
+     int         index;
+     int         max_slice_nums;  // -1 = 使用全局
+ };
+@@ -3946,7 +3958,9 @@ static void duplex_stop_threads(omni_context * ctx_omni);
+ static bool duplex_prefill(omni_context * ctx_omni,
+                            const std::string & aud_fname,
+                            const std::string & img_fname,
+-                           int index, int max_slice_nums);
++                           int index, int max_slice_nums,
++                           const std::vector<uint8_t> * aud_bytes = nullptr,
++                           const std::vector<uint8_t> * img_bytes = nullptr);
+ static bool duplex_decode(omni_context * ctx_omni,
+                           const std::string & debug_dir,
+                           int round_idx);
+@@ -9374,8 +9388,9 @@ static void duplex_encoder_thread_func(omni_context * ctx_omni, common_params *
+         DuplexPrefillPacket * packet = new DuplexPrefillPacket();
+         packet->index = req->index;
+ 
+-        const bool has_img = !req->img_fname.empty() && ctx_omni->ctx_vision != nullptr;
+-        const bool has_aud = !req->aud_fname.empty();
++        const bool has_img = (!req->img_bytes.empty() || !req->img_fname.empty())
++                          && ctx_omni->ctx_vision != nullptr;
++        const bool has_aud = !req->aud_bytes.empty() || !req->aud_fname.empty();
+ 
+         auto t_enc_begin = std::chrono::high_resolution_clock::now();
+ 
+@@ -9390,13 +9405,15 @@ static void duplex_encoder_thread_func(omni_context * ctx_omni, common_params *
+         auto vpm_task = [&]() -> double {
+             if (!has_img) return 0.0;
+             auto t0 = std::chrono::high_resolution_clock::now();
+-            if (!omni_image_embed_make_chunks_with_filename(
+-                    ctx_omni->ctx_vision,
+-                    params->cpuparams.n_threads,
+-                    req->img_fname,
+-                    packet->vision_embed)) {
+-                LOG_ERR("Duplex encoder: vision encode failed for %s\n",
+-                        req->img_fname.c_str());
++            const bool ok = !req->img_bytes.empty()
++                ? omni_image_embed_make_chunks_with_bytes(
++                    ctx_omni->ctx_vision, params->cpuparams.n_threads,
++                    req->img_bytes.data(), req->img_bytes.size(), packet->vision_embed)
++                : omni_image_embed_make_chunks_with_filename(
++                    ctx_omni->ctx_vision, params->cpuparams.n_threads,
++                    req->img_fname, packet->vision_embed);
++            if (!ok) {
++                LOG_ERR("Duplex encoder: vision encode failed\n");
+                 packet->vision_embed.clear();
+             }
+             auto t1 = std::chrono::high_resolution_clock::now();
+@@ -9407,16 +9424,20 @@ static void duplex_encoder_thread_func(omni_context * ctx_omni, common_params *
+         auto apm_task = [&]() -> double {
+             if (!has_aud) return 0.0;
+             auto t0 = std::chrono::high_resolution_clock::now();
+-            auto * audio_embeds = omni_audio_embed_make_with_filename(
+-                ctx_omni->ctx_audio, params->cpuparams.n_threads, req->aud_fname);
++            audition_audio_u8 memory_audio{};
++            memory_audio.buf = req->aud_bytes;
++            auto * audio_embeds = !req->aud_bytes.empty()
++                ? omni_audio_embed_make_with_bytes(
++                    ctx_omni->ctx_audio, params->cpuparams.n_threads, &memory_audio)
++                : omni_audio_embed_make_with_filename(
++                    ctx_omni->ctx_audio, params->cpuparams.n_threads, req->aud_fname);
+             if (audio_embeds != nullptr && audio_embeds->n_pos > 0) {
+                 packet->audio_embed.resize(audio_embeds->n_pos * hidden_size);
+                 std::memcpy(packet->audio_embed.data(), audio_embeds->embed,
+                             packet->audio_embed.size() * sizeof(float));
+                 omni_embed_free(audio_embeds);
+             } else {
+-                LOG_WRN("Duplex encoder: audio encode returned empty for %s\n",
+-                        req->aud_fname.c_str());
++                LOG_WRN("Duplex encoder: audio encode returned empty\n");
+             }
+             auto t1 = std::chrono::high_resolution_clock::now();
+             return std::chrono::duration<double, std::milli>(t1 - t0).count();
+@@ -10192,7 +10213,9 @@ static void duplex_llm_thread_func(omni_context * ctx_omni, common_params * para
+ static bool duplex_prefill(omni_context * ctx_omni,
+                            const std::string & aud_fname,
+                            const std::string & img_fname,
+-                           int index, int max_slice_nums) {
++                           int index, int max_slice_nums,
++                           const std::vector<uint8_t> * aud_bytes,
++                           const std::vector<uint8_t> * img_bytes) {
+     if (!ctx_omni || !ctx_omni->duplex) {
+         LOG_ERR("duplex_prefill: pipeline not initialized\n");
+         return false;
+@@ -10202,6 +10225,8 @@ static bool duplex_prefill(omni_context * ctx_omni,
+     DuplexEncodeReq * req = new DuplexEncodeReq();
+     req->aud_fname      = aud_fname;
+     req->img_fname      = img_fname;
++    if (aud_bytes != nullptr) req->aud_bytes = *aud_bytes;
++    if (img_bytes != nullptr) req->img_bytes = *img_bytes;
+     req->index          = index;
+     req->max_slice_nums = max_slice_nums;
+ 
+@@ -11425,8 +11450,9 @@ static void duplex_session_prefill_worker_func(omni_context * ctx_omni) {
+         sess->pending_cv.notify_all();
+ 
+         // 调底层 stream_prefill。duplex 路径下这是非阻塞的（推到 encoder_queue 立即返回）。
+-        bool ok = stream_prefill(ctx_omni, pf.frame.aud_fname, pf.frame.img_fname,
+-                                 (int)pf.frame_id, pf.frame.max_slice_nums);
++        bool ok = duplex_prefill(ctx_omni, pf.frame.aud_fname, pf.frame.img_fname,
++                                 (int) pf.frame_id, pf.frame.max_slice_nums,
++                                 &pf.frame.aud_bytes, &pf.frame.img_bytes);
+ 
+         OmniDuplexInflightFrame inf;
+         inf.frame_id       = pf.frame_id;
+diff --git a/tools/omni/omni.h b/tools/omni/omni.h
+index ab524b3..b31b9b3 100644
+--- a/tools/omni/omni.h
++++ b/tools/omni/omni.h
+@@ -20,6 +20,7 @@
+ 
+ struct vision_ctx;
+ struct audition_ctx;
++struct audition_audio_u8;
+ struct audition_audio_f32;
+ 
+ // Forward declaration for C++ Token2Wav
+@@ -340,6 +341,10 @@ struct omni_context {
+     
+     // 🔧 [多实例支持] 可配置的输出目录，避免多个服务实例冲突
+     std::string base_output_dir = "./tools/omni/output";
++
++    bool allow_filesystem_output = true;
++    bool allow_diagnostics = true;
++    size_t max_decision_bytes = 8192;
+     
+     // 每次会话，是否清除 kv cache（默认开启自动清理 kv cache）
+     bool clean_kvcache = true;
+@@ -478,7 +483,10 @@ bool omni_eval_embed(struct llama_context * ctx_llama, const struct omni_embed *
+ void omni_embed_free(struct omni_embed * embed);
+ struct omni_embed * omni_image_embed_make_with_bytes(struct vision_ctx * ctx_vision, int n_threads, const unsigned char * image_bytes, int image_bytes_length);
+ struct omni_embed * omni_image_embed_make_with_filename(struct vision_ctx * ctx_vision, int n_threads, std::string image_path);
+-struct omni_embed * omni_audio_embed_make_with_bytes(struct audition_ctx * ctx_audition, int n_threads, audition_audio_f32 * audio);
++bool omni_image_embed_make_chunks_with_bytes(struct vision_ctx * ctx_vision, int n_threads,
++                                              const unsigned char * image_bytes, size_t image_bytes_length,
++                                              std::vector<std::vector<float>> & vision_chunks);
++struct omni_embed * omni_audio_embed_make_with_bytes(struct audition_ctx * ctx_audition, int n_threads, audition_audio_u8 * audio);
+ struct omni_embed * omni_audio_embed_make_with_filename(struct audition_ctx * ctx_audition, int n_threads, std::string audio_path);
+ 
+ //
+@@ -537,6 +545,8 @@ bool stream_decode(struct omni_context * ctx_omni,
+ // ============================================================================
+ 
+ struct OmniDuplexFrame {
++    std::vector<uint8_t> aud_bytes;
++    std::vector<uint8_t> img_bytes;
+     std::string aud_fname;          // 该帧音频文件路径，空字符串表示无音频
+     std::string img_fname;          // 该帧图片文件路径，空字符串表示无图片
+     int max_slice_nums = -1;        // 与 stream_prefill 同义；-1 表示用全局
+@@ -564,6 +574,11 @@ bool omni_duplex_session_begin(struct omni_context * ctx_omni,
+                                const std::string & voice_audio,
+                                const std::string & debug_dir = "./");
+ 
++bool omni_set_output_policy(struct omni_context * ctx_omni,
++                            bool allow_filesystem_output,
++                            bool allow_diagnostics,
++                            size_t max_decision_bytes);
++
+ // 提交一帧到 duplex pipeline。立即返回，不等 LLM 完成。
+ // 返回值：>=1 表示分配的 frame_id；<0 表示会话未启动或队列异常。
+ // 当内部 pending 队列已满时会阻塞直到有空位（避免无界增长）。
+@@ -628,4 +643,4 @@ void sliding_window_reset(struct omni_context * ctx_omni);
+ void vision_set_max_slice_nums(struct vision_ctx * ctx_vision, int max_slice_nums);
+ 
+ // benchmark: serial vs batched vision encoding
+-void omni_bench_vision(struct vision_ctx * ctx_vision, int n_threads, const char * image_path);
+\ No newline at end of file
++void omni_bench_vision(struct vision_ctx * ctx_vision, int n_threads, const char * image_path);

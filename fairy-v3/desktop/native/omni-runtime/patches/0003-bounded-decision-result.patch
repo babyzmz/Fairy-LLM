@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fairy <fairy@local>
+Date: Tue, 28 Jul 2026 01:36:57 +1000
+Subject: [PATCH 3/3] fairy: bound duplex decision results
+
+---
+ tools/omni/omni.cpp | 25 ++++++++++++++++++++-----
+ 1 file changed, 20 insertions(+), 5 deletions(-)
+
+diff --git a/tools/omni/omni.cpp b/tools/omni/omni.cpp
+index 9c1e072..e517bc4 100644
+--- a/tools/omni/omni.cpp
++++ b/tools/omni/omni.cpp
+@@ -11500,19 +11500,34 @@ static void duplex_session_decode_worker_func(omni_context * ctx_omni) {
+             // 收集本帧文本（剔除控制 token）
+             {
+                 std::lock_guard<std::mutex> lock(ctx_omni->text_mtx);
++                bool decision_overflow = false;
+                 while (!ctx_omni->text_queue.empty()) {
+                     std::string piece = ctx_omni->text_queue.front();
+                     ctx_omni->text_queue.pop_front();
+                     if (piece == "__IS_LISTEN__" || piece == "__END_OF_TURN__") continue;
+-                    r.text += piece;
++                    if (piece.size() > ctx_omni->max_decision_bytes - r.text.size()) {
++                        decision_overflow = true;
++                        continue;
++                    }
++                    r.text.append(piece);
++                }
++                if (decision_overflow) {
++                    LOG_ERR("Duplex session: decision exceeded configured byte limit\n");
++                    r.ok = false;
++                    r.is_speak = false;
++                    r.text.clear();
+                 }
+             }
+ 
+-            r.n_past_after = ctx_omni->n_past;
+-            r.ms_decode = std::chrono::duration<double, std::milli>(t_dec_end - t_dec_start).count();
+-            r.ms_total  = std::chrono::duration<double, std::milli>(t_dec_end - inf.t_push).count();
++            if (ctx_omni->allow_diagnostics) {
++                r.n_past_after = ctx_omni->n_past;
++                r.ms_decode = std::chrono::duration<double, std::milli>(t_dec_end - t_dec_start).count();
++                r.ms_total  = std::chrono::duration<double, std::milli>(t_dec_end - inf.t_push).count();
++            }
++        }
++        if (ctx_omni->allow_diagnostics) {
++            r.ms_prefill_submit = std::chrono::duration<double, std::milli>(inf.t_prefilled - inf.t_push).count();
+         }
+-        r.ms_prefill_submit = std::chrono::duration<double, std::milli>(inf.t_prefilled - inf.t_push).count();
+ 
+         {
+             std::unique_lock<std::mutex> lk(sess->done_mtx);

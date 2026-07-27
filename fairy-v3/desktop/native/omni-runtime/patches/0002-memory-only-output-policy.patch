@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fairy <fairy@local>
+Date: Tue, 28 Jul 2026 01:36:43 +1000
+Subject: [PATCH 2/3] fairy: enforce memory-only output policy
+
+---
+ tools/omni/omni.cpp | 35 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/tools/omni/omni.cpp b/tools/omni/omni.cpp
+index caa4c38..9c1e072 100644
+--- a/tools/omni/omni.cpp
++++ b/tools/omni/omni.cpp
+@@ -11523,6 +11523,32 @@ static void duplex_session_decode_worker_func(omni_context * ctx_omni) {
+     }
+ }
+ 
++bool omni_set_output_policy(struct omni_context * ctx_omni,
++                            bool allow_filesystem_output,
++                            bool allow_diagnostics,
++                            size_t max_decision_bytes) {
++    if (ctx_omni == nullptr || ctx_omni->duplex_session != nullptr) {
++        return false;
++    }
++    if (!allow_filesystem_output && ctx_omni->use_tts) {
++        LOG_ERR("omni_set_output_policy: memory-only mode requires use_tts=false\n");
++        return false;
++    }
++    if (max_decision_bytes == 0 || max_decision_bytes > 8192) {
++        LOG_ERR("omni_set_output_policy: decision limit must be in [1, 8192]\n");
++        return false;
++    }
++    ctx_omni->allow_filesystem_output = allow_filesystem_output;
++    ctx_omni->allow_diagnostics = allow_diagnostics;
++    ctx_omni->max_decision_bytes = max_decision_bytes;
++    if (!allow_filesystem_output) {
++        ctx_omni->base_output_dir.clear();
++        ctx_omni->tts_bin_dir.clear();
++        ctx_omni->ref_audio_path.clear();
++    }
++    return true;
++}
++
+ bool omni_duplex_session_begin(struct omni_context * ctx_omni,
+                                const std::string & voice_audio,
+                                const std::string & debug_dir) {
+@@ -11538,6 +11564,11 @@ bool omni_duplex_session_begin(struct omni_context * ctx_omni,
+         LOG_ERR("omni_duplex_session_begin: requires duplex_mode=true && async=true\n");
+         return false;
+     }
++    if (!ctx_omni->allow_filesystem_output
++            && (!voice_audio.empty() || !debug_dir.empty())) {
++        LOG_ERR("omni_duplex_session_begin: memory-only mode rejects file paths\n");
++        return false;
++    }
+ 
+     // 1. 走 index=0 的 stream_prefill：初始化 system prompt + voice clone +
+     //    启动 duplex pipeline (encoder_thread / llm_thread) + tts/t2w 线程。
+@@ -11549,7 +11580,9 @@ bool omni_duplex_session_begin(struct omni_context * ctx_omni,
+     // 2. 创建 session 并启动 worker 线程
+     auto * sess = new DuplexSession();
+     sess->running.store(true);
+-    sess->debug_dir = debug_dir.empty() ? std::string("./") : debug_dir;
++    sess->debug_dir = ctx_omni->allow_diagnostics
++        ? (debug_dir.empty() ? std::string("./") : debug_dir)
++        : std::string();
+     ctx_omni->duplex_session = sess;
+ 
+     sess->prefill_worker = std::thread(duplex_session_prefill_worker_func, ctx_omni);

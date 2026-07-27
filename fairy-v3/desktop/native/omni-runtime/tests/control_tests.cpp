@@ -1,4 +1,5 @@
 #include "fairy_omni/control.hpp"
+#include "fairy_omni/backend.hpp"
 #include "fairy_omni/identity.hpp"
 
 #include <cstdlib>
@@ -253,6 +254,13 @@ void test_fail_closed_state() {
 }
 
 void test_self_test_identity() {
+    const auto backend = fairy::omni::make_backend();
+    const auto status = backend->status();
+    require(!status.compiled, "contract backend claimed an upstream binding");
+    require(!status.cuda, "contract backend claimed CUDA");
+    require(!status.ready, "contract backend claimed readiness");
+    require(status.reason == "contract_backend", "contract backend reason mismatch");
+
     const auto report = fairy::omni::build_self_test_report(
         path_from_utf8(FAIRY_OMNI_TEST_MANIFEST),
         std::filesystem::path("unused-contract-model-root")

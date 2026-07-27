@@ -12,10 +12,12 @@ set(
   CACHE PATH
   "Pinned llama.cpp-omni source tree"
 )
-
-if(NOT FAIRY_OMNI_BUILD_PROFILE STREQUAL "contract")
-  message(FATAL_ERROR "Only the fail-closed contract profile is available before the upstream adapter task")
-endif()
+set(
+  FAIRY_OMNI_PATCHED_SOURCE
+  "${CMAKE_CURRENT_SOURCE_DIR}/_deps/llama.cpp-omni-patched"
+  CACHE PATH
+  "Verified and patched llama.cpp-omni source tree"
+)
 
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/upstream.lock.json" FAIRY_OMNI_LOCK_JSON)
 string(JSON FAIRY_OMNI_UPSTREAM_REVISION GET "${FAIRY_OMNI_LOCK_JSON}" upstream revision)
@@ -30,11 +32,64 @@ endif()
 add_library(
   fairy_omni_contract
   STATIC
+  src/backend_contract.cpp
   src/control.cpp
   src/media.cpp
   src/media_pipe_windows.cpp
   src/self_test.cpp
 )
+
+if(NOT FAIRY_OMNI_BUILD_PROFILE STREQUAL "contract")
+  if(NOT EXISTS "${FAIRY_OMNI_PATCHED_SOURCE}/tools/omni/omni.h")
+    message(FATAL_ERROR "Verified patched upstream is missing; run verify-patches.ps1 first")
+  endif()
+
+  set(LLAMA_STANDALONE OFF CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
+  set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+  set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+  set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
+  set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+  set(LLAMA_LLGUIDANCE OFF CACHE BOOL "" FORCE)
+  set(GGML_RPC OFF CACHE BOOL "" FORCE)
+  if(FAIRY_OMNI_BUILD_PROFILE STREQUAL "production-cuda")
+    set(GGML_CUDA ON CACHE BOOL "" FORCE)
+  elseif(FAIRY_OMNI_BUILD_PROFILE STREQUAL "upstream-cpu")
+    set(GGML_CUDA OFF CACHE BOOL "" FORCE)
+  else()
+    message(FATAL_ERROR "Unknown Fairy Omni build profile '${FAIRY_OMNI_BUILD_PROFILE}'")
+  endif()
+
+  add_subdirectory(
+    "${FAIRY_OMNI_PATCHED_SOURCE}"
+    "${CMAKE_CURRENT_BINARY_DIR}/upstream"
+    EXCLUDE_FROM_ALL
+  )
+  add_subdirectory(
+    "${FAIRY_OMNI_PATCHED_SOURCE}/tools/omni"
+    "${CMAKE_CURRENT_BINARY_DIR}/upstream-tools-omni"
+    EXCLUDE_FROM_ALL
+  )
+  if(MSVC)
+    target_compile_options(omni PRIVATE /utf-8)
+  endif()
+
+  target_sources(fairy_omni_contract PRIVATE src/backend_upstream.cpp)
+  set_source_files_properties(src/backend_contract.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
+  target_link_libraries(fairy_omni_contract PUBLIC omni)
+  target_include_directories(
+    fairy_omni_contract
+    SYSTEM PRIVATE
+      "${FAIRY_OMNI_PATCHED_SOURCE}/common"
+      "${FAIRY_OMNI_PATCHED_SOURCE}/tools/omni"
+  )
+  if(FAIRY_OMNI_BUILD_PROFILE STREQUAL "production-cuda")
+    target_compile_definitions(fairy_omni_contract PRIVATE FAIRY_OMNI_PRODUCTION_CUDA=1)
+  endif()
+endif()
 target_compile_features(fairy_omni_contract PUBLIC cxx_std_20)
 target_include_directories(
   fairy_omni_contract

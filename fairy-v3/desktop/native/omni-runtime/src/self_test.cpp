@@ -1,5 +1,6 @@
 #include "fairy_omni/identity.hpp"
 
+#include "fairy_omni/backend.hpp"
 #include "fairy_omni/control.hpp"
 
 #include <algorithm>
@@ -173,6 +174,12 @@ json build_self_test_report(
         throw ProtocolError("predicted model peak is invalid");
     }
 
+    const auto backend = make_backend();
+    const auto backend_status = backend->status();
+    const auto model_probe = kBuildProfile == "contract"
+        ? std::string("not_run_contract")
+        : backend_status.reason;
+
     return {
         {"schema_version", 2},
         {"runtime_compatibility", runtime_compatibility},
@@ -182,9 +189,9 @@ json build_self_test_report(
         {"upstream_runtime_revision", upstream_revision},
         {"patch_set_digest", patch_digest},
         {"build_profile", kBuildProfile},
-        {"cuda_compiled", false},
-        {"backend_ready", false},
-        {"model_probe", "not_run_contract"},
+        {"cuda_compiled", backend_status.cuda},
+        {"backend_ready", backend_status.ready},
+        {"model_probe", model_probe},
     };
 }
 

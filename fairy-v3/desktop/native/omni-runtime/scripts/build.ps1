@@ -15,21 +15,25 @@ $processPath = [Environment]::GetEnvironmentVariable("Path", "Process")
 [Environment]::SetEnvironmentVariable("PATH", $null, "Process")
 [Environment]::SetEnvironmentVariable("Path", $processPath, "Process")
 
-if ($Profile -ne "contract") {
-    throw "Build profile '$Profile' is not implemented until the upstream adapter task."
-}
-
 $runtimeRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $bootstrapScript = Join-Path $PSScriptRoot "bootstrap-cmake.ps1"
 $syncScript = Join-Path $PSScriptRoot "sync-upstream.ps1"
 
-& $syncScript -Offline | Out-Null
+$cmakeArguments = @()
+if ($Profile -eq "contract") {
+    & $syncScript -Offline | Out-Null
+} else {
+    $verifyResult = & (Join-Path $PSScriptRoot "verify-patches.ps1") | Select-Object -Last 1 |
+        ConvertFrom-Json
+    $patchedSource = [IO.Path]::GetFullPath([string]$verifyResult.patched_source_root)
+    $cmakeArguments += "-DFAIRY_OMNI_PATCHED_SOURCE=$patchedSource"
+}
 $cmake = (& $bootstrapScript -Offline | Select-Object -Last 1).Trim()
 if (-not (Test-Path -LiteralPath $cmake -PathType Leaf)) {
     throw "Pinned CMake executable is unavailable."
 }
 
-& $cmake --fresh --preset $Profile -S $runtimeRoot
+& $cmake --fresh --preset $Profile -S $runtimeRoot @cmakeArguments
 if ($LASTEXITCODE -ne 0) {
     throw "CMake configure failed for '$Profile'."
 }
@@ -51,5 +55,8 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
 }
 if ($Test) {
     & (Join-Path $PSScriptRoot "control-integration.tests.ps1") -Executable $executable
+}
+if ($Profile -ne "contract") {
+    & (Join-Path $PSScriptRoot "backend-boundary.tests.ps1") -PatchedSource $patchedSource
 }
 Write-Output $executable

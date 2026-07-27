@@ -31,8 +31,13 @@ Phase 2 locks the source and development toolchain in
 `desktop/native/omni-runtime/upstream.lock.json`. The source checkout is always
 detached at the revision above, and the ordered patch-set digest is calculated
 as SHA-256 over each UTF-8 repository-relative patch path, a NUL byte, the raw
-patch bytes, and a trailing NUL byte. The current digest still represents an
-empty patch set; it will be replaced when the reviewed Fairy patches are added.
+patch bytes, and a trailing NUL byte. The reviewed three-patch Fairy set has
+digest
+`72b89b34a81b2a49abb5079bd411fc6676650e750873e2ec51cb796f49a597bd`.
+It adds memory-backed duplex media, disables upstream filesystem/TTS output for
+the embedded runtime, and fails closed when a decision exceeds its byte bound.
+Verification always applies the ordered patch set to a fresh local clone of the
+exact revision before any upstream profile is configured.
 
 The development bootstrap pins the official CMake 4.4.0 Windows x64 ZIP from
 <https://cmake.org/files/v4.4/cmake-4.4.0-windows-x86_64.zip> with SHA-256
