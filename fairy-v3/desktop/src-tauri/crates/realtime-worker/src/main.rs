@@ -46,6 +46,7 @@ fn main() {
                 backend,
                 cloud_provider,
                 cloud_credential,
+                local_omni,
                 persona_snapshot,
                 activity_profile,
                 interaction_intensity,
@@ -88,18 +89,19 @@ fn main() {
                     );
                     continue;
                 }
-                if backend == RealtimeBackendKind::LocalMiniCpmO45 {
-                    emit_start_failure(
-                        &session_id,
-                        &segment_id,
-                        context_epoch,
-                        backend,
-                        None,
-                        "LOCAL_BACKEND_NOT_IMPLEMENTED",
-                    );
-                    continue;
-                }
-                let (Some(provider), Some(credential)) = (cloud_provider, cloud_credential) else {
+                let backend_launch_valid = match backend {
+                    RealtimeBackendKind::CloudLive => {
+                        cloud_provider.is_some()
+                            && cloud_credential.is_some()
+                            && local_omni.is_none()
+                    }
+                    RealtimeBackendKind::LocalMiniCpmO45 => {
+                        cloud_provider.is_none()
+                            && cloud_credential.is_none()
+                            && local_omni.is_some()
+                    }
+                };
+                if !backend_launch_valid {
                     emit_start_failure(
                         &session_id,
                         &segment_id,
@@ -109,14 +111,15 @@ fn main() {
                         "REALTIME_INVALID_START",
                     );
                     continue;
-                };
+                }
                 let mut started = RealtimeRuntime::spawn(RuntimeLaunch {
                     session_id: session_id.clone(),
                     segment_id: segment_id.clone(),
                     context_epoch,
                     backend,
-                    cloud_provider: provider,
-                    credential: credential.into_zeroizing(),
+                    cloud_provider,
+                    credential: cloud_credential.map(|value| value.into_zeroizing()),
+                    local_omni,
                     system_instruction: persona_snapshot.into_zeroizing().to_string(),
                     source_id,
                     microphone_enabled,

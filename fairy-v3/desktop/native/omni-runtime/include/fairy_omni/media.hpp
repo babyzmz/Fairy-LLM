@@ -50,6 +50,12 @@ struct MediaBufferStats {
     std::uint64_t last_sequence = 0;
 };
 
+struct MediaBatch {
+    std::vector<std::uint8_t> microphone_pcm16;
+    std::vector<std::uint8_t> jpeg;
+    std::uint64_t media_sequence = 0;
+};
+
 std::array<std::uint8_t, kMediaHeaderBytes> encode_media_header(const MediaHeader &header);
 MediaHeader decode_media_header(std::span<const std::uint8_t> bytes);
 
@@ -64,6 +70,7 @@ class MediaBuffer final {
     void configure_video(std::uint32_t width, std::uint32_t height);
     void validate_before_allocation(const MediaHeader &header) const;
     void commit(MediaHeader header, std::vector<std::uint8_t> payload);
+    MediaBatch take_batch();
     void clear();
     [[nodiscard]] MediaBufferStats stats() const;
 

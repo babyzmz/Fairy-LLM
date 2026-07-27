@@ -33,6 +33,8 @@ pub enum RuntimeRecovery {
 pub struct RuntimeLaunchSpec {
     pub runtime_path: PathBuf,
     pub media_pipe: String,
+    pub manifest_path: PathBuf,
+    pub model_root: PathBuf,
 }
 
 pub struct RuntimeControlIo {
@@ -109,6 +111,10 @@ impl OmniRuntimeManager {
             .arg("--stdio")
             .arg("--media-pipe")
             .arg(&spec.media_pipe)
+            .arg("--manifest")
+            .arg(&spec.manifest_path)
+            .arg("--model-root")
+            .arg(&spec.model_root)
             .current_dir(working_directory)
             .env_clear()
             .stdin(Stdio::piped())
@@ -234,6 +240,17 @@ fn validate_launch_spec(spec: &RuntimeLaunchSpec) -> Result<(), OmniRuntimeManag
     {
         return Err(OmniRuntimeManagerError::UnsafeLaunch);
     }
+    let manifest = fs::symlink_metadata(&spec.manifest_path)
+        .map_err(|_| OmniRuntimeManagerError::UnsafeLaunch)?;
+    let model_root = fs::symlink_metadata(&spec.model_root)
+        .map_err(|_| OmniRuntimeManagerError::UnsafeLaunch)?;
+    if manifest.file_type().is_symlink()
+        || !manifest.is_file()
+        || model_root.file_type().is_symlink()
+        || !model_root.is_dir()
+    {
+        return Err(OmniRuntimeManagerError::UnsafeLaunch);
+    }
     let Some(token) = spec.media_pipe.strip_prefix(PIPE_PREFIX) else {
         return Err(OmniRuntimeManagerError::UnsafeLaunch);
     };
@@ -331,6 +348,8 @@ mod tests {
         let spec = RuntimeLaunchSpec {
             runtime_path: PathBuf::from("fairy-omni-runtime.exe"),
             media_pipe: r"\\.\pipe\fairy-omni-..\escape".to_owned(),
+            manifest_path: PathBuf::from("manifest.json"),
+            model_root: PathBuf::from("model"),
         };
         assert!(matches!(
             validate_launch_spec(&spec),

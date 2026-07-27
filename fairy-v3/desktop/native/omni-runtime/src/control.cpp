@@ -11,6 +11,7 @@
 #include <set>
 #include <sstream>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace fairy::omni {
@@ -281,6 +282,20 @@ void write_frame(std::ostream &output, const json &payload) {
     }
 }
 
+ControlRuntime::ControlRuntime() : backend_(make_backend()) {}
+
+ControlRuntime::ControlRuntime(
+    std::filesystem::path manifest_path,
+    std::filesystem::path model_root,
+    MediaBuffer *media_buffer
+)
+    : manifest_path_(std::move(manifest_path)),
+      model_root_(std::move(model_root)),
+      media_buffer_(media_buffer),
+      backend_(make_backend()) {}
+
+ControlRuntime::~ControlRuntime() = default;
+
 std::vector<json> ControlRuntime::handle(const json &command) {
     if (stopped_) {
         throw ProtocolError("runtime is already stopped");
@@ -364,12 +379,24 @@ std::vector<json> ControlRuntime::handle(const json &command) {
         const auto manifest_digest = require_string(command, "manifest_digest", 64);
         const auto model_version = require_string(command, "model_version", 128);
         require_sha256_hex(manifest_digest, "manifest_digest");
+        auto backend_status = backend_->status();
+        if (!manifest_path_.empty() || !model_root_.empty()) {
+            if (manifest_path_.empty() || model_root_.empty()) {
+                throw ProtocolError("runtime model paths are incomplete");
+            }
+            const auto model = validate_model_identity(manifest_path_, model_root_);
+            if (model.manifest_digest != manifest_digest ||
+                model.model_version != model_version) {
+                throw ProtocolError("load identity does not match the managed model");
+            }
+            backend_status = backend_->load(model.paths);
+        }
         loaded_ = true;
 
         auto progress = base_event(
             "load_progress", session_id_, segment_id_, context_epoch_, sequence
         );
-        progress["stage"] = "contract";
+        progress["stage"] = kBuildProfile;
         progress["completed"] = 1;
         progress["total"] = 1;
 
@@ -377,8 +404,8 @@ std::vector<json> ControlRuntime::handle(const json &command) {
             base_event("model_ready", session_id_, segment_id_, context_epoch_, sequence);
         model_ready["model_version"] = model_version;
         model_ready["manifest_digest"] = manifest_digest;
-        model_ready["backend_ready"] = false;
-        model_ready["reason"] = "contract_backend";
+        model_ready["backend_ready"] = backend_status.ready;
+        model_ready["reason"] = backend_status.reason;
         return {std::move(progress), std::move(model_ready)};
     }
 
@@ -404,6 +431,9 @@ std::vector<json> ControlRuntime::handle(const json &command) {
         if ((video_width == 0U) != (video_height == 0U) ||
             video_width * video_height > (kMaxBgraBytes / 4U)) {
             throw ProtocolError("video dimensions exceed the bounded context surface");
+        }
+        if (!backend_->begin()) {
+            throw ProtocolError("backend context failed to start");
         }
         context_active_ = true;
 
@@ -449,17 +479,31 @@ std::vector<json> ControlRuntime::handle(const json &command) {
             throw ProtocolError("media sequence is stale");
         }
         last_media_sequence_ = media_sequence;
+        MediaBatch batch{};
+        batch.media_sequence = media_sequence;
+        if (media_buffer_ != nullptr) {
+            batch = media_buffer_->take_batch();
+            if (batch.media_sequence != media_sequence) {
+                throw ProtocolError("media commit does not match the buffered sequence");
+            }
+        }
+        if (!backend_->submit(std::move(batch))) {
+            throw ProtocolError("backend rejected the committed media");
+        }
+        const auto decision = backend_->poll(1500);
 
         auto event = base_event("decision", session_id_, segment_id_, context_epoch_, sequence);
-        event["decision"] = "listen";
-        event["text"] = "";
-        event["confidence"] = 0.0;
+        event["decision"] =
+            decision.has_value() && decision->ok && decision->speak ? "speak" : "listen";
+        event["text"] = decision.has_value() && decision->ok ? decision->text : "";
+        event["confidence"] = decision.has_value() && decision->ok ? 1.0 : 0.0;
         event["grounding"] = json::array();
-        event["backend_ready"] = false;
+        event["backend_ready"] = backend_->status().ready;
         return {std::move(event)};
     }
 
     if (type == "cancel_generation") {
+        backend_->cancel();
         auto event =
             base_event("diagnostic", session_id_, segment_id_, context_epoch_, sequence);
         event["code"] = "generation_cancelled";
@@ -474,6 +518,7 @@ std::vector<json> ControlRuntime::handle(const json &command) {
         return {std::move(event)};
     }
 
+    backend_->stop();
     stopped_ = true;
     context_active_ = false;
     loaded_ = false;

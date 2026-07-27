@@ -123,7 +123,7 @@ void validate_files(const json &files) {
 
 } // namespace
 
-json build_self_test_report(
+ValidatedModelIdentity validate_model_identity(
     const std::filesystem::path &manifest_path,
     const std::filesystem::path &model_root
 ) {
@@ -174,15 +174,27 @@ json build_self_test_report(
         throw ProtocolError("predicted model peak is invalid");
     }
 
-    auto backend = make_backend();
-    auto backend_status = backend->status();
-    if (kBuildProfile == "production-cuda") {
-        BackendModelPaths paths{
+    return {
+        .manifest_digest = require_hex(manifest, "manifest_digest", 64),
+        .model_version = require_string(manifest, "version"),
+        .predicted_peak_bytes = predicted_peak_mb * 1024U * 1024U,
+        .paths = BackendModelPaths{
             model_root / manifest.at("files").at(0).at("path").get<std::string>(),
             model_root / manifest.at("files").at(1).at("path").get<std::string>(),
             model_root / manifest.at("files").at(2).at("path").get<std::string>(),
-        };
-        backend_status = backend->load(paths);
+        },
+    };
+}
+
+json build_self_test_report(
+    const std::filesystem::path &manifest_path,
+    const std::filesystem::path &model_root
+) {
+    const auto model = validate_model_identity(manifest_path, model_root);
+    auto backend = make_backend();
+    auto backend_status = backend->status();
+    if (kBuildProfile == "production-cuda") {
+        backend_status = backend->load(model.paths);
     }
     const auto model_probe = kBuildProfile == "contract"
         ? std::string("not_run_contract")
@@ -190,12 +202,12 @@ json build_self_test_report(
 
     return {
         {"schema_version", 2},
-        {"runtime_compatibility", runtime_compatibility},
-        {"manifest_digest", require_hex(manifest, "manifest_digest", 64)},
-        {"model_version", require_string(manifest, "version")},
-        {"predicted_model_peak_bytes", predicted_peak_mb * 1024U * 1024U},
-        {"upstream_runtime_revision", upstream_revision},
-        {"patch_set_digest", patch_digest},
+        {"runtime_compatibility", kRuntimeCompatibility},
+        {"manifest_digest", model.manifest_digest},
+        {"model_version", model.model_version},
+        {"predicted_model_peak_bytes", model.predicted_peak_bytes},
+        {"upstream_runtime_revision", kUpstreamRevision},
+        {"patch_set_digest", kPatchSetDigest},
         {"build_profile", kBuildProfile},
         {"cuda_compiled", backend_status.cuda},
         {"backend_ready", backend_status.ready},

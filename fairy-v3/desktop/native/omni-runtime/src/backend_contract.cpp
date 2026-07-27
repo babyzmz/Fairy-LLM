@@ -13,6 +13,20 @@ class ContractBackend final : public Backend {
         return status();
     }
 
+    bool begin() override {
+        return true;
+    }
+
+    bool submit(MediaBatch) override {
+        return true;
+    }
+
+    std::optional<BackendDecision> poll(int) override {
+        return BackendDecision{true, false, ""};
+    }
+
+    void cancel() noexcept override {}
+
     void stop() noexcept override {}
 };
 

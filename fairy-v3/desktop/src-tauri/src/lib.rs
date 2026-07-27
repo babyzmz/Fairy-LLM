@@ -5049,14 +5049,14 @@ pub fn run() {
                 bundled_voice_launch(&data_dir, &resource_dir, &desktop_program)
             };
             let voice = Arc::new(VoiceWorkerManager::new(voice_launch));
-            let realtime_launch = if cfg!(debug_assertions) {
-                development_realtime_launch(&data_dir)
-            } else {
-                bundled_realtime_launch(&data_dir, &resource_dir)
-            };
-            let realtime = Arc::new(RealtimeWorkerManager::new(realtime_launch));
             let omni_manifest = bundled_minicpm_o45_manifest()
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let realtime_launch = if cfg!(debug_assertions) {
+                development_realtime_launch(&data_dir, &resource_dir, &omni_manifest)
+            } else {
+                bundled_realtime_launch(&data_dir, &resource_dir, &omni_manifest)
+            };
+            let realtime = Arc::new(RealtimeWorkerManager::new(realtime_launch));
             let local_model = Arc::new(
                 LocalModelControl::new(
                     &data_dir.join("models"),

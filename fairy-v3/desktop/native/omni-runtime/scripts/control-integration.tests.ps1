@@ -19,7 +19,12 @@ function Start-Runtime {
     $connection = $server.WaitForConnectionAsync()
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $Executable
-    $info.Arguments = "--stdio --media-pipe $pipeName"
+    $runtimeRoot = Split-Path -Parent $PSScriptRoot
+    $manifest = [IO.Path]::GetFullPath(
+        (Join-Path $runtimeRoot "..\..\src-tauri\resources\omni\minicpm-o-4.5.json")
+    )
+    $modelRoot = [IO.Path]::GetFullPath((Join-Path $runtimeRoot "tests\fixtures\model-root"))
+    $info.Arguments = "--stdio --media-pipe `"$pipeName`" --manifest `"$manifest`" --model-root `"$modelRoot`""
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.RedirectStandardInput = $true
@@ -38,9 +43,12 @@ function Start-Runtime {
         $server.Dispose()
         throw "Runtime did not connect to its parent-owned media pipe."
     }
+    $manifestIdentity = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
     return [pscustomobject]@{
         Process = $process
         Pipe = $server
+        ManifestDigest = $manifestIdentity.manifest_digest
+        ModelVersion = $manifestIdentity.version
     }
 }
 
@@ -159,8 +167,8 @@ try {
         segment_id = "segment-integration"
         context_epoch = 1
         sequence = 2
-        manifest_digest = ("a" * 64)
-        model_version = "fixture"
+        manifest_digest = $runtime.ManifestDigest
+        model_version = $runtime.ModelVersion
     }
     Assert-Equal (Read-Frame -Stream $output).type "load_progress" "Load progress missing."
     Assert-Equal (Read-Frame -Stream $output).type "model_ready" "Model state missing."

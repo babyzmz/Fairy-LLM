@@ -260,6 +260,41 @@ void MediaBuffer::commit(MediaHeader header, std::vector<std::uint8_t> payload) 
     }
 }
 
+MediaBatch MediaBuffer::take_batch() {
+    const std::scoped_lock lock(impl_->mutex);
+    MediaBatch batch{};
+    batch.media_sequence = impl_->last_sequence;
+    batch.microphone_pcm16.reserve(impl_->microphone_bytes);
+    for (auto &frame : impl_->microphone) {
+        batch.microphone_pcm16.insert(
+            batch.microphone_pcm16.end(), frame.payload.begin(), frame.payload.end()
+        );
+        std::fill(frame.payload.begin(), frame.payload.end(), std::uint8_t{0});
+    }
+    impl_->microphone.clear();
+    impl_->microphone_bytes = 0;
+
+    for (auto &frame : impl_->application_audio) {
+        std::fill(frame.payload.begin(), frame.payload.end(), std::uint8_t{0});
+    }
+    impl_->application_audio.clear();
+    impl_->application_bytes = 0;
+
+    if (impl_->latest_video.has_value() &&
+        impl_->latest_video->header.kind == MediaKind::jpeg) {
+        batch.jpeg = std::move(impl_->latest_video->payload);
+    } else if (impl_->latest_video.has_value()) {
+        std::fill(
+            impl_->latest_video->payload.begin(),
+            impl_->latest_video->payload.end(),
+            std::uint8_t{0}
+        );
+    }
+    impl_->latest_video.reset();
+    impl_->video_bytes = 0;
+    return batch;
+}
+
 void MediaBuffer::clear() {
     const std::scoped_lock lock(impl_->mutex);
     impl_->clear_locked();

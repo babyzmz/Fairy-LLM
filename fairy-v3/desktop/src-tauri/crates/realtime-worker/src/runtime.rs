@@ -6,8 +6,9 @@ use std::time::{Duration, Instant};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::backend::{
-    BackendCaptionSpeaker, BackendEvent, CloudBackendLaunch, CloudLiveBackend, RealtimeBackend,
-    RealtimeBackendKind, RealtimeCloudProviderKind, RealtimeVoiceOutput,
+    BackendCaptionSpeaker, BackendEvent, CloudBackendLaunch, CloudLiveBackend, LocalOmniBackend,
+    LocalOmniLaunch, RealtimeBackend, RealtimeBackendKind, RealtimeCloudProviderKind,
+    RealtimeVoiceOutput,
 };
 use crate::media::{
     resample_pcm16, AudioPlayback, MicrophoneCapture, ProcessLoopbackCapture, VideoCapture,
@@ -31,8 +32,9 @@ pub struct RuntimeLaunch {
     pub segment_id: String,
     pub context_epoch: u64,
     pub backend: RealtimeBackendKind,
-    pub cloud_provider: RealtimeCloudProviderKind,
-    pub credential: Zeroizing<String>,
+    pub cloud_provider: Option<RealtimeCloudProviderKind>,
+    pub credential: Option<Zeroizing<String>>,
+    pub local_omni: Option<LocalOmniLaunch>,
     pub system_instruction: String,
     pub source_id: Option<u64>,
     pub microphone_enabled: bool,
@@ -47,7 +49,7 @@ struct RuntimeIdentity {
     segment_id: String,
     context_epoch: u64,
     backend: RealtimeBackendKind,
-    cloud_provider: RealtimeCloudProviderKind,
+    cloud_provider: Option<RealtimeCloudProviderKind>,
 }
 
 pub enum RuntimeCommand {
@@ -125,6 +127,7 @@ fn run_session(
         backend,
         cloud_provider,
         credential,
+        local_omni,
         system_instruction,
         source_id,
         microphone_enabled: initial_microphone_enabled,
@@ -139,21 +142,42 @@ fn run_session(
         backend,
         cloud_provider,
     };
-    let native_audio = voice_output == RealtimeVoiceOutput::ProviderNativeVoice;
+    let native_audio = backend == RealtimeBackendKind::CloudLive
+        && voice_output == RealtimeVoiceOutput::ProviderNativeVoice;
     let (backend_sender, backend_receiver) = mpsc::sync_channel(1);
     let connect_cancelled = Arc::clone(&cancelled);
     let connect_provider = identity.cloud_provider;
+    let connect_backend = identity.backend;
+    let connect_session_id = identity.session_id.clone();
+    let connect_segment_id = identity.segment_id.clone();
     if thread::Builder::new()
         .name("fairy-realtime-connect".to_owned())
         .spawn(move || {
-            let result = CloudLiveBackend::connect(CloudBackendLaunch {
-                provider: connect_provider,
-                credential,
-                system_instruction,
-                video_enabled: screen_enabled,
-                native_audio,
-            })
-            .map(|backend| Box::new(backend) as Box<dyn RealtimeBackend>);
+            let result = match connect_backend {
+                RealtimeBackendKind::CloudLive => match (connect_provider, credential) {
+                    (Some(provider), Some(credential)) => {
+                        CloudLiveBackend::connect(CloudBackendLaunch {
+                            provider,
+                            credential,
+                            system_instruction,
+                            video_enabled: screen_enabled,
+                            native_audio,
+                        })
+                        .map(|backend| Box::new(backend) as Box<dyn RealtimeBackend>)
+                    }
+                    _ => Err(crate::backend::BackendError::LocalProtocol),
+                },
+                RealtimeBackendKind::LocalMiniCpmO45 => match local_omni {
+                    Some(launch) => LocalOmniBackend::connect(
+                        launch,
+                        connect_session_id,
+                        connect_segment_id,
+                        context_epoch,
+                    )
+                    .map(|backend| Box::new(backend) as Box<dyn RealtimeBackend>),
+                    None => Err(crate::backend::BackendError::LocalUnavailable),
+                },
+            };
             if !connect_cancelled.load(Ordering::Acquire) {
                 let _ = backend_sender.send(result);
             }
@@ -178,7 +202,7 @@ fn run_session(
             Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < backend_deadline => {}
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 cancelled.store(true, Ordering::Release);
-                emit_failed(&events, &identity, "REALTIME_PROVIDER_TIMEOUT");
+                emit_failed(&events, &identity, "REALTIME_BACKEND_TIMEOUT");
                 return;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -253,7 +277,7 @@ fn run_session(
         context_epoch: identity.context_epoch,
         status: "active".to_owned(),
         backend: identity.backend,
-        cloud_provider: Some(identity.cloud_provider),
+        cloud_provider: identity.cloud_provider,
         error_code: None,
     });
     let session_start = Instant::now();
@@ -379,6 +403,16 @@ fn run_session(
         for output in outputs {
             match output {
                 BackendEvent::Ready => {}
+                BackendEvent::PerceptionCandidate { public_summary } => {
+                    event_sequence = event_sequence.saturating_add(1);
+                    let _ = events.send(WorkerEvent::PerceptionCandidate {
+                        session_id: identity.session_id.clone(),
+                        segment_id: identity.segment_id.clone(),
+                        context_epoch: identity.context_epoch,
+                        sequence: event_sequence,
+                        public_summary,
+                    });
+                }
                 BackendEvent::Audio(mut bytes) => {
                     audio_output_samples =
                         audio_output_samples.saturating_add((bytes.len() / 2) as u64);
@@ -502,7 +536,7 @@ fn run_session(
         context_epoch: identity.context_epoch,
         status: "completed".to_owned(),
         backend: identity.backend,
-        cloud_provider: Some(identity.cloud_provider),
+        cloud_provider: identity.cloud_provider,
         error_code: None,
     });
 }
@@ -560,7 +594,7 @@ fn emit_failed(
         context_epoch: identity.context_epoch,
         status: "failed".to_owned(),
         backend: identity.backend,
-        cloud_provider: Some(identity.cloud_provider),
+        cloud_provider: identity.cloud_provider,
         error_code: Some(error_code.to_owned()),
     });
 }
@@ -572,7 +606,7 @@ fn emit_cancelled(events: &mpsc::Sender<WorkerEvent>, identity: &RuntimeIdentity
         context_epoch: identity.context_epoch,
         status: "cancelled".to_owned(),
         backend: identity.backend,
-        cloud_provider: Some(identity.cloud_provider),
+        cloud_provider: identity.cloud_provider,
         error_code: None,
     });
 }

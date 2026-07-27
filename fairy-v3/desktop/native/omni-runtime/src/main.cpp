@@ -53,8 +53,10 @@ Arguments parse_arguments(const int argc, Character **argv) {
             throw fairy::omni::ProtocolError("self-test requires manifest and model root only");
         }
     } else if (result.stdio) {
-        if (result.media_pipe.empty() || !result.manifest.empty() || !result.model_root.empty()) {
-            throw fairy::omni::ProtocolError("stdio mode requires exactly one media pipe");
+        if (result.media_pipe.empty() || result.manifest.empty() || result.model_root.empty()) {
+            throw fairy::omni::ProtocolError(
+                "stdio mode requires a media pipe, manifest, and model root"
+            );
         }
     } else {
         throw fairy::omni::ProtocolError("a runtime mode is required");
@@ -94,8 +96,10 @@ int run(const int argc, Character **argv) {
         }
 #endif
 
-        fairy::omni::ControlRuntime runtime;
         fairy::omni::MediaBuffer media_buffer;
+        fairy::omni::ControlRuntime runtime(
+            arguments.manifest, arguments.model_root, &media_buffer
+        );
         fairy::omni::MediaPipePump media_pipe(arguments.media_pipe, media_buffer);
         media_pipe.start();
         while (!runtime.stopped()) {

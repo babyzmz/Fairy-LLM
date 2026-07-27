@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use fairy_realtime_worker::{
     read_frame, validate_backend_start, write_frame, BackendStartRequest, HostCommand,
-    RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
+    LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
     RealtimeInteractionIntensity, RealtimeVoiceOutput, SecretString,
 };
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,8 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 use zeroize::Zeroizing;
+
+use crate::omni_model_manifest::OmniModelManifest;
 
 pub const REALTIME_WORKER_EVENT: &str = "fairy-realtime-event";
 const REALTIME_PROTOCOL: &str = "fairy-realtime-worker-v2";
@@ -26,6 +28,7 @@ const WORKER_STOP_GRACE: Duration = Duration::from_millis(80);
 pub struct RealtimeWorkerLaunch {
     pub program: PathBuf,
     pub log_path: PathBuf,
+    pub local_omni: LocalOmniLaunch,
 }
 
 trait RealtimeCredentialProvider {
@@ -191,6 +194,8 @@ impl RealtimeWorkerManager {
             backend: input.backend,
             cloud_provider: input.cloud_provider,
             cloud_credential: credential.map(SecretString::from),
+            local_omni: (input.backend == RealtimeBackendKind::LocalMiniCpmO45)
+                .then(|| self.launch.local_omni.clone()),
             persona_snapshot: SecretString::from(persona_snapshot),
             activity_profile: input.activity_profile,
             interaction_intensity: input.interaction_intensity,
@@ -472,18 +477,44 @@ fn send_command(
     Ok(())
 }
 
-pub fn development_realtime_launch(data_dir: &Path) -> RealtimeWorkerLaunch {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+pub fn development_realtime_launch(
+    data_dir: &Path,
+    resource_dir: &Path,
+    manifest: &OmniModelManifest,
+) -> RealtimeWorkerLaunch {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     RealtimeWorkerLaunch {
-        program: manifest.join("target/debug/fairy-realtime-worker.exe"),
+        program: crate_root.join("target/debug/fairy-realtime-worker.exe"),
         log_path: data_dir.join("logs/realtime-worker.log"),
+        local_omni: local_omni_launch(data_dir, resource_dir, manifest),
     }
 }
 
-pub fn bundled_realtime_launch(data_dir: &Path, resource_dir: &Path) -> RealtimeWorkerLaunch {
+pub fn bundled_realtime_launch(
+    data_dir: &Path,
+    resource_dir: &Path,
+    manifest: &OmniModelManifest,
+) -> RealtimeWorkerLaunch {
     RealtimeWorkerLaunch {
         program: resource_dir.join("runtime/realtime-worker/fairy-realtime-worker.exe"),
         log_path: data_dir.join("logs/realtime-worker.log"),
+        local_omni: local_omni_launch(data_dir, resource_dir, manifest),
+    }
+}
+
+fn local_omni_launch(
+    data_dir: &Path,
+    resource_dir: &Path,
+    manifest: &OmniModelManifest,
+) -> LocalOmniLaunch {
+    LocalOmniLaunch {
+        runtime_path: resource_dir.join("runtime/omni/fairy-omni-runtime.exe"),
+        manifest_path: resource_dir.join("omni/minicpm-o-4.5.json"),
+        model_root: data_dir
+            .join("models/minicpm-o-4.5")
+            .join(&manifest.version),
+        manifest_digest: manifest.manifest_digest.clone(),
+        model_version: manifest.version.clone(),
     }
 }
 
@@ -509,10 +540,20 @@ mod tests {
 
     #[test]
     fn development_launch_uses_workspace_debug_binary() {
-        let launch = development_realtime_launch(Path::new("C:/fairy-data"));
+        let manifest =
+            crate::omni_model_catalog::bundled_minicpm_o45_manifest().expect("bundled manifest");
+        let launch = development_realtime_launch(
+            Path::new("C:/fairy-data"),
+            Path::new("C:/fairy-resources"),
+            &manifest,
+        );
         assert!(launch
             .program
             .ends_with("target/debug/fairy-realtime-worker.exe"));
+        assert!(launch
+            .local_omni
+            .runtime_path
+            .ends_with("runtime/omni/fairy-omni-runtime.exe"));
     }
 
     #[test]

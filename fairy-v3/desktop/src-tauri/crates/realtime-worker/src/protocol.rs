@@ -6,7 +6,7 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 use crate::backend::{
-    RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
+    LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
     RealtimeInteractionIntensity, RealtimeVoiceOutput,
 };
 
@@ -73,6 +73,7 @@ pub enum HostCommand {
         backend: RealtimeBackendKind,
         cloud_provider: Option<RealtimeCloudProviderKind>,
         cloud_credential: Option<SecretString>,
+        local_omni: Option<LocalOmniLaunch>,
         persona_snapshot: SecretString,
         activity_profile: RealtimeActivityProfile,
         interaction_intensity: RealtimeInteractionIntensity,
@@ -318,6 +319,7 @@ mod tests {
             backend: RealtimeBackendKind::CloudLive,
             cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
             cloud_credential: Some(SecretString::from("credential-secret".to_owned())),
+            local_omni: None,
             persona_snapshot: SecretString::from(valid_snapshot_json()),
             activity_profile: RealtimeActivityProfile::Auto,
             interaction_intensity: RealtimeInteractionIntensity::Standard,

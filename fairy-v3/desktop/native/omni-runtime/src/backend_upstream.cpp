@@ -3,6 +3,8 @@
 #include "common.h"
 #include "omni.h"
 
+#include <algorithm>
+#include <limits>
 #include <system_error>
 
 #if defined(FAIRY_OMNI_PRODUCTION_CUDA) && !defined(GGML_USE_CUDA)
@@ -16,6 +18,42 @@ bool regular_model_file(const std::filesystem::path &path) {
     std::error_code error;
     return !path.empty() && std::filesystem::is_regular_file(path, error) && !error &&
            !std::filesystem::is_symlink(path, error) && !error;
+}
+
+void append_u16(std::vector<std::uint8_t> &output, const std::uint16_t value) {
+    output.push_back(static_cast<std::uint8_t>(value & 0xffU));
+    output.push_back(static_cast<std::uint8_t>((value >> 8U) & 0xffU));
+}
+
+void append_u32(std::vector<std::uint8_t> &output, const std::uint32_t value) {
+    output.push_back(static_cast<std::uint8_t>(value & 0xffU));
+    output.push_back(static_cast<std::uint8_t>((value >> 8U) & 0xffU));
+    output.push_back(static_cast<std::uint8_t>((value >> 16U) & 0xffU));
+    output.push_back(static_cast<std::uint8_t>((value >> 24U) & 0xffU));
+}
+
+std::vector<std::uint8_t> pcm16_wav(std::vector<std::uint8_t> pcm16) {
+    if (pcm16.empty() || (pcm16.size() % 2U) != 0U ||
+        pcm16.size() > std::numeric_limits<std::uint32_t>::max() - 36U) {
+        return {};
+    }
+    std::vector<std::uint8_t> wav;
+    wav.reserve(44U + pcm16.size());
+    wav.insert(wav.end(), {'R', 'I', 'F', 'F'});
+    append_u32(wav, static_cast<std::uint32_t>(36U + pcm16.size()));
+    wav.insert(wav.end(), {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
+    append_u32(wav, 16U);
+    append_u16(wav, 1U);
+    append_u16(wav, 1U);
+    append_u32(wav, 16000U);
+    append_u32(wav, 32000U);
+    append_u16(wav, 2U);
+    append_u16(wav, 16U);
+    wav.insert(wav.end(), {'d', 'a', 't', 'a'});
+    append_u32(wav, static_cast<std::uint32_t>(pcm16.size()));
+    wav.insert(wav.end(), pcm16.begin(), pcm16.end());
+    std::fill(pcm16.begin(), pcm16.end(), std::uint8_t{0});
+    return wav;
 }
 
 class UpstreamBackend final : public Backend {
@@ -79,7 +117,47 @@ class UpstreamBackend final : public Backend {
         return status();
     }
 
+    bool begin() override {
+        if (context_ == nullptr || session_active_) {
+            return false;
+        }
+        session_active_ = omni_duplex_session_begin(context_, "", "");
+        return session_active_;
+    }
+
+    bool submit(MediaBatch batch) override {
+        if (!session_active_ || batch.media_sequence == 0U) {
+            return false;
+        }
+        OmniDuplexFrame frame{};
+        frame.aud_bytes = pcm16_wav(std::move(batch.microphone_pcm16));
+        frame.img_bytes = std::move(batch.jpeg);
+        frame.user_seq = static_cast<std::int64_t>(batch.media_sequence);
+        return omni_duplex_push_frame(context_, frame) >= 1;
+    }
+
+    std::optional<BackendDecision> poll(const int timeout_ms) override {
+        if (!session_active_) {
+            return std::nullopt;
+        }
+        OmniDuplexFrameResult result{};
+        if (!omni_duplex_wait_next_frame(context_, &result, timeout_ms)) {
+            return std::nullopt;
+        }
+        return BackendDecision{result.ok, result.is_speak, std::move(result.text)};
+    }
+
+    void cancel() noexcept override {
+        if (context_ != nullptr) {
+            static_cast<void>(stop_speek(context_));
+        }
+    }
+
     void stop() noexcept override {
+        if (context_ != nullptr && session_active_) {
+            omni_duplex_session_end(context_);
+        }
+        session_active_ = false;
         if (context_ != nullptr) {
             omni_free(context_);
             context_ = nullptr;
@@ -97,6 +175,7 @@ class UpstreamBackend final : public Backend {
 
     common_params params_{};
     omni_context *context_ = nullptr;
+    bool session_active_ = false;
 };
 
 } // namespace

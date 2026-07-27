@@ -1,10 +1,14 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
 mod cloud;
+mod local_omni;
 
 pub use cloud::{CloudBackendLaunch, CloudLiveBackend};
+pub use local_omni::LocalOmniBackend;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +49,15 @@ pub enum RealtimeVoiceOutput {
     TextOnly,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalOmniLaunch {
+    pub runtime_path: PathBuf,
+    pub manifest_path: PathBuf,
+    pub model_root: PathBuf,
+    pub manifest_digest: String,
+    pub model_version: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackendCaptionSpeaker {
     User,
@@ -54,6 +67,9 @@ pub enum BackendCaptionSpeaker {
 #[derive(Clone, Debug, PartialEq)]
 pub enum BackendEvent {
     Ready,
+    PerceptionCandidate {
+        public_summary: String,
+    },
     Audio(Vec<u8>),
     PublicCaption {
         text: String,
@@ -75,12 +91,24 @@ pub enum BackendEvent {
 pub enum BackendError {
     #[error("the realtime cloud backend failed")]
     Cloud(#[from] crate::transport::ProviderTransportError),
+    #[error("the local Omni backend is unavailable")]
+    LocalUnavailable,
+    #[error("the local Omni backend protocol failed")]
+    LocalProtocol,
+    #[error("the local Omni backend operation timed out")]
+    LocalTimeout,
+    #[error("the local Omni backend process failed")]
+    LocalIo(#[from] std::io::Error),
 }
 
 impl BackendError {
     pub const fn public_code(&self) -> &'static str {
         match self {
             Self::Cloud(error) => error.public_code(),
+            Self::LocalUnavailable => "LOCAL_BACKEND_NOT_READY",
+            Self::LocalProtocol => "LOCAL_BACKEND_PROTOCOL_FAILED",
+            Self::LocalTimeout => "LOCAL_BACKEND_TIMEOUT",
+            Self::LocalIo(_) => "LOCAL_BACKEND_INTERRUPTED",
         }
     }
 }
