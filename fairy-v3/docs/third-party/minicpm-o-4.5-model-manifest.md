@@ -27,9 +27,18 @@ The C++ runtime integration baseline is pinned separately:
 - Revision: `74699a53df6ca0f4947ff37066f851532c20b12d`
 - Source: <https://github.com/tc-mb/llama.cpp-omni/commit/74699a53df6ca0f4947ff37066f851532c20b12d>
 
-The Phase 1 patch-set digest is the SHA-256 of an empty patch set because the
-runtime is not yet vendored or modified. Phase 2 must replace that digest when
-the reviewed Fairy patch set is introduced.
+Phase 2 locks the source and development toolchain in
+`desktop/native/omni-runtime/upstream.lock.json`. The source checkout is always
+detached at the revision above, and the ordered patch-set digest is calculated
+as SHA-256 over each UTF-8 repository-relative patch path, a NUL byte, the raw
+patch bytes, and a trailing NUL byte. The current digest still represents an
+empty patch set; it will be replaced when the reviewed Fairy patches are added.
+
+The development bootstrap pins the official CMake 4.4.0 Windows x64 ZIP from
+<https://cmake.org/files/v4.4/cmake-4.4.0-windows-x86_64.zip> with SHA-256
+`156d70eb7625a7b469444df7d0861d2af8d5d0a437fce32c350372b08f5620e8`.
+The archive, extracted toolchain, source checkout, and build output are ignored
+local inputs and are never committed.
 
 TTS, Projector TTS, Token2Wav, reference voice assets, and CoreML artifacts are
 not part of the Fairy Beta manifest.
