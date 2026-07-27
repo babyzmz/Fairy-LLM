@@ -30,10 +30,12 @@ $installRoot = Assert-ContainedPath -BasePath $toolsRoot -CandidatePath (Join-Pa
 $cmakeExe = Join-Path $installRoot "bin\cmake.exe"
 
 if (Test-Path -LiteralPath $cmakeExe) {
-    $versionLine = (& $cmakeExe --version | Select-Object -First 1).Trim()
-    if ($LASTEXITCODE -eq 0 -and $versionLine -eq "cmake version $($cmake.version)") {
+    $versionOutput = @(& $cmakeExe --version)
+    $versionExitCode = $LASTEXITCODE
+    $versionLine = ([string]$versionOutput[0]).Trim()
+    if ($versionExitCode -eq 0 -and $versionLine -eq "cmake version $($cmake.version)") {
         Write-Output $cmakeExe
-        exit 0
+        return
     }
     throw "Existing CMake tool does not match pinned version $($cmake.version)."
 }
@@ -76,8 +78,10 @@ if (-not (Test-Path -LiteralPath $cmakeExe)) {
     throw "Pinned CMake executable was not found after extraction."
 }
 
-$installedVersion = (& $cmakeExe --version | Select-Object -First 1).Trim()
-if ($LASTEXITCODE -ne 0 -or $installedVersion -ne "cmake version $($cmake.version)") {
+$installedVersionOutput = @(& $cmakeExe --version)
+$installedVersionExitCode = $LASTEXITCODE
+$installedVersion = ([string]$installedVersionOutput[0]).Trim()
+if ($installedVersionExitCode -ne 0 -or $installedVersion -ne "cmake version $($cmake.version)") {
     throw "Extracted CMake tool does not match pinned version $($cmake.version)."
 }
 
