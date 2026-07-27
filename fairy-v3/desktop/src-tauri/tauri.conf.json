@@ -23,7 +23,7 @@
       },
       {
         "label": "companion",
-        "title": "Fairy Game Companion",
+        "title": "Fairy Realtime Companion",
         "create": false,
         "url": "index.html?surface=companion",
         "width": 620,
