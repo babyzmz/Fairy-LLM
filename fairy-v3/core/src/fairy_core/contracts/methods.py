@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from enum import StrEnum
 from types import MappingProxyType
-
-from pydantic import BaseModel, Field
 
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
 from fairy_core.contracts.browser import (
@@ -115,6 +111,14 @@ from fairy_core.contracts.media import (
     MediaVideoJobInput,
     MediaVideoStartInput,
 )
+from fairy_core.contracts.method_primitives import (
+    CoreMethod,
+    CoreMethodTransport,
+    EmptyInput,
+    EventListInput,
+    EventPageModel,
+    EventSubscribeInput,
+)
 from fairy_core.contracts.model_catalog import (
     ModelCatalogListInput,
     ModelCatalogPageModel,
@@ -140,7 +144,6 @@ from fairy_core.contracts.models import (
     CapabilityRequest,
     ChangesetProposal,
     CheckpointModel,
-    ContractModel,
     ConversationCreate,
     ConversationIdInput,
     ConversationListInput,
@@ -154,7 +157,6 @@ from fairy_core.contracts.models import (
     DocumentPageModel,
     DocumentSearchInput,
     DocumentSearchPageModel,
-    EventEnvelopeModel,
     EventStreamStateModel,
     ExecutionSettingsModel,
     ExecutionSettingsUpdateInput,
@@ -307,37 +309,6 @@ from fairy_core.contracts.workspaces import (
     WorkspaceVersionInput,
 )
 from fairy_core.system_actions.models import SystemActionExecution, SystemActionRequest
-
-
-class EmptyInput(ContractModel):
-    pass
-
-
-class EventSubscribeInput(ContractModel):
-    cursor: int = Field(default=0, ge=0)
-
-
-class EventListInput(EventSubscribeInput):
-    limit: int = Field(default=500, ge=1, le=2_000)
-
-
-class EventPageModel(ContractModel):
-    items: tuple[EventEnvelopeModel, ...]
-    next_cursor: int = Field(ge=0)
-
-
-class CoreMethodTransport(StrEnum):
-    LOCAL_ONLY = "local_only"
-    LOCAL_AND_CLOUD = "local_and_cloud"
-
-
-@dataclass(frozen=True, slots=True)
-class CoreMethod:
-    name: str
-    request_model: type[BaseModel]
-    response_model: type[BaseModel]
-    transport: CoreMethodTransport = CoreMethodTransport.LOCAL_AND_CLOUD
-
 
 CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
     {
