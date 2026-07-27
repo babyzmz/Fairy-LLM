@@ -48,6 +48,9 @@
       "runtime/voice-worker": "runtime/voice-worker",
       "runtime/omni": "runtime/omni",
       "resources/omni": "runtime/omni-manifests",
+      "resources/legal": "legal/licenses",
+      "../../THIRD_PARTY_NOTICES.md": "legal/THIRD_PARTY_NOTICES.md",
+      "../../docs/release": "docs/release",
       "../../voice-worker/assets": "runtime/voice-assets"
     },
     "targets": ["msi"],

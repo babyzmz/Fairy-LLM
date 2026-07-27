@@ -190,3 +190,11 @@ Realtime Companion Beta release policy and local documents:
 Packaging success does not approve a public Beta release. The four-hour local
 soak, native recovery, reference-GPU performance, installer lifecycle, signing,
 and malware gates must all have passing evidence.
+
+Validate the checked-in release resource policy with:
+
+```powershell
+core\.venv\Scripts\python.exe scripts\check-release-documents.py
+core\.venv\Scripts\python.exe scripts\check_release_bundle.py
+core\.venv\Scripts\python.exe scripts\test_release_bundle.py
+```

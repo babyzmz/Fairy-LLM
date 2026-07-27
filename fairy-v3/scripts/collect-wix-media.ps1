@@ -57,6 +57,9 @@ $cabinetNames = @(Get-ExternalCabinetNames $msiPath)
 if ($cabinetNames.Count -eq 0) {
     throw "WiX did not produce external cabinet media"
 }
+if (@($cabinetNames | Select-Object -Unique).Count -ne $cabinetNames.Count) {
+    throw "WiX references duplicate external cabinet media"
+}
 $cabinets = @(
     foreach ($cabinetName in $cabinetNames) {
         $cabinetPath = Join-Path $source $cabinetName
@@ -66,7 +69,7 @@ $cabinets = @(
         Get-Item -LiteralPath $cabinetPath
     }
 )
-foreach ($stale in @(Get-ChildItem -LiteralPath $destination -File -Filter "cab*.cab" -ErrorAction SilentlyContinue)) {
+foreach ($stale in @(Get-ChildItem -LiteralPath $destination -File -Filter "*.cab" -ErrorAction SilentlyContinue)) {
     Remove-Item -LiteralPath $stale.FullName -Force
 }
 foreach ($cabinet in $cabinets) {
@@ -77,7 +80,9 @@ foreach ($cabinet in $cabinets) {
 }
 
 $releaseFiles = @((Get-Item -LiteralPath $msiPath)) + @(
-    Get-ChildItem -LiteralPath $destination -File -Filter "cab*.cab" | Sort-Object Name
+    foreach ($cabinetName in ($cabinetNames | Sort-Object)) {
+        Get-Item -LiteralPath (Join-Path $destination $cabinetName)
+    }
 )
 $manifestFiles = @(
     foreach ($file in $releaseFiles) {
@@ -90,11 +95,13 @@ $manifestFiles = @(
 )
 $totalBytes = ($releaseFiles | Measure-Object -Property Length -Sum).Sum
 $manifest = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     product = "Fairy"
     version = $version
     architecture = $Architecture
     installer = $msiName
+    cabinets = @($cabinetNames | Sort-Object)
+    artifact_count = $manifestFiles.Count
     media = $manifestFiles
     total_bytes = $totalBytes
 }
