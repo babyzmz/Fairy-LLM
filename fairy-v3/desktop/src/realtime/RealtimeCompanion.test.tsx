@@ -61,6 +61,7 @@ const workerStatus = (running: boolean): RealtimeWorkerStatus => ({
   backend: running ? "cloud_live" : null,
   cloud_provider: running ? "glm_realtime_flash" : null,
   action_required: false,
+  presence_projection: null,
   audio_input_ms: 1_250,
   audio_output_ms: 400,
   video_frame_count: 8,
@@ -285,6 +286,39 @@ describe("RealtimeCompanion", () => {
     }));
   });
 
+  it("restores the native session and presence projection after the panel remounts", async () => {
+    const activeSession = session("active", 2);
+    const authoritativePresence = {
+      ...presenceProjection("standby", 7),
+      type: undefined,
+    } as unknown as RealtimeWorkerStatus["presence_projection"];
+    const status = {
+      ...workerStatus(true),
+      presence_projection: authoritativePresence,
+    };
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [activeSession] })),
+        get: vi.fn(async () => activeSession),
+        report: vi.fn(),
+      },
+      memories: { save: vi.fn() },
+      transcript: { append: vi.fn(), list: vi.fn(async () => ({ items: [] })) },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => status),
+        stop: vi.fn(),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+
+    expect(await screen.findByText("Standing by")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Stop" })).not.toBeNull();
+    expect(client.sessions.get).not.toHaveBeenCalled();
+    expect(client.worker.stop).not.toHaveBeenCalled();
+  });
+
   it("persists stable captions to the linked transcript, never into the usage report", async () => {
     const report = vi.fn(async (input: { status: RealtimeSession["status"] }) =>
       session(input.status, input.status === "active" ? 2 : 4));
@@ -450,8 +484,10 @@ describe("RealtimeCompanion", () => {
     expect(screen.queryByText("Fairy is speaking")).toBeNull();
   });
 
-  it("gates microphone and screen input through the collapsible session controls", async () => {
+  it("routes mute and privacy pause through their separate native controls", async () => {
     const setInput = vi.fn(async () => undefined);
+    const pausePrivacy = vi.fn(async () => workerStatus(true));
+    const resumePrivacy = vi.fn(async () => workerStatus(true));
     const client = {
       sessions: {
         list: vi.fn(async () => ({ items: [] })),
@@ -468,6 +504,8 @@ describe("RealtimeCompanion", () => {
         stop: vi.fn(),
         toolResult: vi.fn(),
         setInput,
+        pausePrivacy,
+        resumePrivacy,
       },
     } as unknown as CoreClient["realtime"];
 
@@ -485,8 +523,16 @@ describe("RealtimeCompanion", () => {
       expect.objectContaining({ microphone: false, video: true }),
     ));
     fireEvent.click(screen.getByRole("button", { name: /暂停/ }));
+    await waitFor(() => expect(pausePrivacy).toHaveBeenCalledWith({
+      session_id: session("active", 2).id,
+    }));
+    expect(setInput).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: /恢复/ }));
+    await waitFor(() => expect(resumePrivacy).toHaveBeenCalledWith({
+      session_id: session("active", 2).id,
+    }));
     await waitFor(() => expect(setInput).toHaveBeenLastCalledWith(
-      expect.objectContaining({ microphone: false, video: false }),
+      expect.objectContaining({ microphone: false, video: true }),
     ));
   });
 

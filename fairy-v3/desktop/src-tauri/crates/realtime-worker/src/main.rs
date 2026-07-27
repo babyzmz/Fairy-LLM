@@ -193,6 +193,53 @@ fn main() {
                     active.command(RuntimeCommand::SetInput { microphone, video });
                 }
             }
+            HostCommand::Pause { session_id }
+                if active_identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.session_id == session_id) =>
+            {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::Pause);
+                }
+            }
+            HostCommand::Resume { session_id }
+                if active_identity.as_ref().is_some_and(|identity| {
+                    identity.session_id == session_id
+                        && identity.backend == RealtimeBackendKind::LocalMiniCpmO45
+                        && identity.context_epoch < u64::MAX
+                }) =>
+            {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::Resume);
+                    if let Some(identity) = active_identity.as_mut() {
+                        identity.context_epoch += 1;
+                    }
+                }
+            }
+            HostCommand::WakeSegment {
+                session_id,
+                current_segment_id,
+                current_context_epoch,
+                next_segment_id,
+            } if active_identity.as_ref().is_some_and(|identity| {
+                identity.session_id == session_id
+                    && identity.backend == RealtimeBackendKind::CloudLive
+                    && identity.segment_id == current_segment_id
+                    && identity.context_epoch == current_context_epoch
+                    && !next_segment_id.trim().is_empty()
+                    && next_segment_id != current_segment_id
+            }) =>
+            {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::WakeSegment {
+                        next_segment_id: next_segment_id.clone(),
+                    });
+                    if let Some(identity) = active_identity.as_mut() {
+                        identity.segment_id = next_segment_id;
+                        identity.context_epoch = 1;
+                    }
+                }
+            }
             HostCommand::RotateContext {
                 session_id,
                 segment_id,

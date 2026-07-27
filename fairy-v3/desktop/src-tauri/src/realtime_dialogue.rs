@@ -350,6 +350,16 @@ impl RealtimeDialogueDirector {
         self.context_epoch
     }
 
+    pub fn commit_backend_segment(&mut self, next_segment_id: String) -> bool {
+        if next_segment_id.trim().is_empty() || next_segment_id == self.segment_id {
+            return false;
+        }
+        self.segment_id = next_segment_id;
+        self.context_epoch = 1;
+        self.reset_epoch_policy();
+        true
+    }
+
     pub const fn speech_generation(&self) -> u64 {
         self.speech_generation
     }

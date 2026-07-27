@@ -71,6 +71,7 @@ describe("RealtimeCompanionWindowApp", () => {
           backend: null,
           cloud_provider: null,
           action_required: false,
+          presence_projection: null,
           audio_input_ms: 0,
           audio_output_ms: 0,
           video_frame_count: 0,

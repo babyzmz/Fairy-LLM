@@ -199,6 +199,7 @@ pub trait RealtimeBackend: Send {
     ) -> Result<(), BackendError>;
     fn poll(&mut self) -> Result<Vec<BackendEvent>, BackendError>;
     fn pause(&mut self) -> Result<(), BackendError>;
+    fn resume(&mut self) -> Result<(), BackendError>;
     fn stop(&mut self) -> Result<(), BackendError>;
 }
 

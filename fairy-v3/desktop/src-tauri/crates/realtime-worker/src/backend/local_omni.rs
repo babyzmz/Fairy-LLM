@@ -688,6 +688,10 @@ impl RealtimeBackend for LocalOmniBackend {
         )
     }
 
+    fn resume(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
     fn stop(&mut self) -> Result<(), BackendError> {
         if self.stopped {
             return Ok(());

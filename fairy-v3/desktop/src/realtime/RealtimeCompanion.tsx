@@ -62,11 +62,6 @@ const EMPTY_USAGE: RealtimeUsage = {
   tool_call_count: 0,
 };
 
-// Cost controls. Idle auto-disconnect stops a session the user has walked away
-// from; the daily cap is a soft cumulative guard across sessions.
-const REALTIME_IDLE_TIMEOUT_MS = 3 * 60_000;
-const REALTIME_IDLE_CHECK_MS = 15_000;
-
 export function RealtimeCompanion({
   client,
   hostInvoke = invoke,
@@ -107,7 +102,6 @@ export function RealtimeCompanion({
   const startedAt = useRef(0);
   const usage = useRef<RealtimeUsage>({ ...EMPTY_USAGE });
   const [liveUsage, setLiveUsage] = useState<RealtimeUsage>({ ...EMPTY_USAGE });
-  const lastUserActivity = useRef(0);
   const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
@@ -134,18 +128,31 @@ export function RealtimeCompanion({
   const toggleMute = useCallback(() => {
     setMuted((current) => {
       const next = !current;
-      applyInput(next, paused);
+      if (!paused) applyInput(next, false);
       return next;
     });
   }, [applyInput, paused]);
 
-  const togglePause = useCallback(() => {
-    setPaused((current) => {
-      const next = !current;
-      applyInput(muted, next);
-      return next;
-    });
-  }, [applyInput, muted]);
+  const togglePause = useCallback(async () => {
+    const current = sessionRef.current;
+    if (current === null || isTerminal(current.status) || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (paused) {
+        await client.worker.resumePrivacy({ session_id: current.id });
+        setPaused(false);
+        applyInput(muted, false);
+      } else {
+        await client.worker.pausePrivacy({ session_id: current.id });
+        setPaused(true);
+      }
+    } catch (caught) {
+      setError(messageOf(caught));
+    } finally {
+      setBusy(false);
+    }
+  }, [applyInput, busy, client.worker, muted, paused]);
 
   const updateSession = useCallback((value: RealtimeSession | null) => {
     sessionRef.current = value;
@@ -219,6 +226,25 @@ export function RealtimeCompanion({
           }
         }
       }
+      if (workerStatus.running && workerStatus.session_id !== null) {
+        const restoredSession = recentSessions.items.find(
+          (item) => item.id === workerStatus.session_id,
+        ) ?? await client.sessions.get(workerStatus.session_id);
+        updateSession(restoredSession);
+        usage.current = {
+          audio_input_ms: workerStatus.audio_input_ms,
+          audio_output_ms: workerStatus.audio_output_ms,
+          video_frame_count: workerStatus.video_frame_count,
+          interruption_count: workerStatus.interruption_count,
+          tool_call_count: workerStatus.tool_call_count,
+        };
+        setLiveUsage(usage.current);
+        if (isPresenceProjection(workerStatus.presence_projection)) {
+          presenceProjectionRef.current = workerStatus.presence_projection;
+          setPresenceProjection(workerStatus.presence_projection);
+          setPaused(workerStatus.presence_projection.state === "privacy_paused");
+        }
+      }
       const windows = captureSurfaces.filter((item) => item.kind === "window");
       setPreferences(nextPreferences);
       setActiveBackend(workerStatus.running ? workerStatus.backend : null);
@@ -227,7 +253,7 @@ export function RealtimeCompanion({
     } catch (caught) {
       setError(messageOf(caught));
     }
-  }, [client.sessions, client.worker, hostInvoke]);
+  }, [client.sessions, client.worker, hostInvoke, updateSession]);
 
   useEffect(() => {
     if (open) void load();
@@ -330,6 +356,7 @@ export function RealtimeCompanion({
         ) return;
         presenceProjectionRef.current = payload;
         setPresenceProjection(payload);
+        setPaused(payload.state === "privacy_paused");
       } else if (payload.type === "barge_in") {
         const activePresence = presenceProjectionRef.current;
         if (
@@ -337,7 +364,6 @@ export function RealtimeCompanion({
           || payload.segment_id !== activePresence.segment_id
           || payload.context_epoch !== activePresence.context_epoch
         ) return;
-        lastUserActivity.current = Date.now();
         fairySpeech.interrupt({
           session_id: payload.session_id,
           segment_id: payload.segment_id,
@@ -345,7 +371,6 @@ export function RealtimeCompanion({
           speech_generation: payload.speech_generation,
         });
       } else if (payload.type === "public_caption") {
-        if (payload.speaker === "user") lastUserActivity.current = Date.now();
         if (payload.stable) {
           const completed = mergeCaptionDelta(draftCaptionRef.current, payload.text);
           draftCaptionRef.current = "";
@@ -411,29 +436,6 @@ export function RealtimeCompanion({
     report,
   ]);
 
-  useEffect(() => {
-    if (session?.status !== "active" || preferences === null) return;
-    const timeout = window.setTimeout(() => void stop(), preferences.realtime_presence_max_minutes * 60_000);
-    return () => window.clearTimeout(timeout);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.status, preferences?.realtime_presence_max_minutes]);
-
-  // Idle auto-disconnect: stop the metered session when the user has not spoken
-  // (no captions or barge-in) for the idle window, so a walked-away session does
-  // not keep streaming audio and frames until the maximum-duration cap.
-  useEffect(() => {
-    if (session?.status !== "active") return;
-    lastUserActivity.current = Date.now();
-    const interval = window.setInterval(() => {
-      if (Date.now() - lastUserActivity.current >= REALTIME_IDLE_TIMEOUT_MS) {
-        window.clearInterval(interval);
-        void stop();
-      }
-    }, REALTIME_IDLE_CHECK_MS);
-    return () => window.clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.status]);
-
   const start = async () => {
     if (
       preferences === null || !preferences.realtime_beta_enabled
@@ -450,7 +452,6 @@ export function RealtimeCompanion({
     draftCaptionRef.current = "";
     usage.current = { ...EMPTY_USAGE };
     setLiveUsage({ ...EMPTY_USAGE });
-    lastUserActivity.current = Date.now();
     setMuted(false);
     setPaused(false);
     setControlsOpen(false);
@@ -654,7 +655,7 @@ export function RealtimeCompanion({
           <div className={`realtime-controls${controlsOpen ? " is-open" : ""}`}>
             {controlsOpen ? (
               <div className="realtime-controls-cluster" role="group" aria-label="Session controls">
-                <button type="button" onClick={togglePause} aria-pressed={paused} title={paused ? "恢复" : "暂停"}>
+                <button type="button" disabled={busy} onClick={() => void togglePause()} aria-pressed={paused} title={paused ? "恢复" : "暂停"}>
                   {paused ? <Play size={16} /> : <Pause size={16} />}<span>{paused ? "恢复" : "暂停"}</span>
                 </button>
                 <button type="button" className="realtime-controls-stop" disabled={busy} onClick={() => void stop()} title="停止">

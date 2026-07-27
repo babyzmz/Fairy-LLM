@@ -15,7 +15,7 @@ pub struct CloudBackendLaunch {
 }
 
 pub struct CloudLiveBackend {
-    socket: ProviderSocket,
+    socket: Option<ProviderSocket>,
     provider: RealtimeCloudProviderKind,
     credential: Zeroizing<String>,
     system_instruction: String,
@@ -33,7 +33,7 @@ impl CloudLiveBackend {
             launch.native_audio,
         )?;
         Ok(Self {
-            socket,
+            socket: Some(socket),
             provider: launch.provider,
             credential: launch.credential,
             system_instruction: launch.system_instruction,
@@ -45,7 +45,9 @@ impl CloudLiveBackend {
 
 impl RealtimeBackend for CloudLiveBackend {
     fn push_microphone(&mut self, pcm16_le: &[u8]) -> Result<(), BackendError> {
-        self.socket.send_audio(pcm16_le).map_err(BackendError::from)
+        self.socket_mut()?
+            .send_audio(pcm16_le)
+            .map_err(BackendError::from)
     }
 
     fn push_application_audio(&mut self, _pcm16_le: &[u8]) -> Result<(), BackendError> {
@@ -53,11 +55,15 @@ impl RealtimeBackend for CloudLiveBackend {
     }
 
     fn push_video(&mut self, jpeg: &[u8]) -> Result<(), BackendError> {
-        self.socket.send_video(jpeg).map_err(BackendError::from)
+        self.socket_mut()?
+            .send_video(jpeg)
+            .map_err(BackendError::from)
     }
 
     fn push_text(&mut self, text: &str) -> Result<(), BackendError> {
-        self.socket.send_text(text).map_err(BackendError::from)
+        self.socket_mut()?
+            .send_text(text)
+            .map_err(BackendError::from)
     }
 
     fn push_assistance_result(
@@ -65,7 +71,7 @@ impl RealtimeBackend for CloudLiveBackend {
         call_id: &str,
         public_summary: &str,
     ) -> Result<(), BackendError> {
-        self.socket
+        self.socket_mut()?
             .send_tool_result(call_id, public_summary)
             .map_err(BackendError::from)
     }
@@ -86,12 +92,15 @@ impl RealtimeBackend for CloudLiveBackend {
             self.video_enabled,
             self.native_audio,
         )?;
-        self.socket = replacement;
+        self.socket = Some(replacement);
         Ok(())
     }
 
     fn poll(&mut self) -> Result<Vec<BackendEvent>, BackendError> {
-        self.socket
+        let Some(socket) = self.socket.as_mut() else {
+            return Ok(Vec::new());
+        };
+        socket
             .receive()?
             .into_iter()
             .map(|output| {
@@ -129,11 +138,33 @@ impl RealtimeBackend for CloudLiveBackend {
     }
 
     fn pause(&mut self) -> Result<(), BackendError> {
+        self.socket = None;
+        Ok(())
+    }
+
+    fn resume(&mut self) -> Result<(), BackendError> {
+        if self.socket.is_some() {
+            return Ok(());
+        }
+        self.socket = Some(ProviderSocket::connect(
+            self.provider,
+            self.credential.clone(),
+            self.system_instruction.clone(),
+            self.video_enabled,
+            self.native_audio,
+        )?);
         Ok(())
     }
 
     fn stop(&mut self) -> Result<(), BackendError> {
+        self.socket = None;
         Ok(())
+    }
+}
+
+impl CloudLiveBackend {
+    fn socket_mut(&mut self) -> Result<&mut ProviderSocket, BackendError> {
+        self.socket.as_mut().ok_or(BackendError::DialogueProtocol)
     }
 }
 

@@ -118,6 +118,12 @@ pub enum HostCommand {
     Resume {
         session_id: String,
     },
+    WakeSegment {
+        session_id: String,
+        current_segment_id: String,
+        current_context_epoch: u64,
+        next_segment_id: String,
+    },
     UpdateUsage {
         session_id: String,
         audio_input_ms: u64,
@@ -227,6 +233,11 @@ pub enum WorkerEvent {
         segment_id: String,
         context_epoch: u64,
         reason: String,
+    },
+    SegmentWoken {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
     },
     PrivacyPaused {
         session_id: String,
@@ -393,6 +404,30 @@ mod tests {
     }
 
     #[test]
+    fn cloud_wake_command_carries_only_host_owned_segment_identity() {
+        let command = HostCommand::WakeSegment {
+            session_id: "session-1".to_owned(),
+            current_segment_id: "segment-1".to_owned(),
+            current_context_epoch: 1,
+            next_segment_id: "segment-2".to_owned(),
+        };
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &command).expect("write wake");
+        let decoded: HostCommand = read_frame(&mut bytes.as_slice())
+            .expect("read wake")
+            .expect("wake frame");
+        assert!(matches!(
+            decoded,
+            HostCommand::WakeSegment {
+                current_segment_id,
+                current_context_epoch: 1,
+                next_segment_id,
+                ..
+            } if current_segment_id == "segment-1" && next_segment_id == "segment-2"
+        ));
+    }
+
+    #[test]
     fn diagnostics_reject_unknown_content_fields() {
         let value = serde_json::json!({
             "type": "diagnostic",
@@ -494,6 +529,11 @@ mod tests {
                 segment_id: identity().1,
                 context_epoch: 2,
                 reason: "privacy_resume".to_owned(),
+            },
+            WorkerEvent::SegmentWoken {
+                session_id: identity().0,
+                segment_id: "segment-2".to_owned(),
+                context_epoch: 1,
             },
             WorkerEvent::PrivacyPaused {
                 session_id: identity().0,

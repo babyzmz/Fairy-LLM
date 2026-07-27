@@ -18,9 +18,8 @@ use crate::media::{
 use crate::protocol::WorkerEvent;
 use crate::ValidatedRealtimePersona;
 
-// Absolute worker-side ceiling as defense in depth: the renderer enforces the
-// user's configurable maximum, and this backstop stops a runaway session if the
-// renderer timer ever fails to fire. It sits above the maximum renderer setting.
+// Absolute worker-side ceiling as defense in depth above the Coordinator-owned
+// native Presence limit.
 const SESSION_HARD_LIMIT: Duration = Duration::from_secs(250 * 60);
 const VIDEO_CAPTURE_FPS: u16 = 15;
 
@@ -69,6 +68,11 @@ pub enum RuntimeCommand {
         next_context_epoch: u64,
         reason: String,
         public_summary: String,
+    },
+    Pause,
+    Resume,
+    WakeSegment {
+        next_segment_id: String,
     },
 }
 
@@ -298,10 +302,10 @@ fn run_session(
     let session_start = Instant::now();
     let mut frame_gate = FrameGate::new(identity.context_epoch);
     let mut last_usage_sent = Instant::now();
-    // Input gating for the mute (microphone) and pause (microphone + screen)
-    // controls. Both default on; muted/paused input is not sent to the provider.
+    // User input gates remain separate from native standby ownership.
     let mut microphone_enabled = initial_microphone_enabled;
-    let mut video_enabled = true;
+    let mut video_enabled = screen_enabled;
+    let mut standby = false;
     let mut audio_input_samples = 0_u64;
     let mut audio_output_samples = 0_u64;
     let mut video_frame_count = 0_u64;
@@ -319,6 +323,9 @@ fn run_session(
         match commands.try_recv() {
             Ok(RuntimeCommand::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
             Ok(RuntimeCommand::Text { text }) => {
+                if standby {
+                    continue;
+                }
                 frame_gate.note_user_question(elapsed_ms(session_start));
                 if let Err(error) = active_backend.push_text(&text) {
                     emit_failed(&events, &identity, error.public_code());
@@ -329,6 +336,9 @@ fn run_session(
                 call_id,
                 public_summary,
             }) => {
+                if standby {
+                    continue;
+                }
                 if let Err(error) = active_backend.push_assistance_result(&call_id, &public_summary)
                 {
                     emit_failed(&events, &identity, error.public_code());
@@ -369,11 +379,106 @@ fn run_session(
                 frame_gate.reset(next_context_epoch);
                 current_user_utterance = false;
                 event_sequence = 0;
+                standby = false;
                 let _ = events.send(WorkerEvent::ContextRotated {
                     session_id: identity.session_id.clone(),
                     segment_id: identity.segment_id.clone(),
                     context_epoch: identity.context_epoch,
                     reason,
+                });
+            }
+            Ok(RuntimeCommand::Pause) => {
+                if standby {
+                    continue;
+                }
+                if let Err(error) = active_backend.pause() {
+                    emit_failed(&events, &identity, error.public_code());
+                    return;
+                }
+                standby = true;
+                drain_runtime_media(
+                    &microphone,
+                    game_audio.as_mut(),
+                    video.as_ref(),
+                    playback.as_ref(),
+                );
+                frame_gate.reset(identity.context_epoch);
+                current_user_utterance = false;
+                let _ = events.send(WorkerEvent::SessionState {
+                    session_id: identity.session_id.clone(),
+                    segment_id: identity.segment_id.clone(),
+                    context_epoch: identity.context_epoch,
+                    status: "standby".to_owned(),
+                    backend: identity.backend,
+                    cloud_provider: identity.cloud_provider,
+                    error_code: None,
+                });
+            }
+            Ok(RuntimeCommand::Resume) => {
+                if !standby || identity.backend != RealtimeBackendKind::LocalMiniCpmO45 {
+                    emit_failed(&events, &identity, "REALTIME_PROTOCOL_ERROR");
+                    return;
+                }
+                let Some(next_context_epoch) = identity.context_epoch.checked_add(1) else {
+                    emit_failed(&events, &identity, "CONTEXT_ROTATION_FAILED");
+                    return;
+                };
+                if active_backend.resume().is_err()
+                    || active_backend
+                        .rotate_context(next_context_epoch, "standby_wake", "")
+                        .is_err()
+                {
+                    identity.context_epoch = next_context_epoch;
+                    emit_failed(&events, &identity, "CONTEXT_ROTATION_FAILED");
+                    return;
+                }
+                drain_runtime_media(
+                    &microphone,
+                    game_audio.as_mut(),
+                    video.as_ref(),
+                    playback.as_ref(),
+                );
+                identity.context_epoch = next_context_epoch;
+                frame_gate.reset(next_context_epoch);
+                current_user_utterance = false;
+                event_sequence = 0;
+                standby = false;
+                let _ = events.send(WorkerEvent::ContextRotated {
+                    session_id: identity.session_id.clone(),
+                    segment_id: identity.segment_id.clone(),
+                    context_epoch: identity.context_epoch,
+                    reason: "standby_wake".to_owned(),
+                });
+            }
+            Ok(RuntimeCommand::WakeSegment { next_segment_id }) => {
+                if !standby
+                    || identity.backend != RealtimeBackendKind::CloudLive
+                    || next_segment_id.trim().is_empty()
+                    || next_segment_id.len() > 128
+                {
+                    emit_failed(&events, &identity, "REALTIME_PROTOCOL_ERROR");
+                    return;
+                }
+                if let Err(error) = active_backend.resume() {
+                    emit_failed(&events, &identity, error.public_code());
+                    return;
+                }
+                drain_runtime_media(
+                    &microphone,
+                    game_audio.as_mut(),
+                    video.as_ref(),
+                    playback.as_ref(),
+                );
+                identity.segment_id = next_segment_id;
+                identity.context_epoch = 1;
+                frame_gate.reset(1);
+                current_user_utterance = false;
+                event_sequence = 0;
+                standby = false;
+                let _ = events.send(WorkerEvent::SegmentWoken {
+                    session_id: identity.session_id.clone(),
+                    segment_id: identity.segment_id.clone(),
+                    context_epoch: identity.context_epoch,
                 });
             }
             Ok(RuntimeCommand::SetInput { microphone, video }) => {
@@ -382,18 +487,12 @@ fn run_session(
                 }
                 microphone_enabled = microphone;
                 video_enabled = video;
-                if !microphone && !video {
-                    if let Err(error) = active_backend.pause() {
-                        emit_failed(&events, &identity, error.public_code());
-                        return;
-                    }
-                }
             }
             Err(mpsc::TryRecvError::Empty) => {}
         }
         if let Some(capture) = game_audio.as_mut() {
             while let Some(packet) = capture.try_recv() {
-                if !microphone_enabled && !video_enabled {
+                if standby || (!microphone_enabled && !video_enabled) {
                     drop(packet);
                     continue;
                 }
@@ -413,7 +512,7 @@ fn run_session(
             }
         }
         while let Some(packet) = microphone.try_recv() {
-            if !microphone_enabled {
+            if standby || !microphone_enabled {
                 // Muted or paused: drain and discard without sending. Dropping the
                 // packet zeroizes its samples.
                 drop(packet);
@@ -434,7 +533,7 @@ fn run_session(
             bytes.zeroize();
         }
         let now_ms = elapsed_ms(session_start);
-        if video_enabled && frame_gate.should_inspect(now_ms) {
+        if !standby && video_enabled && frame_gate.should_inspect(now_ms) {
             if let Some(mut frame) = video.as_ref().and_then(VideoCapture::take_latest) {
                 match frame_gate.inspect(&frame.jpeg, now_ms) {
                     Ok(FrameGateDecision::Send { .. }) => {
@@ -450,8 +549,9 @@ fn run_session(
                 frame.jpeg.zeroize();
             }
         }
-        let outputs = match active_backend.poll() {
-            Ok(outputs) => outputs,
+        let outputs = match (!standby).then(|| active_backend.poll()).transpose() {
+            Ok(Some(outputs)) => outputs,
+            Ok(None) => Vec::new(),
             Err(error) => {
                 emit_failed(&events, &identity, error.public_code());
                 return;
@@ -631,6 +731,24 @@ fn elapsed_ms(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
+fn drain_runtime_media(
+    microphone: &MicrophoneCapture,
+    application_audio: Option<&mut ProcessLoopbackCapture>,
+    video: Option<&VideoCapture>,
+    playback: Option<&AudioPlayback>,
+) {
+    while microphone.try_recv().is_some() {}
+    if let Some(capture) = application_audio {
+        while capture.try_recv().is_some() {}
+    }
+    if let Some(mut frame) = video.and_then(VideoCapture::take_latest) {
+        frame.jpeg.zeroize();
+    }
+    if let Some(playback) = playback {
+        playback.clear();
+    }
+}
+
 fn application_audio_scope_supported(
     backend: RealtimeBackendKind,
     application_audio_enabled: bool,
@@ -644,6 +762,7 @@ fn valid_rotation_reason(reason: &str) -> bool {
         "privacy_resume"
             | "profile_changed"
             | "window_changed"
+            | "standby_wake"
             | "context_budget"
             | "task_changed"
             | "manual"
@@ -699,7 +818,10 @@ fn startup_cancel_requested(
             Ok(RuntimeCommand::Text { .. })
             | Ok(RuntimeCommand::ToolResult { .. })
             | Ok(RuntimeCommand::SetInput { .. })
-            | Ok(RuntimeCommand::RotateContext { .. }) => {}
+            | Ok(RuntimeCommand::RotateContext { .. })
+            | Ok(RuntimeCommand::Pause)
+            | Ok(RuntimeCommand::Resume)
+            | Ok(RuntimeCommand::WakeSegment { .. }) => {}
             Err(mpsc::TryRecvError::Empty) => return false,
         }
     }

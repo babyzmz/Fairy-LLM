@@ -21,9 +21,9 @@ use zeroize::Zeroizing;
 
 use crate::omni_model_manifest::OmniModelManifest;
 use crate::realtime_coordinator::{
-    ContextEpochIdentity, ContextRotationReason, PendingContextRotation, RealtimeCoordinatorEvent,
-    RealtimeCoordinatorStart, RealtimeCoordinatorState, RealtimePresenceProjection,
-    RealtimePresenceState,
+    ContextEpochIdentity, ContextRotationReason, PendingContextRotation, RealtimeCoordinatorAction,
+    RealtimeCoordinatorEvent, RealtimeCoordinatorStart, RealtimeCoordinatorState,
+    RealtimePresenceProjection, RealtimePresenceState, RealtimeWakeTransition,
 };
 use crate::realtime_dialogue::{RealtimeDialogueDecision, RealtimeDialogueDirector};
 
@@ -100,6 +100,17 @@ pub struct RealtimeWorkerSetInputInput {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct RealtimeWorkerWakeInput {
+    pub session_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RealtimeWorkerExtendInput {
+    pub session_id: String,
+    pub additional_minutes: u16,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct RealtimeWorkerSpeechStateInput {
     pub session_id: String,
     pub segment_id: String,
@@ -117,6 +128,7 @@ pub struct RealtimeWorkerStatus {
     pub backend: Option<RealtimeBackendKind>,
     pub cloud_provider: Option<RealtimeCloudProviderKind>,
     pub action_required: bool,
+    pub presence_projection: Option<RealtimePresenceProjection>,
     #[serde(flatten)]
     pub usage: RealtimeWorkerUsage,
 }
@@ -184,6 +196,7 @@ impl RealtimeWorkerManager {
             self.cleanup_finished_governance();
         }
         let projection = self.governance_projection();
+        let presence_projection = self.current_presence_projection();
         RealtimeWorkerStatus {
             running: guard.is_some(),
             session_id: guard
@@ -194,6 +207,7 @@ impl RealtimeWorkerManager {
             backend: projection.as_ref().map(|value| value.2),
             cloud_provider: projection.as_ref().and_then(|value| value.3),
             action_required: projection.is_some_and(|value| value.4),
+            presence_projection,
             usage: self.usage_snapshot(),
         }
     }
@@ -204,8 +218,16 @@ impl RealtimeWorkerManager {
         input: RealtimeWorkerStartInput,
         credential: Option<Zeroizing<String>>,
         persona_snapshot: Zeroizing<String>,
+        presence_max_minutes: u16,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
-        self.start_segment(app, input, credential, persona_snapshot, false)
+        self.start_segment(
+            app,
+            input,
+            credential,
+            persona_snapshot,
+            presence_max_minutes,
+            false,
+        )
     }
 
     pub fn continue_session(
@@ -214,8 +236,16 @@ impl RealtimeWorkerManager {
         input: RealtimeWorkerStartInput,
         credential: Option<Zeroizing<String>>,
         persona_snapshot: Zeroizing<String>,
+        presence_max_minutes: u16,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
-        self.start_segment(app, input, credential, persona_snapshot, true)
+        self.start_segment(
+            app,
+            input,
+            credential,
+            persona_snapshot,
+            presence_max_minutes,
+            true,
+        )
     }
 
     fn start_segment(
@@ -224,6 +254,7 @@ impl RealtimeWorkerManager {
         input: RealtimeWorkerStartInput,
         credential: Option<Zeroizing<String>>,
         persona_snapshot: Zeroizing<String>,
+        presence_max_minutes: u16,
         continuation_approved: bool,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
         validate_capture_scope(&input)?;
@@ -286,7 +317,7 @@ impl RealtimeWorkerManager {
                 cloud_provider: input.cloud_provider,
                 activity_profile: input.activity_profile,
                 interaction_intensity: input.interaction_intensity,
-                presence_max_minutes: 0,
+                presence_max_minutes,
             })
             .map_err(|_| RealtimeWorkerError::Protocol)?
         };
@@ -381,6 +412,7 @@ impl RealtimeWorkerManager {
             backend: Some(input.backend),
             cloud_provider: input.cloud_provider,
             action_required: false,
+            presence_projection: self.current_presence_projection(),
             usage: self.usage_snapshot(),
         };
         *guard = Some(process);
@@ -407,6 +439,7 @@ impl RealtimeWorkerManager {
                 backend: None,
                 cloud_provider: None,
                 action_required: false,
+                presence_projection: None,
                 usage: self.usage_snapshot(),
             });
         };
@@ -434,6 +467,7 @@ impl RealtimeWorkerManager {
                     backend: None,
                     cloud_provider: None,
                     action_required: false,
+                    presence_projection: None,
                     usage: self.usage_snapshot(),
                 });
             }
@@ -451,6 +485,7 @@ impl RealtimeWorkerManager {
             backend: None,
             cloud_provider: None,
             action_required: false,
+            presence_projection: None,
             usage: self.usage_snapshot(),
         })
     }
@@ -495,6 +530,240 @@ impl RealtimeWorkerManager {
                 video: input.video,
             },
         )
+    }
+
+    pub fn wake(
+        &self,
+        _app: &AppHandle,
+        input: RealtimeWorkerWakeInput,
+    ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+        let guard = self
+            .process
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?;
+        let process = guard.as_ref().ok_or(RealtimeWorkerError::Unavailable)?;
+        if process.session_id.as_deref() != Some(input.session_id.as_str()) {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        let transition = {
+            let mut coordinator = self
+                .coordinator
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let coordinator = coordinator
+                .as_mut()
+                .ok_or(RealtimeWorkerError::Unavailable)?;
+            let next_segment = (coordinator.backend() == RealtimeBackendKind::CloudLive)
+                .then(|| Uuid::new_v4().to_string());
+            coordinator
+                .prepare_wake(next_segment)
+                .map_err(|_| RealtimeWorkerError::Protocol)?
+        };
+        let (command, next_identity) = match transition {
+            RealtimeWakeTransition::Local(pending) => (
+                HostCommand::Resume {
+                    session_id: pending.current.session_id.clone(),
+                },
+                ContextEpochIdentity {
+                    session_id: pending.current.session_id,
+                    segment_id: pending.current.segment_id,
+                    epoch: pending.next_epoch,
+                },
+            ),
+            RealtimeWakeTransition::Cloud(pending) => (
+                HostCommand::WakeSegment {
+                    session_id: pending.current.session_id.clone(),
+                    current_segment_id: pending.current.segment_id.clone(),
+                    current_context_epoch: pending.current.epoch,
+                    next_segment_id: pending.next_segment_id.clone(),
+                },
+                ContextEpochIdentity {
+                    session_id: pending.current.session_id,
+                    segment_id: pending.next_segment_id,
+                    epoch: 1,
+                },
+            ),
+        };
+        let previous_identity = {
+            let mut active = self
+                .active_identity
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let previous = active.clone();
+            *active = Some(next_identity);
+            if send_command(&process.input, &command).is_err() {
+                *active = previous.clone();
+                previous
+            } else {
+                drop(active);
+                drop(guard);
+                return Ok(self.status());
+            }
+        };
+        if let Ok(mut active) = self.active_identity.lock() {
+            *active = previous_identity;
+        }
+        {
+            if let Ok(mut coordinator) = self.coordinator.lock() {
+                if let Some(coordinator) = coordinator.as_mut() {
+                    let _ = coordinator.fail_context_rotation();
+                }
+            }
+        }
+        Err(RealtimeWorkerError::Protocol)
+    }
+
+    pub fn pause_privacy(
+        &self,
+        app: &AppHandle,
+        input: RealtimeWorkerWakeInput,
+    ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+        let guard = self
+            .process
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?;
+        let process = guard.as_ref().ok_or(RealtimeWorkerError::Unavailable)?;
+        if process.session_id.as_deref() != Some(input.session_id.as_str()) {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        let projection = {
+            let mut coordinator = self
+                .coordinator
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let coordinator = coordinator
+                .as_mut()
+                .ok_or(RealtimeWorkerError::Unavailable)?;
+            coordinator
+                .apply(RealtimeCoordinatorEvent::PausePrivacy)
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            coordinator.presence_projection()
+        };
+        if send_command(
+            &process.input,
+            &HostCommand::Pause {
+                session_id: input.session_id,
+            },
+        )
+        .is_err()
+        {
+            if let Ok(mut coordinator) = self.coordinator.lock() {
+                if let Some(coordinator) = coordinator.as_mut() {
+                    let _ = coordinator.fail_context_rotation();
+                }
+            }
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        let _ = app.emit(
+            REALTIME_WORKER_EVENT,
+            presence_projection_payload(projection),
+        );
+        drop(guard);
+        Ok(self.status())
+    }
+
+    pub fn resume_privacy(
+        &self,
+        _app: &AppHandle,
+        input: RealtimeWorkerWakeInput,
+    ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+        let guard = self
+            .process
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?;
+        let process = guard.as_ref().ok_or(RealtimeWorkerError::Unavailable)?;
+        if process.session_id.as_deref() != Some(input.session_id.as_str()) {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        let pending = {
+            let mut coordinator = self
+                .coordinator
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let coordinator = coordinator
+                .as_mut()
+                .ok_or(RealtimeWorkerError::Unavailable)?;
+            coordinator
+                .apply(RealtimeCoordinatorEvent::ResumePrivacy)
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            coordinator
+                .pending_context_rotation()
+                .cloned()
+                .ok_or(RealtimeWorkerError::Protocol)?
+        };
+        let command = HostCommand::RotateContext {
+            session_id: pending.current.session_id.clone(),
+            segment_id: pending.current.segment_id.clone(),
+            current_context_epoch: pending.current.epoch,
+            next_context_epoch: pending.next_epoch,
+            reason: pending.reason.as_str().to_owned(),
+            public_summary: String::new(),
+        };
+        let next_identity = ContextEpochIdentity {
+            session_id: pending.current.session_id,
+            segment_id: pending.current.segment_id,
+            epoch: pending.next_epoch,
+        };
+        let send_result = {
+            let mut active = self
+                .active_identity
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let previous = active.clone();
+            *active = Some(next_identity);
+            let result = send_command(&process.input, &command);
+            if result.is_err() {
+                *active = previous;
+            }
+            result
+        };
+        if send_result.is_err() {
+            if let Ok(mut coordinator) = self.coordinator.lock() {
+                if let Some(coordinator) = coordinator.as_mut() {
+                    let _ = coordinator.fail_context_rotation();
+                }
+            }
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        drop(guard);
+        Ok(self.status())
+    }
+
+    pub fn extend_presence(
+        &self,
+        app: &AppHandle,
+        input: RealtimeWorkerExtendInput,
+    ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+        {
+            let guard = self
+                .process
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let process = guard.as_ref().ok_or(RealtimeWorkerError::Unavailable)?;
+            if process.session_id.as_deref() != Some(input.session_id.as_str()) {
+                return Err(RealtimeWorkerError::Protocol);
+            }
+        }
+        let projection = {
+            let mut coordinator = self
+                .coordinator
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let coordinator = coordinator
+                .as_mut()
+                .ok_or(RealtimeWorkerError::Unavailable)?;
+            coordinator
+                .apply(RealtimeCoordinatorEvent::ExtendPresence {
+                    additional_minutes: input.additional_minutes,
+                })
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            coordinator.presence_projection()
+        };
+        let _ = app.emit(
+            REALTIME_WORKER_EVENT,
+            presence_projection_payload(projection),
+        );
+        Ok(self.status())
     }
 
     pub fn speech_state(
@@ -687,10 +956,17 @@ fn spawn_worker(
     let output = child.stdout.take().ok_or(RealtimeWorkerError::Protocol)?;
     let mut reader = BufReader::new(output);
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let started_at = Instant::now();
+    let reader_started_at = started_at;
     let expected_shutdown = Arc::new(AtomicBool::new(false));
     let reader_expected_shutdown = Arc::clone(&expected_shutdown);
     let terminal = Arc::new(AtomicBool::new(false));
     let reader_terminal = Arc::clone(&terminal);
+    let tick_input = Arc::clone(&input);
+    let tick_coordinator = Arc::clone(&coordinator);
+    let tick_expected_shutdown = Arc::clone(&expected_shutdown);
+    let tick_terminal = Arc::clone(&terminal);
+    let tick_app = app.clone();
     thread::spawn(move || {
         let first = read_frame::<Value>(&mut reader);
         let ready = matches!(
@@ -709,15 +985,47 @@ fn spawn_worker(
                     if !worker_event_matches_active_identity(&value, &active_identity) {
                         continue;
                     }
+                    if !coordinator_allows_worker_event(&value, &coordinator) {
+                        continue;
+                    }
+                    if is_meaningful_worker_activity(&value) {
+                        if let Ok(mut coordinator) = coordinator.lock() {
+                            if let Some(coordinator) = coordinator.as_mut() {
+                                let _ = coordinator
+                                    .record_meaningful_activity(elapsed_ms(reader_started_at));
+                            }
+                        }
+                    }
                     let value = govern_speech_state(value, &dialogue);
                     if value.get("type").and_then(Value::as_str) == Some("context_rotated") {
-                        if let Some(projection) =
-                            commit_context_rotation_event(&value, &coordinator, &dialogue)
-                        {
+                        if let Some(projection) = commit_context_rotation_event(
+                            &value,
+                            &coordinator,
+                            &dialogue,
+                            elapsed_ms(reader_started_at),
+                        ) {
                             let _ = app.emit(REALTIME_WORKER_EVENT, projection);
                             let _ = app.emit(REALTIME_WORKER_EVENT, value);
-                        } else if let Some(projection) = fail_context_rotation(&coordinator) {
+                        } else if coordinator_has_pending_transition(&coordinator) {
+                            if let Some(projection) = fail_context_rotation(&coordinator) {
+                                let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                            }
+                        }
+                        continue;
+                    }
+                    if value.get("type").and_then(Value::as_str) == Some("segment_woken") {
+                        if let Some(projection) = commit_cloud_wake_event(
+                            &value,
+                            &coordinator,
+                            &dialogue,
+                            elapsed_ms(reader_started_at),
+                        ) {
                             let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                            let _ = app.emit(REALTIME_WORKER_EVENT, value);
+                        } else if coordinator_has_pending_transition(&coordinator) {
+                            if let Some(projection) = fail_context_rotation(&coordinator) {
+                                let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                            }
                         }
                         continue;
                     }
@@ -764,11 +1072,7 @@ fn spawn_worker(
                     if backend_failed {
                         let projection = if let Ok(mut state) = coordinator.lock() {
                             if let Some(state) = state.as_mut() {
-                                if state.pending_context_rotation().is_some() {
-                                    let _ = state.fail_context_rotation();
-                                } else {
-                                    let _ = state.apply(RealtimeCoordinatorEvent::BackendFailed);
-                                }
+                                let _ = state.fail_context_rotation();
                                 Some(state.presence_projection())
                             } else {
                                 None
@@ -816,6 +1120,16 @@ fn spawn_worker(
                 }
             }
         }
+    });
+    thread::spawn(move || {
+        run_coordinator_ticker(
+            tick_app,
+            tick_input,
+            tick_coordinator,
+            tick_expected_shutdown,
+            tick_terminal,
+            started_at,
+        );
     });
     match ready_rx.recv_timeout(Duration::from_secs(5)) {
         Ok(true) => Ok(WorkerProcess {
@@ -901,10 +1215,102 @@ fn govern_fairy_speech_state(
         .map(presence_projection_payload))
 }
 
+fn run_coordinator_ticker(
+    app: AppHandle,
+    input: Arc<Mutex<ChildStdin>>,
+    coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
+    expected_shutdown: Arc<AtomicBool>,
+    terminal: Arc<AtomicBool>,
+    started_at: Instant,
+) {
+    while !expected_shutdown.load(Ordering::Acquire) && !terminal.load(Ordering::Acquire) {
+        thread::sleep(Duration::from_millis(250));
+        let (actions, projection, identity) = {
+            let Ok(mut coordinator) = coordinator.lock() else {
+                return;
+            };
+            let Some(coordinator) = coordinator.as_mut() else {
+                drop(coordinator);
+                continue;
+            };
+            let actions = coordinator.tick(elapsed_ms(started_at));
+            let projection = (!actions.is_empty()).then(|| coordinator.presence_projection());
+            let identity = coordinator.active_identity().clone();
+            (actions, projection, identity)
+        };
+        if let Some(projection) = projection {
+            let _ = app.emit(
+                REALTIME_WORKER_EVENT,
+                presence_projection_payload(projection),
+            );
+        }
+        for action in actions {
+            match action {
+                RealtimeCoordinatorAction::EnterLocalStandby
+                | RealtimeCoordinatorAction::EnterCloudStandby
+                | RealtimeCoordinatorAction::RequireDurationExtension => {
+                    if send_command(
+                        &input,
+                        &HostCommand::Pause {
+                            session_id: identity.session_id.clone(),
+                        },
+                    )
+                    .is_err()
+                    {
+                        if let Some(projection) = fail_context_rotation(&coordinator) {
+                            let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                        }
+                        return;
+                    }
+                }
+                RealtimeCoordinatorAction::RequestLocalUnload => {
+                    let _ = app.emit(
+                        REALTIME_WORKER_EVENT,
+                        serde_json::json!({
+                            "type": "resource_pressure",
+                            "session_id": identity.session_id,
+                            "segment_id": identity.segment_id,
+                            "context_epoch": identity.epoch,
+                            "code": "LOCAL_UNLOAD_ELIGIBLE"
+                        }),
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn is_meaningful_worker_activity(value: &Value) -> bool {
+    match value.get("type").and_then(Value::as_str) {
+        Some("barge_in") => true,
+        Some("public_caption") => {
+            value.get("speaker").and_then(Value::as_str) == Some("user")
+                && value.get("stable").and_then(Value::as_bool) == Some(true)
+        }
+        Some("perception_candidate") => value
+            .get("grounding")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.as_str().is_some_and(|grounding| {
+                        grounding.starts_with("current_window:")
+                            || grounding == "current_user_utterance"
+                    })
+                })
+            }),
+        _ => false,
+    }
+}
+
+fn elapsed_ms(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 fn commit_context_rotation_event(
     value: &Value,
     coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
     dialogue: &Mutex<Option<RealtimeDialogueDirector>>,
+    now_ms: u64,
 ) -> Option<Value> {
     let event = serde_json::from_value::<WorkerEvent>(value.clone()).ok()?;
     let WorkerEvent::ContextRotated {
@@ -943,7 +1349,51 @@ fn commit_context_rotation_event(
     let projection = {
         let mut coordinator = coordinator.lock().ok()?;
         let coordinator = coordinator.as_mut()?;
-        coordinator.commit_context_rotation(context_epoch).ok()?;
+        coordinator
+            .commit_context_rotation_at(context_epoch, now_ms)
+            .ok()?;
+        coordinator.presence_projection()
+    };
+    Some(presence_projection_payload(projection))
+}
+
+fn commit_cloud_wake_event(
+    value: &Value,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+    dialogue: &Mutex<Option<RealtimeDialogueDirector>>,
+    now_ms: u64,
+) -> Option<Value> {
+    let event = serde_json::from_value::<WorkerEvent>(value.clone()).ok()?;
+    let WorkerEvent::SegmentWoken {
+        session_id,
+        segment_id,
+        context_epoch,
+    } = event
+    else {
+        return None;
+    };
+    if context_epoch != 1 {
+        return None;
+    }
+    {
+        let coordinator = coordinator.lock().ok()?;
+        let coordinator = coordinator.as_ref()?;
+        let pending = coordinator.pending_cloud_wake()?;
+        if pending.current.session_id != session_id || pending.next_segment_id != segment_id {
+            return None;
+        }
+    }
+    {
+        let mut director = dialogue.lock().ok()?;
+        let director = director.as_mut()?;
+        if !director.commit_backend_segment(segment_id.clone()) {
+            return None;
+        }
+    }
+    let projection = {
+        let mut coordinator = coordinator.lock().ok()?;
+        let coordinator = coordinator.as_mut()?;
+        coordinator.commit_cloud_wake(&segment_id, now_ms).ok()?;
         coordinator.presence_projection()
     };
     Some(presence_projection_payload(projection))
@@ -957,6 +1407,21 @@ fn fail_context_rotation(coordinator: &Mutex<Option<RealtimeCoordinatorState>>) 
         coordinator.presence_projection()
     };
     Some(presence_projection_payload(projection))
+}
+
+fn coordinator_has_pending_transition(
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+) -> bool {
+    coordinator
+        .lock()
+        .ok()
+        .and_then(|coordinator| {
+            coordinator.as_ref().map(|coordinator| {
+                coordinator.pending_context_rotation().is_some()
+                    || coordinator.pending_cloud_wake().is_some()
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn govern_dialogue_candidate(
@@ -1114,7 +1579,10 @@ fn worker_event_matches_active_identity(
     active_identity: &Mutex<Option<ContextEpochIdentity>>,
 ) -> bool {
     let event_type = value.get("type").and_then(Value::as_str);
-    if matches!(event_type, Some("ready" | "pong" | "worker_interrupted")) {
+    if matches!(
+        event_type,
+        Some("ready" | "pong" | "worker_interrupted" | "context_rotated" | "segment_woken")
+    ) {
         return true;
     }
     let Ok(active) = active_identity.lock() else {
@@ -1126,6 +1594,37 @@ fn worker_event_matches_active_identity(
     value.get("session_id").and_then(Value::as_str) == Some(active.session_id.as_str())
         && value.get("segment_id").and_then(Value::as_str) == Some(active.segment_id.as_str())
         && value.get("context_epoch").and_then(Value::as_u64) == Some(active.epoch)
+}
+
+fn coordinator_allows_worker_event(
+    value: &Value,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+) -> bool {
+    let event_type = value.get("type").and_then(Value::as_str);
+    if matches!(
+        event_type,
+        Some("ready" | "pong" | "worker_interrupted" | "context_rotated" | "segment_woken")
+    ) || (event_type == Some("session_state")
+        && value.get("status").and_then(Value::as_str) == Some("failed"))
+    {
+        return true;
+    }
+    let Ok(coordinator) = coordinator.lock() else {
+        return false;
+    };
+    let Some(coordinator) = coordinator.as_ref() else {
+        return false;
+    };
+    let Some(session_id) = value.get("session_id").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(segment_id) = value.get("segment_id").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(context_epoch) = value.get("context_epoch").and_then(Value::as_u64) else {
+        return false;
+    };
+    coordinator.accepts_result(session_id, segment_id, context_epoch)
 }
 
 fn reap_finished_process(process: &mut WorkerProcess) -> bool {
@@ -1499,6 +1998,7 @@ mod tests {
             }),
             &coordinator,
             &dialogue,
+            42,
         )
         .expect("acknowledged projection");
         assert_eq!(projection["context_epoch"], 2);
@@ -1522,6 +2022,94 @@ mod tests {
                 .context_epoch(),
             2
         );
+    }
+
+    #[test]
+    fn cloud_standby_wake_commits_only_the_host_prepared_segment() {
+        let coordinator = coordinator_with_profile(RealtimeActivityProfile::Game);
+        {
+            let mut state = coordinator.lock().expect("coordinator");
+            let state = state.as_mut().expect("state");
+            assert_eq!(
+                state.tick(180_000),
+                vec![RealtimeCoordinatorAction::EnterCloudStandby]
+            );
+            let transition = state
+                .prepare_wake(Some("segment-2".to_owned()))
+                .expect("prepare cloud wake");
+            assert!(matches!(transition, RealtimeWakeTransition::Cloud(_)));
+        }
+        let dialogue = dialogue();
+        let projection = commit_cloud_wake_event(
+            &serde_json::json!({
+                "type": "segment_woken",
+                "session_id": "session-1",
+                "segment_id": "segment-2",
+                "context_epoch": 1
+            }),
+            &coordinator,
+            &dialogue,
+            180_001,
+        )
+        .expect("cloud wake acknowledgement");
+        assert_eq!(projection["segment_id"], "segment-2");
+        assert_eq!(projection["context_epoch"], 1);
+        assert_eq!(
+            coordinator
+                .lock()
+                .expect("coordinator")
+                .as_ref()
+                .expect("state")
+                .active_segment()
+                .creation_reason,
+            crate::realtime_coordinator::BackendSegmentCreationReason::StandbyWake
+        );
+    }
+
+    #[test]
+    fn only_bounded_user_or_current_window_events_reset_native_activity() {
+        assert!(is_meaningful_worker_activity(&serde_json::json!({
+            "type": "public_caption",
+            "speaker": "user",
+            "stable": true
+        })));
+        assert!(is_meaningful_worker_activity(&serde_json::json!({
+            "type": "perception_candidate",
+            "grounding": ["current_window: material change"]
+        })));
+        assert!(!is_meaningful_worker_activity(&serde_json::json!({
+            "type": "public_caption",
+            "speaker": "assistant",
+            "stable": true
+        })));
+        assert!(!is_meaningful_worker_activity(&serde_json::json!({
+            "type": "usage",
+            "audio_input_ms": 1
+        })));
+    }
+
+    #[test]
+    fn privacy_and_pending_transitions_fence_inflight_worker_content() {
+        let coordinator = coordinator();
+        let caption = serde_json::json!({
+            "type": "public_caption",
+            "session_id": "session-1",
+            "segment_id": "segment-1",
+            "context_epoch": 1,
+            "sequence": 4,
+            "text": "must not escape",
+            "stable": true,
+            "speaker": "user"
+        });
+        assert!(coordinator_allows_worker_event(&caption, &coordinator));
+        coordinator
+            .lock()
+            .expect("coordinator")
+            .as_mut()
+            .expect("state")
+            .apply(RealtimeCoordinatorEvent::PausePrivacy)
+            .expect("privacy pause");
+        assert!(!coordinator_allows_worker_event(&caption, &coordinator));
     }
 
     #[test]

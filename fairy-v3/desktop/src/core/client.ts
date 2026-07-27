@@ -186,6 +186,7 @@ export interface RealtimeWorkerStatus {
   backend: "local_mini_cpm_o45" | "cloud_live" | null;
   cloud_provider: RealtimeWorkerProvider | null;
   action_required: boolean;
+  presence_projection: import("../realtime/realtimePresence").RealtimePresenceProjection | null;
   audio_input_ms: number;
   audio_output_ms: number;
   video_frame_count: number;
@@ -204,6 +205,15 @@ export interface RealtimeWorkerSetInputInput {
   session_id: string;
   microphone: boolean;
   video: boolean;
+}
+
+export interface RealtimeWorkerWakeInput {
+  session_id: string;
+}
+
+export interface RealtimeWorkerExtendInput {
+  session_id: string;
+  additional_minutes: number;
 }
 
 export interface RealtimeWorkerSpeechStateInput {
@@ -252,6 +262,10 @@ export interface CoreTransport {
   realtimeWorkerStop?(sessionId: string): Promise<RealtimeWorkerStatus>;
   realtimeWorkerToolResult?(input: RealtimeWorkerToolResultInput): Promise<void>;
   realtimeWorkerSetInput?(input: RealtimeWorkerSetInputInput): Promise<void>;
+  realtimeWorkerWake?(input: RealtimeWorkerWakeInput): Promise<RealtimeWorkerStatus>;
+  realtimeWorkerPausePrivacy?(input: RealtimeWorkerWakeInput): Promise<RealtimeWorkerStatus>;
+  realtimeWorkerResumePrivacy?(input: RealtimeWorkerWakeInput): Promise<RealtimeWorkerStatus>;
+  realtimeWorkerExtend?(input: RealtimeWorkerExtendInput): Promise<RealtimeWorkerStatus>;
   realtimeWorkerSpeechState?(input: RealtimeWorkerSpeechStateInput): Promise<void>;
   selectProjectFolder?(): Promise<string | null>;
   selectObsidianVault?(): Promise<ObsidianVaultSelection | null>;
@@ -719,6 +733,26 @@ export class CoreClient {
       setInput: (input: RealtimeWorkerSetInputInput) => {
         if (!this.transport.realtimeWorkerSetInput) throw new Error("Realtime requires Fairy desktop");
         return this.transport.realtimeWorkerSetInput(input);
+      },
+      wake: (input: RealtimeWorkerWakeInput) => {
+        if (!this.transport.realtimeWorkerWake) throw new Error("Realtime requires Fairy desktop");
+        return this.transport.realtimeWorkerWake(input);
+      },
+      pausePrivacy: (input: RealtimeWorkerWakeInput) => {
+        if (!this.transport.realtimeWorkerPausePrivacy) {
+          throw new Error("Realtime requires Fairy desktop");
+        }
+        return this.transport.realtimeWorkerPausePrivacy(input);
+      },
+      resumePrivacy: (input: RealtimeWorkerWakeInput) => {
+        if (!this.transport.realtimeWorkerResumePrivacy) {
+          throw new Error("Realtime requires Fairy desktop");
+        }
+        return this.transport.realtimeWorkerResumePrivacy(input);
+      },
+      extend: (input: RealtimeWorkerExtendInput) => {
+        if (!this.transport.realtimeWorkerExtend) throw new Error("Realtime requires Fairy desktop");
+        return this.transport.realtimeWorkerExtend(input);
       },
       speechState: (input: RealtimeWorkerSpeechStateInput) => {
         if (!this.transport.realtimeWorkerSpeechState) {

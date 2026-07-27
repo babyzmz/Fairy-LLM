@@ -52,9 +52,10 @@ use realtime_backend_resolver::{
     RealtimeBackendResolutionFacts, RealtimeBackendResolutionInput,
 };
 use realtime_worker::{
-    bundled_realtime_launch, development_realtime_launch, RealtimeWorkerManager,
-    RealtimeWorkerSetInputInput, RealtimeWorkerSpeechStateInput, RealtimeWorkerStartInput,
-    RealtimeWorkerStatus, RealtimeWorkerStopInput, RealtimeWorkerToolResultInput,
+    bundled_realtime_launch, development_realtime_launch, RealtimeWorkerExtendInput,
+    RealtimeWorkerManager, RealtimeWorkerSetInputInput, RealtimeWorkerSpeechStateInput,
+    RealtimeWorkerStartInput, RealtimeWorkerStatus, RealtimeWorkerStopInput,
+    RealtimeWorkerToolResultInput, RealtimeWorkerWakeInput,
 };
 use voice_worker::{
     bundled_voice_launch, development_voice_launch, prepared_realtime_session,
@@ -791,13 +792,21 @@ async fn realtime_worker_start_segment(
     let credential = credential.map(zeroize::Zeroizing::new);
     let persona_snapshot = zeroize::Zeroizing::new(persona_snapshot);
     if continuation {
-        state
-            .realtime
-            .continue_session(app, input, credential, persona_snapshot)
+        state.realtime.continue_session(
+            app,
+            input,
+            credential,
+            persona_snapshot,
+            preferences.realtime_presence_max_minutes,
+        )
     } else {
-        state
-            .realtime
-            .start(app, input, credential, persona_snapshot)
+        state.realtime.start(
+            app,
+            input,
+            credential,
+            persona_snapshot,
+            preferences.realtime_presence_max_minutes,
+        )
     }
     .map_err(|error| error.to_string())
 }
@@ -899,6 +908,62 @@ async fn realtime_worker_set_input(
     state
         .realtime
         .set_input(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn realtime_worker_wake(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerWakeInput,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .realtime
+        .wake(&app, input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn realtime_worker_pause_privacy(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerWakeInput,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .realtime
+        .pause_privacy(&app, input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn realtime_worker_resume_privacy(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerWakeInput,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .realtime
+        .resume_privacy(&app, input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn realtime_worker_extend(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerExtendInput,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .realtime
+        .extend_presence(&app, input)
         .map_err(|error| error.to_string())
 }
 
@@ -5282,6 +5347,10 @@ pub fn run() {
             realtime_worker_stop,
             realtime_worker_tool_result,
             realtime_worker_set_input,
+            realtime_worker_wake,
+            realtime_worker_pause_privacy,
+            realtime_worker_resume_privacy,
+            realtime_worker_extend,
             realtime_worker_speech_state,
             desktop_preferences_get,
             desktop_preferences_update,
