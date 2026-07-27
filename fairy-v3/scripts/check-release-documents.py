@@ -113,7 +113,9 @@ def main() -> None:
     lowered = combined.lower()
     for fragment in forbidden:
         if fragment.lower() in lowered:
-            raise AssertionError(f"release documents contain forbidden text: {fragment}")
+            raise AssertionError(
+                f"release documents contain forbidden text: {fragment}"
+            )
 
     print("Realtime Companion Beta release documents passed.")
 

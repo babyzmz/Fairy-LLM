@@ -4,7 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from check_release_bundle import REQUIRED_BUNDLE_FILES, validate_bundle_root, validate_configuration
+from check_release_bundle import (
+    REQUIRED_BUNDLE_FILES,
+    validate_bundle_root,
+    validate_configuration,
+)
 
 
 class ReleaseBundlePolicyTests(unittest.TestCase):
@@ -32,7 +36,10 @@ class ReleaseBundlePolicyTests(unittest.TestCase):
             "configuration/.env",
         )
         for relative in forbidden:
-            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(relative=relative),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 root = Path(temporary)
                 for required in REQUIRED_BUNDLE_FILES:
                     path = root / required

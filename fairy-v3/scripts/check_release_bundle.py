@@ -82,11 +82,17 @@ def normalized_relative_files(bundle_root: Path) -> set[str]:
         lowered_name = relative.name.lower()
         lowered_suffixes = {suffix.lower() for suffix in relative.suffixes}
         if lowered_parts & FORBIDDEN_PARTS:
-            raise AssertionError(f"bundle contains a forbidden directory: {relative_posix}")
+            raise AssertionError(
+                f"bundle contains a forbidden directory: {relative_posix}"
+            )
         if lowered_name in FORBIDDEN_NAMES:
-            raise AssertionError(f"bundle contains a forbidden legacy entry: {relative_posix}")
+            raise AssertionError(
+                f"bundle contains a forbidden legacy entry: {relative_posix}"
+            )
         if lowered_suffixes & FORBIDDEN_SUFFIXES:
-            raise AssertionError(f"bundle contains a forbidden file type: {relative_posix}")
+            raise AssertionError(
+                f"bundle contains a forbidden file type: {relative_posix}"
+            )
         files.add(relative_posix)
     return files
 
@@ -95,7 +101,9 @@ def validate_bundle_root(bundle_root: Path) -> None:
     files = normalized_relative_files(bundle_root)
     missing = sorted(REQUIRED_BUNDLE_FILES - files)
     if missing:
-        raise AssertionError(f"bundle is missing release resources: {', '.join(missing)}")
+        raise AssertionError(
+            f"bundle is missing release resources: {', '.join(missing)}"
+        )
     if any(path.startswith("runtime/voice-worker/") for path in files):
         missing_voice = sorted(REQUIRED_VOICE_LICENSES - files)
         if missing_voice:
