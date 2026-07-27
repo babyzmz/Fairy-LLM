@@ -17,6 +17,7 @@ let eventListener: ((event: { payload: Record<string, unknown> }) => void) | nul
 let realtimeVoiceOutput: "provider_native_voice" | "fairy_voice" = "provider_native_voice";
 let realtimeBetaEnabled = true;
 let realtimeBackend: "auto" | "local_mini_cpm_o45" | "cloud_live" = "cloud_live";
+let localBackendReady = false;
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -67,16 +68,43 @@ const workerStatus = (running: boolean): RealtimeWorkerStatus => ({
   tool_call_count: 0,
 });
 
-const backendPreview = async () => ({
-  schema_version: 1 as const,
-  resolution_token: "a".repeat(64),
-  available: true,
-  backend: "cloud_live" as const,
-  cloud_provider: "glm_realtime_flash" as const,
-  reason: null,
-  requires_cloud_upload_consent: true,
-  preference_revision: 1,
-});
+const backendPreview = async (input: {
+  cloud_microphone_upload_consent: boolean;
+  cloud_screen_upload_consent: boolean;
+}) => {
+  const consented = input.cloud_microphone_upload_consent
+    && input.cloud_screen_upload_consent;
+  const local = realtimeBackend === "local_mini_cpm_o45";
+  const available = realtimeBetaEnabled && (local ? localBackendReady : consented);
+  return {
+    schema_version: 1 as const,
+    resolution_token: "a".repeat(64),
+    available,
+    backend: available ? (local ? "local_mini_cpm_o45" as const : "cloud_live" as const) : null,
+    cloud_provider: available && !local
+      ? "glm_realtime_flash" as const
+      : null,
+    reason: !realtimeBetaEnabled
+      ? "REALTIME_BETA_DISABLED"
+      : local
+        ? localBackendReady ? null : "LOCAL_MODEL_MISSING"
+        : consented
+          ? null
+          : "CLOUD_UPLOAD_CONSENT_REQUIRED",
+    requires_cloud_upload_consent: !local,
+    preference_revision: 1,
+  };
+};
+
+async function grantMediaConsentAndStart(includeApplicationAudio = false): Promise<void> {
+  const consents = screen.getAllByRole("checkbox");
+  fireEvent.click(consents[0]);
+  fireEvent.click(consents[1]);
+  if (includeApplicationAudio) fireEvent.click(consents[2]);
+  const startButton = screen.getByRole("button", { name: "Start companion" });
+  await waitFor(() => expect((startButton as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(startButton);
+}
 
 describe("RealtimeCompanion", () => {
   afterEach(() => cleanup());
@@ -93,6 +121,7 @@ describe("RealtimeCompanion", () => {
     realtimeVoiceOutput = "provider_native_voice";
     realtimeBetaEnabled = true;
     realtimeBackend = "cloud_live";
+    localBackendReady = false;
     localStorage.clear();
     localStorage.setItem("fairy.realtime.device-id", "test-device");
     invoke.mockImplementation(async (command: string) => {
@@ -185,13 +214,61 @@ describe("RealtimeCompanion", () => {
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
 
-    expect(screen.getByText(
-      "Local Beta is not available until hardware, model, and runtime readiness are verified.",
+    expect(await screen.findByText(
+      "Install and verify the Local MiniCPM model in Settings.",
     )).not.toBeNull();
     expect((screen.getByRole("button", { name: "Start companion" }) as HTMLButtonElement).disabled)
       .toBe(true);
     expect(start).not.toHaveBeenCalled();
     expect(invoke.mock.calls.some(([command]) => command === "provider_realtime_status")).toBe(false);
+  });
+
+  it("projects a ready Local backend and keeps media consent device-scoped", async () => {
+    realtimeBackend = "local_mini_cpm_o45";
+    localBackendReady = true;
+    const start = vi.fn(async () => ({
+      ...workerStatus(true),
+      backend: "local_mini_cpm_o45" as const,
+      cloud_provider: null,
+    }));
+    const startSession = vi.fn(async () => ({
+      ...session("starting", 1),
+      provider: "local_mini_cpm_o45" as const,
+      model_id: "openbmb/minicpm-o-4.5-fairy-beta@4.5-q4-502eec5",
+    }));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: startSession,
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => workerStatus(false)),
+        start,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: /Test Game/ });
+
+    expect(await screen.findByText(/Local .* MiniCPM-o 4\.5/)).not.toBeNull();
+    expect(screen.getByText(/Local MiniCPM processes enabled microphone/)).not.toBeNull();
+    expect(screen.getByRole("checkbox", {
+      name: "Use microphone for this Local session",
+    })).not.toBeNull();
+    expect(invoke.mock.calls.some(([command]) => command === "provider_realtime_status")).toBe(false);
+
+    await grantMediaConsentAndStart();
+    await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      backend: "local_mini_cpm_o45",
+      cloud_provider: null,
+      cloud_microphone_upload_consent: true,
+      cloud_screen_upload_consent: true,
+    })));
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "local_mini_cpm_o45",
+    }));
   });
 
   it("persists stable captions to the linked transcript, never into the usage report", async () => {
@@ -219,10 +296,7 @@ describe("RealtimeCompanion", () => {
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
-    const consents = screen.getAllByRole("checkbox");
-    fireEvent.click(consents[0]);
-    fireEvent.click(consents[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await grantMediaConsentAndStart();
     await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
 
     await act(async () => eventListener?.({ payload: {
@@ -283,10 +357,7 @@ describe("RealtimeCompanion", () => {
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: /Test Game/ });
-    const consents = screen.getAllByRole("checkbox");
-    fireEvent.click(consents[0]);
-    fireEvent.click(consents[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await grantMediaConsentAndStart();
     await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
     await act(async () => eventListener?.({ payload: {
       type: "session_state", session_id: session("active", 2).id, status: "active",
@@ -336,10 +407,7 @@ describe("RealtimeCompanion", () => {
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
-    const consents = screen.getAllByRole("checkbox");
-    fireEvent.click(consents[0]);
-    fireEvent.click(consents[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await grantMediaConsentAndStart();
     await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
     await act(async () => eventListener?.({ payload: {
       type: "session_state", session_id: session("active", 2).id, status: "active",
@@ -370,7 +438,7 @@ describe("RealtimeCompanion", () => {
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
     expect(screen.getAllByRole("checkbox")).toHaveLength(3);
     expect((screen.getByRole("checkbox", {
-      name: "Share selected application audio for this session",
+      name: "Upload selected application audio",
     }) as HTMLInputElement).checked).toBe(false);
     expect(screen.getByText(/System-wide audio is never captured/)).not.toBeNull();
   });
@@ -392,8 +460,7 @@ describe("RealtimeCompanion", () => {
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
-    for (const consent of screen.getAllByRole("checkbox")) fireEvent.click(consent);
-    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await grantMediaConsentAndStart(true);
 
     await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
       session_id: session("starting", 1).id,
@@ -438,10 +505,7 @@ describe("RealtimeCompanion", () => {
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
-    const consents = screen.getAllByRole("checkbox");
-    fireEvent.click(consents[0]);
-    fireEvent.click(consents[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await grantMediaConsentAndStart();
     await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
@@ -487,10 +551,7 @@ describe("RealtimeCompanion", () => {
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
-    const consents = screen.getAllByRole("checkbox");
-    fireEvent.click(consents[0]);
-    fireEvent.click(consents[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await grantMediaConsentAndStart();
     await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
@@ -534,10 +595,7 @@ describe("RealtimeCompanion", () => {
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
-    const consents = screen.getAllByRole("checkbox");
-    fireEvent.click(consents[0]);
-    fireEvent.click(consents[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await grantMediaConsentAndStart();
     await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
     await act(async () => eventListener?.({ payload: {
       type: "session_state", session_id: session("active", 2).id, status: "active",
@@ -597,10 +655,7 @@ describe("RealtimeCompanion", () => {
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
-    const consents = screen.getAllByRole("checkbox");
-    fireEvent.click(consents[0]);
-    fireEvent.click(consents[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await grantMediaConsentAndStart();
     await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
 
     await act(async () => eventListener?.({ payload: {

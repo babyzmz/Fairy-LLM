@@ -11,6 +11,8 @@
 .realtime-panel h2 { margin: 3px 0 0; font-size: 20px; }
 .realtime-panel header button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; background: transparent; color: #b8c2bf; }
 .realtime-privacy { display: flex; gap: 10px; margin: 18px 20px 0; padding: 12px; background: #10201d; border-left: 2px solid #5fc4b8; color: #b9cbc6; font-size: 12px; line-height: 1.45; }
+.realtime-privacy.is-cloud { background: #151d22; border-left-color: #78a9c7; color: #bbcbd4; }
+.realtime-privacy svg { flex: 0 0 auto; margin-top: 1px; }
 .realtime-config, .realtime-live, .realtime-memory { display: grid; gap: 14px; padding: 20px; }
 .realtime-config > label:not(.realtime-consent), .realtime-memory label { display: grid; gap: 7px; color: #aeb8b5; font-size: 12px; }
 .realtime-config label > span { display: flex; align-items: center; gap: 7px; }
@@ -18,6 +20,7 @@
 .realtime-memory textarea { min-height: 86px; resize: vertical; }
 .realtime-policy { display: grid; grid-template-columns: auto 1fr; gap: 7px 18px; padding: 12px; border: 1px solid #303735; font-size: 12px; }
 .realtime-policy span { color: #84908c; }.realtime-policy strong { font-weight: 600; }
+.realtime-backend-card strong:first-of-type { color: #8bd7cd; }
 .realtime-consent { min-height: 38px; display: grid; grid-template-columns: 18px 18px 1fr; gap: 9px; align-items: center; border-bottom: 1px solid #29302e; font-size: 13px; }
 .realtime-primary, .realtime-memory button { min-height: 40px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid #6ed1c5; background: #63cabe; color: #07110f; font-weight: 700; }
 .realtime-primary:disabled, .realtime-memory button:disabled { opacity: .45; }

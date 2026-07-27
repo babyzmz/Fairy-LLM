@@ -5,8 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   CoreClient,
+  RealtimeBackendResolution,
   RealtimeCredentialProvider,
-  RealtimeProviderCredentialStatus,
   RealtimeSession,
   RealtimeSessionStatus,
 } from "../core/client";
@@ -26,7 +26,7 @@ interface CaptureSurface {
 }
 
 type WorkerEvent =
-  | { type: "session_state"; session_id: string; segment_id: string; context_epoch: number; status: string; error_code?: string | null }
+  | { type: "session_state"; session_id: string; segment_id: string; context_epoch: number; status: string; backend: "local_mini_cpm_o45" | "cloud_live"; cloud_provider?: string | null; error_code?: string | null }
   | { type: "public_caption"; session_id: string; segment_id: string; context_epoch: number; sequence: number; text: string; stable: boolean; speaker: "user" | "assistant" }
   | { type: "presence"; session_id: string; segment_id: string; context_epoch: number; state: string; level?: number | null }
   | { type: "barge_in"; session_id: string; segment_id: string; context_epoch: number }
@@ -79,7 +79,8 @@ export function RealtimeCompanion({
 }) {
   const [open, setOpen] = useState(windowMode);
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
-  const [credentialReady, setCredentialReady] = useState<boolean | null>(null);
+  const [resolution, setResolution] = useState<RealtimeBackendResolution | null>(null);
+  const [activeBackend, setActiveBackend] = useState<RealtimeBackendResolution["backend"]>(null);
   const [surfaces, setSurfaces] = useState<CaptureSurface[]>([]);
   const [sourceId, setSourceId] = useState("");
   const [microphoneConsent, setMicrophoneConsent] = useState(false);
@@ -173,17 +174,6 @@ export function RealtimeCompanion({
         client.sessions.list(20),
         client.worker.status(),
       ]);
-      const localRequested = nextPreferences.realtime_backend === "local_mini_cpm_o45";
-      const credentialProvider = credentialProviderFor(nextPreferences.realtime_cloud_provider);
-      // An unreadable stored key (e.g. a DPAPI blob from another machine) must
-      // not blank the whole panel: treat a failed status lookup as "not ready"
-      // so the Configure-in-Settings guidance shows instead of a raw error.
-      const credential = localRequested
-        ? null
-        : await hostInvoke<RealtimeProviderCredentialStatus>(
-          "provider_realtime_status",
-          { input: { provider: credentialProvider } },
-        ).catch(() => ({ provider: credentialProvider, configured: false }));
       const localDeviceId = deviceId();
       for (const stale of recentSessions.items) {
         if (
@@ -216,7 +206,7 @@ export function RealtimeCompanion({
       }
       const windows = captureSurfaces.filter((item) => item.kind === "window");
       setPreferences(nextPreferences);
-      setCredentialReady(credential?.configured ?? null);
+      setActiveBackend(workerStatus.running ? workerStatus.backend : null);
       setSurfaces(windows);
       setSourceId((current) => current || windows[0]?.source_id || "");
     } catch (caught) {
@@ -227,6 +217,31 @@ export function RealtimeCompanion({
   useEffect(() => {
     if (open) void load();
   }, [load, open]);
+
+  useEffect(() => {
+    if (!open || preferences === null) {
+      setResolution(null);
+      return;
+    }
+    let disposed = false;
+    setResolution(null);
+    void client.worker.preview({
+      activity_profile: preferences.realtime_activity_profile,
+      voice_output: preferences.realtime_voice_output,
+      cloud_microphone_upload_consent: microphoneConsent,
+      cloud_screen_upload_consent: screenConsent,
+    }).then((next) => {
+      if (!disposed) setResolution(next);
+    }).catch((caught) => {
+      if (!disposed) {
+        setResolution(null);
+        setError(messageOf(caught));
+      }
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [client.worker, microphoneConsent, open, preferences, screenConsent]);
 
   const report = useCallback(async (
     status: RealtimeSessionStatus,
@@ -276,6 +291,7 @@ export function RealtimeCompanion({
       if (!("session_id" in payload) || payload.session_id !== current?.id) return;
       if (isTerminal(current.status)) return;
       if (payload.type === "session_state") {
+        setActiveBackend(payload.backend);
         setPresence(normalizePresence(payload.status));
         if (payload.status === "active") void report("active");
         if (payload.status === "interrupted") void report("interrupted", payload.error_code ?? "WORKER_INTERRUPTED");
@@ -395,8 +411,7 @@ export function RealtimeCompanion({
   const start = async () => {
     if (
       preferences === null || !preferences.realtime_beta_enabled
-      || preferences.realtime_backend === "local_mini_cpm_o45"
-      || credentialReady !== true || !microphoneConsent
+      || resolution?.available !== true || !microphoneConsent
       || !screenConsent || sourceId === ""
     ) return;
     setBusy(true);
@@ -450,7 +465,7 @@ export function RealtimeCompanion({
       });
       updateSession(created);
       startedAt.current = Date.now();
-      await client.worker.start({
+      const worker = await client.worker.start({
         session_id: created.id,
         resolution_token: resolution.resolution_token,
         locale: navigator.language || "zh-CN",
@@ -467,6 +482,7 @@ export function RealtimeCompanion({
         cloud_microphone_upload_consent: microphoneConsent,
         cloud_screen_upload_consent: screenConsent,
       });
+      setActiveBackend(worker.backend ?? resolution.backend);
       setPresence("connecting");
     } catch (caught) {
       setError(realtimeProviderErrorMessage(messageOf(caught)));
@@ -537,6 +553,7 @@ export function RealtimeCompanion({
       await report("completed");
       if (sessionRef.current?.status !== "completed") return;
       setPresence("completed");
+      setActiveBackend(null);
       const surface = surfaces.find((item) => item.source_id === sourceId);
       if (preferences?.realtime_memory_enabled) {
         setMemory({ gameTitle: surface?.label ?? "Game session", progress: "", nextGoal: "" });
@@ -571,6 +588,8 @@ export function RealtimeCompanion({
   };
 
   const active = session !== null && !isTerminal(session.status);
+  const cloudPrivacy = resolution?.requires_cloud_upload_consent
+    ?? preferences?.realtime_backend !== "local_mini_cpm_o45";
   const close = () => {
     if (windowMode) {
       onClose?.();
@@ -588,19 +607,19 @@ export function RealtimeCompanion({
       {open ? <div className={`realtime-backdrop${windowMode ? " is-window" : ""}`} role="presentation">
         <section className="realtime-panel" role="dialog" aria-modal={!windowMode} aria-label="Game companion">
           <header><div><span>Realtime</span><h2>Game companion</h2></div><button type="button" aria-label="Close" onClick={close}><X size={17} /></button></header>
-          <div className="realtime-privacy"><ShieldCheck size={16} /><span>Audio and video frames stay in transient worker memory and are never saved. Spoken captions are kept on this device in the linked conversation so you can review the chat.</span></div>
+          <div className={`realtime-privacy ${cloudPrivacy ? "is-cloud" : "is-local"}`}><ShieldCheck size={16} /><span>{cloudPrivacy ? "Cloud Live sends only this session’s enabled microphone, selected-window frames, and selected application audio to the configured provider. Raw media is transient and never stored by Fairy." : "Local MiniCPM processes enabled microphone, selected-window frames, and selected application audio on this device. Raw media stays in transient local memory."} Spoken captions remain on this device in the linked conversation.</span></div>
           {!active ? <div className="realtime-config">
             <label><span><Monitor size={15} /> Game window</span><select value={sourceId} onChange={(event) => setSourceId(event.target.value)} disabled={busy}>{surfaces.map((surface) => <option key={surface.source_id} value={surface.source_id}>{surface.label} · {surface.width}×{surface.height}</option>)}</select></label>
-            <div className="realtime-policy"><span>Provider</span><strong>{providerLabel(preferences?.realtime_cloud_provider)}</strong><span>Voice</span><strong>{voiceOutputLabel(preferences?.realtime_voice_output)}</strong></div>
+            <div className="realtime-policy realtime-backend-card"><span>Backend</span><strong>{backendLabel(resolution?.backend, resolution?.requires_cloud_upload_consent, preferences?.realtime_cloud_provider)}</strong><span>Voice</span><strong>{voiceOutputLabel(preferences?.realtime_voice_output)}</strong></div>
             {preferences?.realtime_beta_enabled === false ? <div className="realtime-error" role="alert">Enable Realtime Beta in Settings before starting.</div> : null}
-            {preferences?.realtime_backend === "local_mini_cpm_o45" ? <div className="realtime-error" role="alert">Local Beta is not available until hardware, model, and runtime readiness are verified.</div> : null}
-            {preferences?.realtime_backend !== "local_mini_cpm_o45" && credentialReady === false ? <div className="realtime-error" role="alert">Configure the selected realtime provider in Settings before starting.</div> : null}
-            <label className="realtime-consent"><input type="checkbox" checked={microphoneConsent} onChange={(event) => setMicrophoneConsent(event.target.checked)} /><Mic size={15} /><span>Share microphone for this session</span></label>
-            <label className="realtime-consent"><input type="checkbox" checked={screenConsent} onChange={(event) => setScreenConsent(event.target.checked)} /><Monitor size={15} /><span>Share only the selected game window</span></label>
-            <label className="realtime-consent"><input type="checkbox" checked={applicationAudioConsent} onChange={(event) => setApplicationAudioConsent(event.target.checked)} /><Volume2 size={15} /><span>Share selected application audio for this session</span></label>
+            {resolution?.available === false && resolution.reason !== "REALTIME_BETA_DISABLED" ? <div className="realtime-error" role="alert">{resolutionGuidance(resolution.reason)}</div> : null}
+            {resolution === null && preferences?.realtime_beta_enabled ? <div className="realtime-note" role="status">Checking backend readiness…</div> : null}
+            <label className="realtime-consent"><input type="checkbox" checked={microphoneConsent} onChange={(event) => setMicrophoneConsent(event.target.checked)} /><Mic size={15} /><span>{cloudPrivacy ? "Upload microphone for this Cloud session" : "Use microphone for this Local session"}</span></label>
+            <label className="realtime-consent"><input type="checkbox" checked={screenConsent} onChange={(event) => setScreenConsent(event.target.checked)} /><Monitor size={15} /><span>{cloudPrivacy ? "Upload only the selected game window" : "Process only the selected game window locally"}</span></label>
+            <label className="realtime-consent"><input type="checkbox" checked={applicationAudioConsent} onChange={(event) => setApplicationAudioConsent(event.target.checked)} /><Volume2 size={15} /><span>{cloudPrivacy ? "Upload selected application audio" : "Process selected application audio locally"}</span></label>
             <p className="realtime-note">System-wide audio is never captured. Each enabled source remains scoped to this session.</p>
-            <button className="realtime-primary" type="button" disabled={busy || preferences?.realtime_beta_enabled !== true || preferences?.realtime_backend === "local_mini_cpm_o45" || credentialReady !== true || !microphoneConsent || !screenConsent || sourceId === ""} onClick={() => void start()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Mic size={15} />} Start companion</button>
-          </div> : <div className="realtime-live"><div className="realtime-live-status"><span className={`realtime-pulse ${presence}`} /><div><strong>{presenceLabel(presence)}</strong><small>{session.provider.replaceAll("_", " ")}</small></div><button type="button" disabled={busy} onClick={() => void stop()}><Square size={14} /> Stop</button></div><div className="realtime-usage" aria-label="Session usage"><span>Voice {formatUsageMinutes(liveUsage.audio_input_ms + liveUsage.audio_output_ms)}</span><span>Frames {liveUsage.video_frame_count}</span></div><div className="realtime-captions" aria-live="polite">{captions.length === 0 && draftCaption === "" ? <span>Listening for the conversation and game context…</span> : <>{captions.map((text, index) => <p key={`${index}-${text.slice(0, 16)}`}>{text}</p>)}{draftCaption ? <p className="is-streaming">{draftCaption}</p> : null}</>}</div></div>}
+            <button className="realtime-primary" type="button" disabled={busy || resolution?.available !== true || !microphoneConsent || !screenConsent || sourceId === ""} onClick={() => void start()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Mic size={15} />} Start companion</button>
+          </div> : <div className="realtime-live"><div className="realtime-live-status"><span className={`realtime-pulse ${presence}`} /><div><strong>{presenceLabel(presence)}</strong><small>{backendLabel(activeBackend ?? (session.provider === "local_mini_cpm_o45" ? "local_mini_cpm_o45" : "cloud_live"), false, preferences?.realtime_cloud_provider)}</small></div><button type="button" disabled={busy} onClick={() => void stop()}><Square size={14} /> Stop</button></div><div className="realtime-usage" aria-label="Session usage"><span>Voice {formatUsageMinutes(liveUsage.audio_input_ms + liveUsage.audio_output_ms)}</span><span>Frames {liveUsage.video_frame_count}</span></div><div className="realtime-captions" aria-live="polite">{captions.length === 0 && draftCaption === "" ? <span>Listening for the conversation and game context…</span> : <>{captions.map((text, index) => <p key={`${index}-${text.slice(0, 16)}`}>{text}</p>)}{draftCaption ? <p className="is-streaming">{draftCaption}</p> : null}</>}</div></div>}
           {memory ? <div className="realtime-memory"><h3>Save game progress</h3><label>Game<input value={memory.gameTitle} maxLength={160} onChange={(event) => setMemory({ ...memory, gameTitle: event.target.value })} /></label><label>Progress<textarea value={memory.progress} maxLength={800} onChange={(event) => setMemory({ ...memory, progress: event.target.value })} /></label><label>Next goal<input value={memory.nextGoal} maxLength={300} onChange={(event) => setMemory({ ...memory, nextGoal: event.target.value })} /></label><button type="button" disabled={busy || !memory.gameTitle.trim() || !memory.progress.trim()} onClick={() => void saveMemory()}><Save size={14} /> Save summary</button></div> : null}
           {unsavedCount > 0 ? <div className="realtime-transcript-warning" role="status"><span>{unsavedCount} {unsavedCount === 1 ? "caption" : "captions"} unsaved</span><button type="button" onClick={retryUnsaved}><RotateCcw size={13} /> Retry saving</button></div> : null}
           {voiceWarning ? <div className="realtime-warning" role="status">{voiceWarning}</div> : null}
@@ -676,6 +695,45 @@ function providerLabel(provider?: DesktopPreferences["realtime_cloud_provider"])
   if (provider === "gemini_live") return "Gemini Live";
   if (provider === "glm_realtime_air") return "GLM Realtime Air";
   return "GLM Realtime Flash";
+}
+
+function backendLabel(
+  backend?: RealtimeBackendResolution["backend"],
+  cloudExpected = false,
+  provider?: DesktopPreferences["realtime_cloud_provider"],
+): string {
+  if (backend === "local_mini_cpm_o45") return "Local · MiniCPM-o 4.5";
+  if (backend === "cloud_live" || cloudExpected) return `Cloud Live · ${providerLabel(provider)}`;
+  return "Resolving…";
+}
+
+function resolutionGuidance(reason: string | null): string {
+  switch (reason) {
+    case "CLOUD_UPLOAD_CONSENT_REQUIRED":
+      return "Review and enable microphone and selected-window upload for this Cloud session.";
+    case "REALTIME_CREDENTIAL_MISSING":
+      return "Configure the selected Cloud Live provider in Settings.";
+    case "AUTO_CLOUD_FALLBACK_DISABLED":
+      return "Local is not ready and Cloud fallback is disabled. Review Realtime settings.";
+    case "LOCAL_VOICE_OUTPUT_INCOMPATIBLE":
+      return "Local MiniCPM uses Fairy voice or text-only output. Change the voice setting.";
+    case "LOCAL_MODEL_MISSING":
+      return "Install and verify the Local MiniCPM model in Settings.";
+    case "LOCAL_RUNTIME_MISSING":
+      return "The Local Omni runtime is not installed.";
+    case "LOCAL_SELF_TEST_FAILED":
+    case "LOCAL_RUNTIME_QUARANTINED":
+      return "Verify the Local Omni runtime in Settings before starting.";
+    case "LOCAL_CUDA_UNAVAILABLE":
+    case "LOCAL_DRIVER_INCOMPATIBLE":
+    case "LOCAL_ADAPTER_MISMATCH":
+      return "Local CUDA readiness is unavailable on the active GPU configuration.";
+    case "LOCAL_VRAM_INSUFFICIENT":
+    case "LOCAL_FREE_VRAM_INSUFFICIENT":
+      return "Local MiniCPM does not have enough available VRAM for this activity profile.";
+    default:
+      return "The selected realtime backend is not ready. Review Realtime settings.";
+  }
 }
 
 function voiceOutputLabel(output?: DesktopPreferences["realtime_voice_output"]): string {
