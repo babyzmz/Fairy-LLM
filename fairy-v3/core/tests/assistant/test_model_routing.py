@@ -342,6 +342,57 @@ def _auto_turn(service, task: dict[str, object], key: str) -> dict[str, object]:
     )
 
 
+def test_paid_model_budget_approval_emits_started_message_without_worker_lease(
+    tmp_path: Path,
+) -> None:
+    deepseek = _provider(
+        profile_id="openrouter-deepseek-v4-pro",
+        model_id=DEEPSEEK_MODEL_ID,
+        rounds=[],
+    )
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((deepseek,)),
+    )
+    try:
+        service.invoke(
+            "models.selection.update",
+            {
+                "mode": "manual",
+                "model_id": DEEPSEEK_MODEL_ID,
+                "allow_free_fallback": False,
+                "zero_data_retention": False,
+                "expected_revision": 0,
+                "idempotency_key": "paid-approval-selection",
+            },
+        )
+        task = _task(service, "Explain this paid-model request")
+        turn = _auto_turn(service, task, "turn:paid-approval")
+
+        service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
+        waiting = wait_for_turn(
+            service,
+            turn["id"],
+            status="waiting_for_tool",
+        )
+        events = service.invoke("events.list", {"cursor": 0, "limit": 100})["items"]
+
+        assert waiting["error_code"] is None
+        assert any(
+            event["event_type"] == "message.created"
+            and event["payload"].get("turn_id") == turn["id"]
+            for event in events
+        )
+        assert any(
+            event["event_type"] == "assistant.budget.approval_requested"
+            and event["payload"].get("turn_id") == turn["id"]
+            for event in events
+        )
+        assert deepseek.requests == []
+    finally:
+        service.close()
+
+
 def test_auto_router_is_durable_and_never_projects_router_text(tmp_path: Path) -> None:
     deepseek = _provider(
         profile_id="openrouter-deepseek-v4-pro",
