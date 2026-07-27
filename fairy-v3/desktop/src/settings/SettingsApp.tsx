@@ -483,9 +483,16 @@ function SettingsContent({
     : visibleCategories.some((item) => item.id === category)
       ? category
       : visibleCategories[0]?.id ?? category;
+  const settingsReady =
+    data !== null && currentCategoryQuery?.isPending !== true;
 
   return (
-    <main className="settings-shell" aria-label="Fairy settings">
+    <main
+      className="settings-shell"
+      aria-label="Fairy settings"
+      data-settings-category={visibleCategory}
+      data-settings-state={settingsReady ? "ready" : "loading"}
+    >
       <aside className="settings-navigation">
         <header className="settings-brand">
           {onBack ? (

@@ -30,6 +30,8 @@ describe("SettingsApp", () => {
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
 
     expect(await screen.findByRole("checkbox", { name: "Launch at startup" })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Fairy settings" }))
+      .toHaveAttribute("data-settings-state", "ready");
     expect(rpcRequests(invoke, "projects.archived.list")).toHaveLength(1);
     expect(rpcRequests(invoke, "trash.items.list")).toHaveLength(1);
     expect(rpcRequests(invoke, "models.catalog.list")).toHaveLength(0);
