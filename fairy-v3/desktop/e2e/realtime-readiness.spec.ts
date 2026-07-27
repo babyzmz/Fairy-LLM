@@ -128,7 +128,7 @@ test("Companion projects Cloud upload scope without starting a worker", async ({
   await page.setViewportSize({ width: 640, height: 700 });
   await page.goto("/?surface=companion&companionBackend=cloud");
 
-  await expect(page.getByRole("dialog", { name: "Game companion" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Realtime Companion Beta" })).toBeVisible();
   await expect(page.getByText("Cloud Live · GLM Realtime Flash")).toBeVisible();
   await expect(page.getByText(/Cloud Live sends only this session/)).toBeVisible();
   await page.getByRole("checkbox", {
@@ -137,7 +137,7 @@ test("Companion projects Cloud upload scope without starting a worker", async ({
   await page.getByRole("checkbox", {
     name: "Upload only the selected game window",
   }).check();
-  await expect(page.getByRole("button", { name: "Start companion" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Start Realtime" })).toBeEnabled();
 
   const calls = await fixtureCalls(page);
   expect(calls.some((call) => call.method === "realtime.backend.preview")).toBe(true);
@@ -152,7 +152,7 @@ test("Companion projects Local processing scope without Cloud credential lookup"
   await page.setViewportSize({ width: 640, height: 700 });
   await page.goto("/?surface=companion&companionBackend=local");
 
-  await expect(page.getByRole("dialog", { name: "Game companion" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Realtime Companion Beta" })).toBeVisible();
   await expect(page.getByText("Local · MiniCPM-o 4.5")).toBeVisible();
   await expect(page.getByText(/Local MiniCPM processes enabled microphone/)).toBeVisible();
   await expect(page.getByRole("checkbox", {

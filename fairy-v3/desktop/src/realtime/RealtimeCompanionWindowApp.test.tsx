@@ -83,7 +83,7 @@ describe("RealtimeCompanionWindowApp", () => {
     render(<RealtimeCompanionWindowApp client={client} invoke={invoke} />);
 
     expect(
-      await screen.findByRole("dialog", { name: "Game companion" }),
+      await screen.findByRole("dialog", { name: "Realtime Companion Beta" }),
     ).not.toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() =>

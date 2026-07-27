@@ -977,7 +977,7 @@ describe("dual presence surfaces", () => {
     );
   });
 
-  it("opens Game Companion as its own secondary window without waking the workspace", async () => {
+  it("opens Realtime Companion Beta as its own secondary window without waking the workspace", async () => {
     const channel = channelHarness();
     const host = hostHarness();
     render(
@@ -991,7 +991,7 @@ describe("dual presence surfaces", () => {
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
     fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
     fireEvent.click(
-      await screen.findByRole("menuitem", { name: "Game companion" }),
+      await screen.findByRole("menuitem", { name: "Realtime Companion Beta" }),
     );
 
     expect(host.host.openCompanion).toHaveBeenCalledOnce();

@@ -653,7 +653,7 @@ function SettingsCategory(props: SettingsCategoryProps) {
           </button>
         )}
       </div>
-      <h2 className="settings-section-title">Realtime companion Beta</h2>
+      <h2 className="settings-section-title">Realtime Companion Beta</h2>
       <SettingToggle label="Enable Realtime Beta" detail="Off by default. Starting a session still requires explicit microphone and screen consent." checked={data.preferences.realtime_beta_enabled} disabled={busy} onChange={(value) => void updatePreferences({ realtime_beta_enabled: value })} />
       <RealtimeReadinessCard
         client={props.client}

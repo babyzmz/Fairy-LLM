@@ -33,7 +33,7 @@ const view: PresenceView = {
 };
 
 describe("PresencePanel optical boundary", () => {
-  it("routes Game Companion exclusively through the Fairy menu action", () => {
+  it("routes Realtime Companion Beta exclusively through the Fairy menu action", () => {
     const openCompanion = vi.fn();
     const setMenuOpen = vi.fn();
     const menuActions = {
@@ -56,7 +56,7 @@ describe("PresencePanel optical boundary", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("menuitem", { name: "Game companion" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Realtime Companion Beta" }));
 
     expect(openCompanion).toHaveBeenCalledOnce();
     expect(setMenuOpen).toHaveBeenCalledWith(false);

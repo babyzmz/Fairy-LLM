@@ -2772,7 +2772,7 @@ fn companion_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
         COMPANION_LABEL,
         WebviewUrl::App("index.html?surface=companion".into()),
     )
-    .title("Fairy Realtime Companion")
+    .title("Fairy Realtime Companion Beta")
     .inner_size(620.0, 760.0)
     .min_inner_size(520.0, 620.0)
     .resizable(true)

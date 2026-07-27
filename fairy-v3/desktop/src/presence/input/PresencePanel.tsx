@@ -421,7 +421,7 @@ export function PresencePanel({
           />
           <MenuButton
             icon={<Gamepad2 size={15} />}
-            label="Game companion"
+            label="Realtime Companion Beta"
             onClick={() => {
               actions.openCompanion();
               actions.setMenuOpen(false);

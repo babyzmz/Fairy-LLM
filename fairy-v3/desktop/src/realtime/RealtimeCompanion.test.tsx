@@ -115,7 +115,7 @@ async function grantMediaConsentAndStart(includeApplicationAudio = false): Promi
   fireEvent.click(consents[0]);
   fireEvent.click(consents[1]);
   if (includeApplicationAudio) fireEvent.click(consents[2]);
-  const startButton = screen.getByRole("button", { name: "Start companion" });
+  const startButton = screen.getByRole("button", { name: "Start Realtime" });
   await waitFor(() => expect((startButton as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(startButton);
 }
@@ -178,13 +178,13 @@ describe("RealtimeCompanion", () => {
       <RealtimeCompanion client={client} openRequest={0} />,
     );
 
-    expect(screen.queryByTitle("Game companion")).toBeNull();
-    expect(screen.queryByRole("dialog", { name: "Game companion" })).toBeNull();
+    expect(screen.queryByTitle("Realtime Companion Beta")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Realtime Companion Beta" })).toBeNull();
 
     rerender(<RealtimeCompanion client={client} openRequest={1} />);
 
     expect(
-      await screen.findByRole("dialog", { name: "Game companion" }),
+      await screen.findByRole("dialog", { name: "Realtime Companion Beta" }),
     ).not.toBeNull();
   });
 
@@ -207,7 +207,7 @@ describe("RealtimeCompanion", () => {
     fireEvent.click(screen.getAllByRole("checkbox")[1]);
 
     expect(screen.getByText("Enable Realtime Beta in Settings before starting.")).not.toBeNull();
-    expect((screen.getByRole("button", { name: "Start companion" }) as HTMLButtonElement).disabled)
+    expect((screen.getByRole("button", { name: "Start Realtime" }) as HTMLButtonElement).disabled)
       .toBe(true);
     expect(start).not.toHaveBeenCalled();
   });
@@ -231,7 +231,7 @@ describe("RealtimeCompanion", () => {
     expect(await screen.findByText(
       "Install and verify the Local MiniCPM model in Settings.",
     )).not.toBeNull();
-    expect((screen.getByRole("button", { name: "Start companion" }) as HTMLButtonElement).disabled)
+    expect((screen.getByRole("button", { name: "Start Realtime" }) as HTMLButtonElement).disabled)
       .toBe(true);
     expect(start).not.toHaveBeenCalled();
     expect(invoke.mock.calls.some(([command]) => command === "provider_realtime_status")).toBe(false);

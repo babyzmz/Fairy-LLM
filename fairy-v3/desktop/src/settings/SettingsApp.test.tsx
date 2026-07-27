@@ -82,7 +82,7 @@ describe("SettingsApp", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Voice/ }));
 
-    expect(screen.getByRole("heading", { name: "Realtime companion Beta" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Realtime Companion Beta" })).toBeVisible();
     expect(await screen.findByRole("status", { name: "Local readiness status" }))
       .toHaveTextContent("Runtime required");
     expect(screen.getByRole("checkbox", { name: /^Enable Realtime Beta/ })).not.toBeChecked();
