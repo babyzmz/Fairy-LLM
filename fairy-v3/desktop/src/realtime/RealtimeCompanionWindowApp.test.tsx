@@ -23,11 +23,19 @@ describe("RealtimeCompanionWindowApp", () => {
     ) => {
       if (command === "desktop_preferences_get") {
         return {
-          realtime_provider: "auto",
-          realtime_voice_mode: "native",
+          realtime_beta_enabled: false,
+          realtime_backend: "auto",
+          realtime_cloud_provider: "glm_realtime_flash",
+          realtime_allow_cloud_fallback: false,
+          realtime_activity_profile: "auto",
+          realtime_interaction_intensity: "standard",
+          realtime_voice_output: "fairy_voice",
           realtime_game_audio_default: false,
+          realtime_online_assistance_enabled: false,
           realtime_memory_enabled: true,
-          realtime_max_session_minutes: 30,
+          realtime_presence_max_minutes: 240,
+          realtime_cloud_daily_limit_minutes: 180,
+          realtime_local_keep_warm_minutes: 10,
         };
       }
       if (command === "list_capture_surfaces") return [];

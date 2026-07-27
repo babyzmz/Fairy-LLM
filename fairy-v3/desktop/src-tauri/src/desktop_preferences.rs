@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const PREFERENCES_FILE: &str = "preferences/desktop.json";
-const SCHEMA_VERSION: u32 = 8;
+const SCHEMA_VERSION: u32 = 9;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,20 +44,47 @@ pub enum PetActivationStyle {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RealtimeProviderPreference {
+pub enum RealtimeBackendPreference {
     #[default]
     Auto,
-    GeminiLive,
+    LocalMiniCpmO45,
+    CloudLive,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimeCloudProviderPreference {
+    #[default]
     GlmRealtimeFlash,
+    GeminiLive,
     GlmRealtimeAir,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RealtimeVoicePreference {
+pub enum RealtimeActivityProfilePreference {
     #[default]
-    Native,
-    Fairy,
+    Auto,
+    Game,
+    Focus,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimeInteractionIntensityPreference {
+    Quiet,
+    #[default]
+    Standard,
+    Active,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimeVoiceOutputPreference {
+    #[default]
+    FairyVoice,
+    ProviderNativeVoice,
+    TextOnly,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -85,15 +112,31 @@ pub struct DesktopPreferences {
     pub permission_cloud_profile: String,
     pub analytics_enabled: bool,
     #[serde(default)]
-    pub realtime_provider: RealtimeProviderPreference,
+    pub realtime_beta_enabled: bool,
     #[serde(default)]
-    pub realtime_voice_mode: RealtimeVoicePreference,
+    pub realtime_backend: RealtimeBackendPreference,
+    #[serde(default)]
+    pub realtime_cloud_provider: RealtimeCloudProviderPreference,
+    #[serde(default)]
+    pub realtime_allow_cloud_fallback: bool,
+    #[serde(default)]
+    pub realtime_activity_profile: RealtimeActivityProfilePreference,
+    #[serde(default)]
+    pub realtime_interaction_intensity: RealtimeInteractionIntensityPreference,
+    #[serde(default)]
+    pub realtime_voice_output: RealtimeVoiceOutputPreference,
     #[serde(default)]
     pub realtime_game_audio_default: bool,
+    #[serde(default)]
+    pub realtime_online_assistance_enabled: bool,
     #[serde(default = "default_true")]
     pub realtime_memory_enabled: bool,
-    #[serde(default = "default_realtime_session_minutes")]
-    pub realtime_max_session_minutes: u8,
+    #[serde(default = "default_realtime_presence_minutes")]
+    pub realtime_presence_max_minutes: u16,
+    #[serde(default = "default_realtime_cloud_daily_minutes")]
+    pub realtime_cloud_daily_limit_minutes: u16,
+    #[serde(default = "default_realtime_local_keep_warm_minutes")]
+    pub realtime_local_keep_warm_minutes: u8,
     #[serde(default)]
     pub trash_auto_purge_30_days: bool,
     pub pet_enabled: bool,
@@ -152,11 +195,19 @@ impl Default for DesktopPreferences {
             voice_rate_percent: 100,
             permission_cloud_profile: "standard".to_owned(),
             analytics_enabled: false,
-            realtime_provider: RealtimeProviderPreference::Auto,
-            realtime_voice_mode: RealtimeVoicePreference::Native,
+            realtime_beta_enabled: false,
+            realtime_backend: RealtimeBackendPreference::Auto,
+            realtime_cloud_provider: RealtimeCloudProviderPreference::GlmRealtimeFlash,
+            realtime_allow_cloud_fallback: false,
+            realtime_activity_profile: RealtimeActivityProfilePreference::Auto,
+            realtime_interaction_intensity: RealtimeInteractionIntensityPreference::Standard,
+            realtime_voice_output: RealtimeVoiceOutputPreference::FairyVoice,
             realtime_game_audio_default: false,
+            realtime_online_assistance_enabled: false,
             realtime_memory_enabled: true,
-            realtime_max_session_minutes: default_realtime_session_minutes(),
+            realtime_presence_max_minutes: default_realtime_presence_minutes(),
+            realtime_cloud_daily_limit_minutes: default_realtime_cloud_daily_minutes(),
+            realtime_local_keep_warm_minutes: default_realtime_local_keep_warm_minutes(),
             trash_auto_purge_30_days: false,
             pet_enabled: true,
             pet_always_on_top: true,
@@ -211,6 +262,78 @@ pub struct PetPreferencesUpdate {
     pub clear_pet_anchor: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LegacyRealtimeProviderPreference {
+    #[default]
+    Auto,
+    GeminiLive,
+    GlmRealtimeFlash,
+    GlmRealtimeAir,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LegacyRealtimeVoicePreference {
+    #[default]
+    Native,
+    Fairy,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+struct LegacyRealtimePreferencesV8 {
+    #[serde(default)]
+    realtime_provider: LegacyRealtimeProviderPreference,
+    #[serde(default)]
+    realtime_voice_mode: LegacyRealtimeVoicePreference,
+    #[serde(default)]
+    realtime_game_audio_default: bool,
+    #[serde(default = "default_true")]
+    realtime_memory_enabled: bool,
+    #[serde(default = "default_legacy_realtime_session_minutes")]
+    realtime_max_session_minutes: u16,
+}
+
+impl LegacyRealtimePreferencesV8 {
+    fn apply_to(self, preferences: &mut DesktopPreferences) {
+        preferences.realtime_beta_enabled = false;
+        preferences.realtime_backend = RealtimeBackendPreference::Auto;
+        preferences.realtime_cloud_provider = match self.realtime_provider {
+            LegacyRealtimeProviderPreference::Auto
+            | LegacyRealtimeProviderPreference::GlmRealtimeFlash => {
+                RealtimeCloudProviderPreference::GlmRealtimeFlash
+            }
+            LegacyRealtimeProviderPreference::GeminiLive => {
+                RealtimeCloudProviderPreference::GeminiLive
+            }
+            LegacyRealtimeProviderPreference::GlmRealtimeAir => {
+                RealtimeCloudProviderPreference::GlmRealtimeAir
+            }
+        };
+        preferences.realtime_allow_cloud_fallback = false;
+        preferences.realtime_activity_profile = RealtimeActivityProfilePreference::Auto;
+        preferences.realtime_interaction_intensity =
+            RealtimeInteractionIntensityPreference::Standard;
+        preferences.realtime_voice_output = match self.realtime_voice_mode {
+            LegacyRealtimeVoicePreference::Native => {
+                RealtimeVoiceOutputPreference::ProviderNativeVoice
+            }
+            LegacyRealtimeVoicePreference::Fairy => RealtimeVoiceOutputPreference::FairyVoice,
+        };
+        preferences.realtime_game_audio_default = self.realtime_game_audio_default;
+        preferences.realtime_online_assistance_enabled = false;
+        preferences.realtime_memory_enabled = self.realtime_memory_enabled;
+        preferences.realtime_presence_max_minutes = default_realtime_presence_minutes();
+        preferences.realtime_cloud_daily_limit_minutes =
+            if [30, 60, 120, 180].contains(&self.realtime_max_session_minutes) {
+                self.realtime_max_session_minutes
+            } else {
+                default_realtime_cloud_daily_minutes()
+            };
+        preferences.realtime_local_keep_warm_minutes = default_realtime_local_keep_warm_minutes();
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum DesktopPreferencesError {
     #[error("desktop preferences revision conflict")]
@@ -256,7 +379,7 @@ impl DesktopPreferencesStore {
             .get("schema_version")
             .and_then(serde_json::Value::as_u64);
         let legacy_memory_schema = matches!(schema_version, Some(1..=6));
-        let needs_schema_upgrade = matches!(schema_version, Some(1..=7));
+        let needs_schema_upgrade = matches!(schema_version, Some(1..=8));
         let retired_activation_style = value
             .get("pet_activation_style")
             .and_then(serde_json::Value::as_str)
@@ -268,6 +391,9 @@ impl DesktopPreferencesStore {
             Err(error) => return Err(error.into()),
         };
         if needs_schema_upgrade {
+            let legacy_realtime =
+                serde_json::from_value::<LegacyRealtimePreferencesV8>(value.clone())?;
+            legacy_realtime.apply_to(&mut preferences);
             preferences.schema_version = SCHEMA_VERSION;
             if validate(&preferences).is_err() {
                 preferences = DesktopPreferences::default();
@@ -386,9 +512,19 @@ fn validate(preferences: &DesktopPreferences) -> Result<(), DesktopPreferencesEr
             "voice rate must be between 50 and 200".to_owned(),
         ));
     }
-    if !(5..=120).contains(&preferences.realtime_max_session_minutes) {
+    if !(30..=240).contains(&preferences.realtime_presence_max_minutes) {
         return Err(DesktopPreferencesError::Invalid(
-            "realtime session length must be between 5 and 120 minutes".to_owned(),
+            "realtime presence maximum must be between 30 and 240 minutes".to_owned(),
+        ));
+    }
+    if ![30, 60, 120, 180].contains(&preferences.realtime_cloud_daily_limit_minutes) {
+        return Err(DesktopPreferencesError::Invalid(
+            "realtime cloud daily limit must be 30, 60, 120, or 180 minutes".to_owned(),
+        ));
+    }
+    if preferences.realtime_local_keep_warm_minutes > 30 {
+        return Err(DesktopPreferencesError::Invalid(
+            "realtime local keep-warm must be between 0 and 30 minutes".to_owned(),
         ));
     }
     if !(75..=150).contains(&preferences.pet_size_percent) {
@@ -471,8 +607,20 @@ const fn default_pet_target_fps() -> u16 {
     60
 }
 
-const fn default_realtime_session_minutes() -> u8 {
+const fn default_legacy_realtime_session_minutes() -> u16 {
     30
+}
+
+const fn default_realtime_presence_minutes() -> u16 {
+    240
+}
+
+const fn default_realtime_cloud_daily_minutes() -> u16 {
+    180
+}
+
+const fn default_realtime_local_keep_warm_minutes() -> u8 {
+    10
 }
 
 #[cfg(windows)]
@@ -512,7 +660,9 @@ mod tests {
     use super::{
         DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore,
         DesktopPreferencesUpdate, PetActivationStyle, PetAnchorPreference, PetOpticsMode,
-        PetPreferencesUpdate,
+        PetPreferencesUpdate, RealtimeActivityProfilePreference, RealtimeBackendPreference,
+        RealtimeCloudProviderPreference, RealtimeInteractionIntensityPreference,
+        RealtimeVoiceOutputPreference,
     };
 
     #[test]
@@ -640,7 +790,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 8);
+        assert_eq!(migrated.schema_version, 9);
         assert!(!migrated.voice_auto_play_pet);
         assert!(!migrated.pet_always_on_top);
         assert!(migrated.pet_muted);
@@ -673,7 +823,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 8);
+        assert_eq!(migrated.schema_version, 9);
         assert_eq!(migrated.pet_target_fps, 60);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -697,7 +847,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 8);
+        assert_eq!(migrated.schema_version, 9);
         assert_eq!(migrated.pet_optics_mode, PetOpticsMode::Standard);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -725,7 +875,7 @@ mod tests {
         .expect("write stored preferences");
 
         let loaded = store.load().expect("load version seven preferences");
-        assert_eq!(loaded.schema_version, 8);
+        assert_eq!(loaded.schema_version, 9);
         assert!(loaded.pet_muted);
         assert!(loaded.ambient_dialogue_enabled);
         assert!(!loaded.ambient_dialogue_voice_enabled);
@@ -794,7 +944,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 8);
+        assert_eq!(migrated.schema_version, 9);
         assert!(!migrated.trash_auto_purge_30_days);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -827,7 +977,7 @@ mod tests {
                 retention_days: 45,
             })
         );
-        assert_eq!(startup.preferences.schema_version, 8);
+        assert_eq!(startup.preferences.schema_version, 9);
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(
                 &std::fs::read(&path).expect("read pending migration")
@@ -843,7 +993,7 @@ mod tests {
             &std::fs::read(&path).expect("read migrated preferences"),
         )
         .expect("parse migrated preferences");
-        assert_eq!(persisted["schema_version"], serde_json::json!(8));
+        assert_eq!(persisted["schema_version"], serde_json::json!(9));
         assert!(persisted.get("memory_enabled").is_none());
         assert!(persisted.get("memory_retention_days").is_none());
         assert!(store
@@ -851,5 +1001,87 @@ mod tests {
             .expect("reload startup preferences")
             .legacy_memory
             .is_none());
+    }
+
+    #[test]
+    fn version_eight_realtime_preferences_migrate_without_enabling_beta() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let path = directory.path().join("preferences/desktop.json");
+        std::fs::create_dir_all(path.parent().expect("preferences parent"))
+            .expect("create preferences parent");
+        let mut stored =
+            serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
+        let object = stored.as_object_mut().expect("preferences object");
+        object.insert("schema_version".to_owned(), serde_json::json!(8));
+        object.insert(
+            "realtime_provider".to_owned(),
+            serde_json::json!("glm_realtime_flash"),
+        );
+        object.insert(
+            "realtime_voice_mode".to_owned(),
+            serde_json::json!("native"),
+        );
+        object.insert(
+            "realtime_game_audio_default".to_owned(),
+            serde_json::json!(true),
+        );
+        object.insert(
+            "realtime_memory_enabled".to_owned(),
+            serde_json::json!(false),
+        );
+        object.insert(
+            "realtime_max_session_minutes".to_owned(),
+            serde_json::json!(120),
+        );
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&stored).expect("stored bytes"),
+        )
+        .expect("write stored preferences");
+
+        let migrated = store.load().expect("migrate version eight");
+        assert_eq!(migrated.schema_version, 9);
+        assert!(!migrated.realtime_beta_enabled);
+        assert_eq!(migrated.realtime_backend, RealtimeBackendPreference::Auto);
+        assert_eq!(
+            migrated.realtime_cloud_provider,
+            RealtimeCloudProviderPreference::GlmRealtimeFlash
+        );
+        assert_eq!(
+            migrated.realtime_voice_output,
+            RealtimeVoiceOutputPreference::ProviderNativeVoice
+        );
+        assert!(migrated.realtime_game_audio_default);
+        assert!(!migrated.realtime_memory_enabled);
+        assert_eq!(migrated.realtime_cloud_daily_limit_minutes, 120);
+        assert!(!migrated.realtime_allow_cloud_fallback);
+        assert!(!migrated.realtime_online_assistance_enabled);
+    }
+
+    #[test]
+    fn schema_nine_defaults_are_privacy_safe_and_bounded() {
+        let defaults = DesktopPreferences::default();
+
+        assert_eq!(defaults.schema_version, 9);
+        assert!(!defaults.realtime_beta_enabled);
+        assert_eq!(defaults.realtime_backend, RealtimeBackendPreference::Auto);
+        assert_eq!(
+            defaults.realtime_activity_profile,
+            RealtimeActivityProfilePreference::Auto
+        );
+        assert_eq!(
+            defaults.realtime_interaction_intensity,
+            RealtimeInteractionIntensityPreference::Standard
+        );
+        assert_eq!(
+            defaults.realtime_voice_output,
+            RealtimeVoiceOutputPreference::FairyVoice
+        );
+        assert_eq!(defaults.realtime_presence_max_minutes, 240);
+        assert_eq!(defaults.realtime_cloud_daily_limit_minutes, 180);
+        assert_eq!(defaults.realtime_local_keep_warm_minutes, 10);
+        assert!(!defaults.realtime_allow_cloud_fallback);
+        assert!(!defaults.realtime_online_assistance_enabled);
     }
 }

@@ -71,6 +71,31 @@ describe("SettingsApp", () => {
     expect(localStorage.getItem("fairy.workspace.developer")).toBe("true");
   });
 
+  it("shows the complete schema nine Realtime Beta controls without a readiness claim", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+
+    await userEvent.click(screen.getByRole("button", { name: /Voice/ }));
+
+    expect(screen.getByRole("heading", { name: "Realtime companion Beta" })).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: /^Enable Realtime Beta/ })).not.toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Backend" })).toHaveValue("auto");
+    expect(screen.getByRole("combobox", { name: "Cloud provider" })).toHaveValue("glm_realtime_flash");
+    expect(screen.getByRole("combobox", { name: "Activity profile" })).toHaveValue("auto");
+    expect(screen.getByRole("combobox", { name: "Interaction intensity" })).toHaveValue("standard");
+    expect(screen.getByRole("combobox", { name: "Voice output" })).toHaveValue("fairy_voice");
+    expect(screen.getByText(
+      "Local Beta requires a supported NVIDIA GPU, verified model and runtime, and enough current GPU memory.",
+    )).toBeVisible();
+    expect(screen.queryByText(/Local (is )?ready/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /^Allow cloud fallback/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /^Share application audio by default/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /^Online assistance/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /^Offer companion memory/ })).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Cloud daily limit" })).toHaveValue("180");
+  });
+
   it("shows native string errors instead of replacing them with a generic failure", async () => {
     const invoke = settingsInvoke();
     invoke.mockImplementationOnce(async () => defaultPreferences());
@@ -862,7 +887,7 @@ function rpcRequest(invoke: ReturnType<typeof settingsInvoke>, method: string) {
 
 function defaultPreferences(): DesktopPreferences {
   return {
-    schema_version: 7,
+    schema_version: 9,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -877,11 +902,19 @@ function defaultPreferences(): DesktopPreferences {
     voice_rate_percent: 100,
     permission_cloud_profile: "standard",
     analytics_enabled: false,
-    realtime_provider: "auto",
-    realtime_voice_mode: "native",
+    realtime_beta_enabled: false,
+    realtime_backend: "auto",
+    realtime_cloud_provider: "glm_realtime_flash",
+    realtime_allow_cloud_fallback: false,
+    realtime_activity_profile: "auto",
+    realtime_interaction_intensity: "standard",
+    realtime_voice_output: "fairy_voice",
     realtime_game_audio_default: false,
+    realtime_online_assistance_enabled: false,
     realtime_memory_enabled: true,
-    realtime_max_session_minutes: 30,
+    realtime_presence_max_minutes: 240,
+    realtime_cloud_daily_limit_minutes: 180,
+    realtime_local_keep_warm_minutes: 10,
     trash_auto_purge_30_days: false,
     pet_enabled: true,
     pet_always_on_top: true,

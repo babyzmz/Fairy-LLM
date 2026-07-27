@@ -62,7 +62,6 @@ const EMPTY_USAGE: RealtimeUsage = {
 // from; the daily cap is a soft cumulative guard across sessions.
 const REALTIME_IDLE_TIMEOUT_MS = 3 * 60_000;
 const REALTIME_IDLE_CHECK_MS = 15_000;
-const REALTIME_DAILY_LIMIT_MINUTES = 180;
 
 export function RealtimeCompanion({
   client,
@@ -175,8 +174,7 @@ export function RealtimeCompanion({
         client.worker.status(),
       ]);
       const credentialProvider = credentialProviderFor(
-        nextPreferences.realtime_provider,
-        navigator.language || "zh-CN",
+        nextPreferences.realtime_cloud_provider,
       );
       // An unreadable stored key (e.g. a DPAPI blob from another machine) must
       // not blank the whole panel: treat a failed status lookup as "not ready"
@@ -315,7 +313,7 @@ export function RealtimeCompanion({
         }
         if (
           payload.stable && payload.speaker === "assistant"
-          && preferences?.realtime_voice_mode === "fairy"
+          && preferences?.realtime_voice_output === "fairy_voice"
         ) {
           const generation = voiceGeneration.current;
           voiceQueue.current = voiceQueue.current
@@ -365,17 +363,17 @@ export function RealtimeCompanion({
   }, [
     client.worker,
     enqueueTranscript,
-    preferences?.realtime_voice_mode,
+    preferences?.realtime_voice_output,
     report,
     stopFairyVoice,
   ]);
 
   useEffect(() => {
     if (session?.status !== "active" || preferences === null) return;
-    const timeout = window.setTimeout(() => void stop(), preferences.realtime_max_session_minutes * 60_000);
+    const timeout = window.setTimeout(() => void stop(), preferences.realtime_presence_max_minutes * 60_000);
     return () => window.clearTimeout(timeout);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.status, preferences?.realtime_max_session_minutes]);
+  }, [session?.status, preferences?.realtime_presence_max_minutes]);
 
   // Idle auto-disconnect: stop the metered session when the user has not spoken
   // (no captions or barge-in) for the idle window, so a walked-away session does
@@ -415,18 +413,18 @@ export function RealtimeCompanion({
     setMemory(null);
     try {
       const priorMinutes = await todaysRealtimeMinutes(client);
-      if (priorMinutes >= REALTIME_DAILY_LIMIT_MINUTES) {
+      if (priorMinutes >= preferences.realtime_cloud_daily_limit_minutes) {
         setError(
-          `Daily realtime limit reached (${REALTIME_DAILY_LIMIT_MINUTES} min). Start a new session tomorrow to control provider cost.`,
+          `Daily realtime limit reached (${preferences.realtime_cloud_daily_limit_minutes} min). Start a new session tomorrow to control provider cost.`,
         );
         return;
       }
       const created = await client.sessions.start({
         device_id: deviceId(),
         conversation_id: null,
-        provider: preferences.realtime_provider,
+        provider: preferences.realtime_cloud_provider,
         locale: navigator.language || "zh-CN",
-        voice_mode: preferences.realtime_voice_mode,
+        voice_mode: preferences.realtime_voice_output === "fairy_voice" ? "fairy" : "native",
         memory_mode: preferences.realtime_memory_enabled ? "progress_digest" : "none",
         microphone_consent: true,
         screen_consent: true,
@@ -567,7 +565,7 @@ export function RealtimeCompanion({
           <div className="realtime-privacy"><ShieldCheck size={16} /><span>Audio and video frames stay in transient worker memory and are never saved. Spoken captions are kept on this device in the linked conversation so you can review the chat.</span></div>
           {!active ? <div className="realtime-config">
             <label><span><Monitor size={15} /> Game window</span><select value={sourceId} onChange={(event) => setSourceId(event.target.value)} disabled={busy}>{surfaces.map((surface) => <option key={surface.source_id} value={surface.source_id}>{surface.label} · {surface.width}×{surface.height}</option>)}</select></label>
-            <div className="realtime-policy"><span>Provider</span><strong>{providerLabel(preferences?.realtime_provider)}</strong><span>Voice</span><strong>{preferences?.realtime_voice_mode === "fairy" ? "Fairy local voice" : "Provider voice"}</strong></div>
+            <div className="realtime-policy"><span>Provider</span><strong>{providerLabel(preferences?.realtime_cloud_provider)}</strong><span>Voice</span><strong>{voiceOutputLabel(preferences?.realtime_voice_output)}</strong></div>
             {credentialReady === false ? <div className="realtime-error" role="alert">Configure the selected realtime provider in Settings before starting.</div> : null}
             <label className="realtime-consent"><input type="checkbox" checked={microphoneConsent} onChange={(event) => setMicrophoneConsent(event.target.checked)} /><Mic size={15} /><span>Share microphone for this session</span></label>
             <label className="realtime-consent"><input type="checkbox" checked={screenConsent} onChange={(event) => setScreenConsent(event.target.checked)} /><Monitor size={15} /><span>Share only the selected game window</span></label>
@@ -645,20 +643,23 @@ function deviceId(): string {
   return created;
 }
 
-function providerLabel(provider?: DesktopPreferences["realtime_provider"]): string {
+function providerLabel(provider?: DesktopPreferences["realtime_cloud_provider"]): string {
   if (provider === "gemini_live") return "Gemini Live";
   if (provider === "glm_realtime_air") return "GLM Realtime Air";
-  if (provider === "glm_realtime_flash") return "GLM Realtime Flash";
-  return "Auto · Chinese uses GLM Flash";
+  return "GLM Realtime Flash";
+}
+
+function voiceOutputLabel(output?: DesktopPreferences["realtime_voice_output"]): string {
+  if (output === "fairy_voice") return "Fairy voice";
+  if (output === "text_only") return "Text only";
+  return "Provider voice";
 }
 
 export function credentialProviderFor(
-  provider: DesktopPreferences["realtime_provider"],
-  locale: string,
+  provider: DesktopPreferences["realtime_cloud_provider"],
 ): RealtimeCredentialProvider {
   if (provider === "gemini_live") return "gemini";
-  if (provider === "glm_realtime_air" || provider === "glm_realtime_flash") return "zhipu";
-  return locale.toLowerCase().startsWith("zh") ? "zhipu" : "gemini";
+  return "zhipu";
 }
 
 export function realtimeProviderErrorMessage(code?: string | null): string {

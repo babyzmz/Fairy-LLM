@@ -14,7 +14,7 @@ import {
 const invoke = vi.fn();
 const voiceMocks = vi.hoisted(() => ({ startRealtimeVoice: vi.fn() }));
 let eventListener: ((event: { payload: Record<string, unknown> }) => void) | null = null;
-let realtimeVoiceMode: "native" | "fairy" = "native";
+let realtimeVoiceOutput: "provider_native_voice" | "fairy_voice" = "provider_native_voice";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -72,16 +72,24 @@ describe("RealtimeCompanion", () => {
       finished: Promise.resolve(),
       stop: vi.fn(),
     });
-    realtimeVoiceMode = "native";
+    realtimeVoiceOutput = "provider_native_voice";
     localStorage.clear();
     localStorage.setItem("fairy.realtime.device-id", "test-device");
     invoke.mockImplementation(async (command: string) => {
       if (command === "desktop_preferences_get") return {
-        realtime_provider: "auto",
-        realtime_voice_mode: realtimeVoiceMode,
+        realtime_beta_enabled: true,
+        realtime_backend: "cloud_live",
+        realtime_cloud_provider: "glm_realtime_flash",
+        realtime_allow_cloud_fallback: false,
+        realtime_activity_profile: "auto",
+        realtime_interaction_intensity: "standard",
+        realtime_voice_output: realtimeVoiceOutput,
         realtime_game_audio_default: false,
+        realtime_online_assistance_enabled: false,
         realtime_memory_enabled: true,
-        realtime_max_session_minutes: 30,
+        realtime_presence_max_minutes: 240,
+        realtime_cloud_daily_limit_minutes: 180,
+        realtime_local_keep_warm_minutes: 10,
       };
       if (command === "list_capture_surfaces") return [{
         kind: "window", source_id: "42", label: "Test Game", width: 1280, height: 720,
@@ -377,7 +385,7 @@ describe("RealtimeCompanion", () => {
   });
 
   it("stops queued Fairy playback immediately on the shared barge-in event", async () => {
-    realtimeVoiceMode = "fairy";
+    realtimeVoiceOutput = "fairy_voice";
     let finishPlayback!: () => void;
     const stopPlayback = vi.fn();
     voiceMocks.startRealtimeVoice.mockResolvedValue({
@@ -483,11 +491,10 @@ describe("RealtimeCompanion", () => {
 });
 
 describe("credentialProviderFor", () => {
-  it("selects the account used by Auto and manual provider modes", () => {
-    expect(credentialProviderFor("auto", "zh-CN")).toBe("zhipu");
-    expect(credentialProviderFor("auto", "en-AU")).toBe("gemini");
-    expect(credentialProviderFor("glm_realtime_air", "en-AU")).toBe("zhipu");
-    expect(credentialProviderFor("gemini_live", "zh-CN")).toBe("gemini");
+  it("selects the account used by the explicit cloud provider", () => {
+    expect(credentialProviderFor("glm_realtime_flash")).toBe("zhipu");
+    expect(credentialProviderFor("glm_realtime_air")).toBe("zhipu");
+    expect(credentialProviderFor("gemini_live")).toBe("gemini");
   });
 });
 
