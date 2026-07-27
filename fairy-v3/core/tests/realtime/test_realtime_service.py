@@ -127,12 +127,195 @@ def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
                 "next_goal": "Start chapter one.",
             },
         )
-        assert memory["accepted"] is True
+        assert memory["accepted"] is False
+        projected = service.invoke(
+            "realtime.digests.get",
+            {"digest_id": memory["id"]},
+        )
+        assert projected["activity"] == "game"
+        assert projected["policy_version"] == "legacy-game-memory-v1"
         assert service.invoke("realtime.memories.list", {})["items"][0]["id"] == memory["id"]
         assert (
             service.invoke("realtime.memories.delete", {"memory_id": memory["id"]})["deleted"]
             is True
         )
+    finally:
+        service.close()
+
+
+def test_companion_digest_is_stable_only_idempotent_and_session_scoped(tmp_path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        started = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-digest",
+                "provider": "auto",
+                "locale": "zh-CN",
+                "microphone_consent": True,
+                "screen_consent": True,
+                "idempotency_key": "digest-session",
+            },
+        )
+        first = service.invoke(
+            "realtime.transcript.append",
+            {
+                "session_id": started["id"],
+                "speaker": "user",
+                "text": "Finished the tutorial. Next goal is chapter one.",
+            },
+        )
+        second = service.invoke(
+            "realtime.transcript.append",
+            {
+                "session_id": started["id"],
+                "speaker": "assistant",
+                "text": "教学关已经完成。",
+            },
+        )
+        active = service.invoke(
+            "realtime.sessions.report",
+            {
+                "session_id": started["id"],
+                "status": "active",
+                "expected_revision": started["revision"],
+            },
+        )
+        stopping = service.invoke(
+            "realtime.sessions.stop",
+            {
+                "session_id": started["id"],
+                "expected_revision": active["revision"],
+            },
+        )
+        completed = service.invoke(
+            "realtime.sessions.report",
+            {
+                "session_id": started["id"],
+                "status": "completed",
+                "expected_revision": stopping["revision"],
+            },
+        )
+        digest = service.invoke(
+            "realtime.digests.create",
+            {
+                "session_id": started["id"],
+                "request_id": "digest-1",
+                "activity": "game",
+                "subject_title": "A Test Game",
+            },
+        )
+        replay = service.invoke(
+            "realtime.digests.create",
+            {
+                "session_id": started["id"],
+                "request_id": "digest-1",
+                "activity": "game",
+                "subject_title": "A Test Game",
+            },
+        )
+
+        assert replay["id"] == digest["id"]
+        assert digest["conversation_id"] == started["conversation_id"]
+        assert digest["source_first_sequence"] == first["sequence"]
+        assert digest["source_last_sequence"] == second["sequence"]
+        assert len(digest["source_digest"]) == 64
+        assert digest["next_goal"] == "Finished the tutorial. Next goal is chapter one."
+        assert digest["progress_summary"] == "Finished the tutorial. Next goal is chapter one."
+        assert digest["proposal_ids"] == []
+        assert (
+            service.invoke(
+                "realtime.digests.get",
+                {"digest_id": digest["id"]},
+            )
+            == digest
+        )
+        listed = service.invoke(
+            "realtime.digests.list",
+            {"session_id": started["id"]},
+        )
+        assert [item["id"] for item in listed["items"]] == [digest["id"]]
+
+        with pytest.raises(IdempotencyConflictError):
+            service.invoke(
+                "realtime.digests.create",
+                {
+                    "session_id": started["id"],
+                    "request_id": "digest-1",
+                    "activity": "focus",
+                    "subject_title": "A Test Game",
+                },
+            )
+        with pytest.raises(InvalidTransitionError):
+            service.invoke(
+                "realtime.transcript.append",
+                {
+                    "session_id": started["id"],
+                    "speaker": "user",
+                    "text": "This late caption must not mutate digest evidence.",
+                },
+            )
+        assert completed["status"] == "completed"
+    finally:
+        service.close()
+
+
+def test_companion_digest_requires_transcript_and_memory_policy(tmp_path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        started = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-empty-digest",
+                "provider": "auto",
+                "locale": "en-AU",
+                "memory_mode": "none",
+                "microphone_consent": True,
+                "idempotency_key": "empty-digest-session",
+            },
+        )
+        cancelled = service.invoke(
+            "realtime.sessions.stop",
+            {
+                "session_id": started["id"],
+                "expected_revision": started["revision"],
+            },
+        )
+        with pytest.raises(ValueError, match="disabled"):
+            service.invoke(
+                "realtime.digests.create",
+                {
+                    "session_id": started["id"],
+                    "request_id": "digest-disabled",
+                },
+            )
+        assert cancelled["status"] == "cancelled"
+
+        enabled = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-empty-enabled",
+                "provider": "auto",
+                "locale": "en-AU",
+                "microphone_consent": True,
+                "idempotency_key": "empty-enabled-session",
+            },
+        )
+        service.invoke(
+            "realtime.sessions.stop",
+            {
+                "session_id": enabled["id"],
+                "expected_revision": enabled["revision"],
+            },
+        )
+        with pytest.raises(ValueError, match="stable public transcript"):
+            service.invoke(
+                "realtime.digests.create",
+                {
+                    "session_id": enabled["id"],
+                    "request_id": "digest-empty",
+                },
+            )
     finally:
         service.close()
 

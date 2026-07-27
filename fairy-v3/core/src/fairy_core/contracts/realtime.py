@@ -9,6 +9,7 @@ from pydantic import Field, model_validator
 
 from fairy_core.contracts.common import ContractModel
 from fairy_core.realtime.models import (
+    CompanionDigestActivity,
     RealtimeAssistanceStatus,
     RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
@@ -160,6 +161,50 @@ class RealtimeAssistanceModel(ContractModel):
     revision: int
 
 
+class CompanionDigestCreateInput(ContractModel):
+    session_id: UUID
+    request_id: str = Field(min_length=1, max_length=128)
+    activity: CompanionDigestActivity = CompanionDigestActivity.AUTO
+    subject_title: str | None = Field(default=None, min_length=1, max_length=160)
+
+
+class CompanionDigestGetInput(ContractModel):
+    digest_id: UUID
+
+
+class CompanionDigestListInput(ContractModel):
+    session_id: UUID | None = None
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class CompanionSessionDigestModel(ContractModel):
+    id: UUID
+    session_id: UUID
+    conversation_id: UUID
+    request_id: str
+    activity: CompanionDigestActivity
+    subject_title: str | None
+    started_at: datetime
+    ended_at: datetime
+    duration_seconds: int
+    activities: tuple[str, ...]
+    progress_summary: str
+    unresolved_issue: str | None
+    next_goal: str | None
+    notable_outcome: str | None
+    source_first_sequence: int
+    source_last_sequence: int
+    source_digest: str
+    policy_version: str
+    proposal_ids: tuple[UUID, ...]
+    created_at: datetime
+    revision: int
+
+
+class CompanionSessionDigestPageModel(ContractModel):
+    items: tuple[CompanionSessionDigestModel, ...]
+
+
 class GameMemorySaveInput(ContractModel):
     session_id: UUID
     game_title: str = Field(min_length=1, max_length=160)
@@ -228,6 +273,11 @@ class RealtimeTranscriptPageModel(ContractModel):
 
 
 __all__ = [
+    "CompanionDigestCreateInput",
+    "CompanionDigestGetInput",
+    "CompanionDigestListInput",
+    "CompanionSessionDigestModel",
+    "CompanionSessionDigestPageModel",
     "GameMemoryDeleteResult",
     "GameMemoryDigestModel",
     "GameMemoryIdInput",

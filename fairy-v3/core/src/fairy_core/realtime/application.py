@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+from datetime import timedelta
+from hashlib import sha256
+
 from fairy_core.commanding import EventVisibility
 from fairy_core.contracts.realtime import (
+    CompanionDigestCreateInput,
     GameMemorySaveInput,
     RealtimeAssistanceRequestInput,
     RealtimeProviderSelection,
@@ -12,15 +17,26 @@ from fairy_core.contracts.realtime import (
 from fairy_core.domain.errors import InvalidTransitionError, VersionConflictError
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.realtime.models import (
+    CompanionDigestActivity,
+    CompanionSessionDigest,
     GameMemoryDigest,
     RealtimeAssistance,
     RealtimeAssistanceStatus,
+    RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
     RealtimeProvider,
     RealtimeSession,
     RealtimeSessionStatus,
     RealtimeTranscriptEntry,
 )
+
+_DIGEST_POLICY_VERSION = "companion-digest-v1"
+_TERMINAL_SESSION_STATUSES = {
+    RealtimeSessionStatus.COMPLETED,
+    RealtimeSessionStatus.FAILED,
+    RealtimeSessionStatus.CANCELLED,
+    RealtimeSessionStatus.INTERRUPTED,
+}
 
 _MODEL_BY_PROVIDER = {
     RealtimeProvider.LOCAL_MINI_CPM_O45: "openbmb/minicpm-o-4.5-fairy-beta@4.5-q4-502eec5",
@@ -255,12 +271,7 @@ class RealtimeApplication:
                 raise KeyError(f"realtime session not found: {request.session_id}")
             if session.memory_mode is RealtimeMemoryMode.NONE:
                 raise ValueError("memory persistence is disabled for this session")
-            if session.status not in {
-                RealtimeSessionStatus.COMPLETED,
-                RealtimeSessionStatus.FAILED,
-                RealtimeSessionStatus.CANCELLED,
-                RealtimeSessionStatus.INTERRUPTED,
-            }:
+            if session.status not in _TERMINAL_SESSION_STATUSES:
                 raise InvalidTransitionError("game memory can only be saved after the session ends")
             memory = GameMemoryDigest.create(
                 session_id=session.id,
@@ -271,11 +282,114 @@ class RealtimeApplication:
                 progress_summary=request.progress_summary,
                 next_goal=request.next_goal,
                 notable_outcome=request.notable_outcome,
-                accepted=True,
+                accepted=False,
             )
             saved = unit_of_work.realtime.add_memory(memory)
             unit_of_work.commit()
             return saved
+
+    def create_digest(
+        self,
+        request: CompanionDigestCreateInput,
+    ) -> CompanionSessionDigest:
+        with self._unit_of_work_factory() as unit_of_work:
+            session = unit_of_work.realtime.get_session(request.session_id)
+            if session is None:
+                raise KeyError(f"realtime session not found: {request.session_id}")
+            if session.memory_mode is RealtimeMemoryMode.NONE:
+                raise ValueError("memory persistence is disabled for this session")
+            if session.status not in _TERMINAL_SESSION_STATUSES or session.ended_at is None:
+                raise InvalidTransitionError(
+                    "companion digest can only be created after the session ends"
+                )
+            if session.conversation_id is None:
+                raise ValueError("realtime session has no linked conversation")
+            entries = unit_of_work.realtime.list_transcript_by_session(
+                session.id,
+                limit=2_000,
+            )
+            if not entries:
+                raise ValueError("companion digest requires stable public transcript entries")
+            if any(entry.conversation_id != session.conversation_id for entry in entries):
+                raise ValueError("realtime transcript is outside the session conversation")
+            summary = _deterministic_digest_summary(entries)
+            source_digest = _transcript_source_digest(entries)
+            candidate = CompanionSessionDigest.create(
+                session_id=session.id,
+                conversation_id=session.conversation_id,
+                request_id=request.request_id,
+                activity=request.activity,
+                subject_title=request.subject_title,
+                started_at=session.started_at,
+                ended_at=session.ended_at,
+                activities=summary["activities"],
+                progress_summary=summary["progress_summary"],
+                unresolved_issue=summary["unresolved_issue"],
+                next_goal=summary["next_goal"],
+                notable_outcome=summary["notable_outcome"],
+                source_first_sequence=entries[0].sequence,
+                source_last_sequence=entries[-1].sequence,
+                source_digest=source_digest,
+                policy_version=_DIGEST_POLICY_VERSION,
+            )
+            saved = unit_of_work.realtime.add_digest(candidate)
+            if saved.id == candidate.id:
+                unit_of_work.commands.append_domain_event(
+                    event_type="realtime.digest.created",
+                    visibility=EventVisibility.USER,
+                    message="Realtime companion session digest created",
+                    payload={
+                        "session_id": str(session.id),
+                        "conversation_id": str(session.conversation_id),
+                        "digest_id": str(saved.id),
+                        "activity": saved.activity.value,
+                        "source_first_sequence": saved.source_first_sequence,
+                        "source_last_sequence": saved.source_last_sequence,
+                        "source_digest": saved.source_digest,
+                        "policy_version": saved.policy_version,
+                    },
+                    actor="realtime",
+                    conversation_id=session.conversation_id,
+                )
+            unit_of_work.commit()
+            return saved
+
+    def get_digest(self, digest_id) -> CompanionSessionDigest:
+        with self._unit_of_work_factory() as unit_of_work:
+            digest = unit_of_work.realtime.get_digest(digest_id)
+            if digest is not None:
+                return digest
+            legacy = unit_of_work.realtime.get_memory(digest_id)
+            if legacy is None:
+                raise KeyError(f"companion digest not found: {digest_id}")
+            session = unit_of_work.realtime.get_session(legacy.session_id)
+            if session is None or session.conversation_id is None:
+                raise KeyError(f"realtime session not found: {legacy.session_id}")
+            return _project_game_memory(legacy, session.conversation_id)
+
+    def list_digests(
+        self,
+        *,
+        session_id=None,
+        limit: int,
+    ) -> tuple[CompanionSessionDigest, ...]:
+        with self._unit_of_work_factory() as unit_of_work:
+            persisted = list(
+                unit_of_work.realtime.list_digests(
+                    session_id=session_id,
+                    limit=limit,
+                )
+            )
+            legacy = unit_of_work.realtime.list_memories(limit=limit)
+            for memory in legacy:
+                if session_id is not None and memory.session_id != session_id:
+                    continue
+                session = unit_of_work.realtime.get_session(memory.session_id)
+                if session is None or session.conversation_id is None:
+                    continue
+                persisted.append(_project_game_memory(memory, session.conversation_id))
+            persisted.sort(key=lambda value: (value.created_at, str(value.id)), reverse=True)
+            return tuple(persisted[:limit])
 
     def list_memories(self, *, limit: int) -> tuple[GameMemoryDigest, ...]:
         with self._unit_of_work_factory() as unit_of_work:
@@ -288,6 +402,10 @@ class RealtimeApplication:
                 raise KeyError(f"realtime session not found: {request.session_id}")
             if session.conversation_id is None:
                 raise ValueError("realtime session has no linked conversation")
+            if session.status in _TERMINAL_SESSION_STATUSES:
+                raise InvalidTransitionError(
+                    "stable transcript cannot be appended after the session ends"
+                )
             entry = unit_of_work.realtime.append_transcript(
                 session_id=session.id,
                 conversation_id=session.conversation_id,
@@ -333,6 +451,122 @@ def _resolve_provider(selection: RealtimeProviderSelection, locale: str) -> Real
             else RealtimeProvider.GEMINI_LIVE
         )
     return RealtimeProvider(selection.value)
+
+
+def _truncate(value: str, maximum: int) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= maximum:
+        return normalized
+    return normalized[: maximum - 1].rstrip() + "…"
+
+
+def _deterministic_digest_summary(
+    entries: tuple[RealtimeTranscriptEntry, ...],
+) -> dict[str, object]:
+    user_entries = tuple(
+        entry.text for entry in entries if entry.speaker is RealtimeCaptionSpeaker.USER
+    )
+    source = user_entries or tuple(entry.text for entry in entries)
+    activities = tuple(_truncate(value, 160) for value in source[-12:])
+    progress_summary = _truncate(" ".join(source[-6:]), 1_200)
+    unresolved_issue = next(
+        (
+            _truncate(value, 500)
+            for value in reversed(user_entries)
+            if "?" in value or "\uff1f" in value
+        ),
+        None,
+    )
+    next_goal = next(
+        (
+            _truncate(value, 500)
+            for value in reversed(user_entries)
+            if any(
+                marker in value.casefold()
+                for marker in ("next", "goal", "接下来", "下一步", "下次", "目标")
+            )
+        ),
+        None,
+    )
+    notable_outcome = next(
+        (
+            _truncate(value, 500)
+            for value in reversed(tuple(entry.text for entry in entries))
+            if any(
+                marker in value.casefold()
+                for marker in ("complete", "finished", "passed", "success", "完成", "通过", "成功")
+            )
+        ),
+        None,
+    )
+    return {
+        "activities": activities,
+        "progress_summary": progress_summary,
+        "unresolved_issue": unresolved_issue,
+        "next_goal": next_goal,
+        "notable_outcome": notable_outcome,
+    }
+
+
+def _transcript_source_digest(entries: tuple[RealtimeTranscriptEntry, ...]) -> str:
+    canonical = tuple(
+        {
+            "sequence": entry.sequence,
+            "speaker": entry.speaker.value,
+            "text": entry.text,
+        }
+        for entry in entries
+    )
+    return sha256(
+        json.dumps(
+            canonical,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _project_game_memory(
+    memory: GameMemoryDigest,
+    conversation_id,
+) -> CompanionSessionDigest:
+    source_digest = sha256(
+        json.dumps(
+            {
+                "legacy_game_memory_id": str(memory.id),
+                "session_id": str(memory.session_id),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_id = f"legacy:{memory.id}"
+    request_fingerprint = sha256(request_id.encode("utf-8")).hexdigest()
+    return CompanionSessionDigest(
+        id=memory.id,
+        session_id=memory.session_id,
+        conversation_id=conversation_id,
+        request_id=request_id,
+        request_fingerprint=request_fingerprint,
+        activity=CompanionDigestActivity.GAME,
+        subject_title=memory.game_title,
+        started_at=memory.played_at,
+        ended_at=memory.played_at + timedelta(seconds=memory.duration_seconds),
+        duration_seconds=memory.duration_seconds,
+        activities=memory.activities,
+        progress_summary=memory.progress_summary,
+        unresolved_issue=None,
+        next_goal=memory.next_goal,
+        notable_outcome=memory.notable_outcome,
+        source_first_sequence=1,
+        source_last_sequence=1,
+        source_digest=source_digest,
+        policy_version="legacy-game-memory-v1",
+        proposal_ids=(),
+        created_at=memory.created_at,
+        revision=1,
+    )
 
 
 __all__ = ["RealtimeApplication"]

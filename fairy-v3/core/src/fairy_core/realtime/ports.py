@@ -4,6 +4,7 @@ from typing import Protocol
 from uuid import UUID
 
 from fairy_core.realtime.models import (
+    CompanionSessionDigest,
     GameMemoryDigest,
     RealtimeAssistance,
     RealtimeCaptionSpeaker,
@@ -41,6 +42,18 @@ class RealtimeRepository(Protocol):
         self, assistance: RealtimeAssistance, *, expected_revision: int
     ) -> RealtimeAssistance: ...
 
+    def add_digest(self, digest: CompanionSessionDigest) -> CompanionSessionDigest: ...
+
+    def get_digest(self, digest_id: UUID) -> CompanionSessionDigest | None: ...
+
+    def get_digest_by_request(
+        self, session_id: UUID, request_id: str
+    ) -> CompanionSessionDigest | None: ...
+
+    def list_digests(
+        self, *, session_id: UUID | None = None, limit: int = 50
+    ) -> tuple[CompanionSessionDigest, ...]: ...
+
     def add_memory(self, memory: GameMemoryDigest) -> GameMemoryDigest: ...
 
     def get_memory(self, memory_id: UUID) -> GameMemoryDigest | None: ...
@@ -60,6 +73,10 @@ class RealtimeRepository(Protocol):
 
     def list_transcript_by_conversation(
         self, conversation_id: UUID, *, limit: int = 500
+    ) -> tuple[RealtimeTranscriptEntry, ...]: ...
+
+    def list_transcript_by_session(
+        self, session_id: UUID, *, limit: int = 2_000
     ) -> tuple[RealtimeTranscriptEntry, ...]: ...
 
 

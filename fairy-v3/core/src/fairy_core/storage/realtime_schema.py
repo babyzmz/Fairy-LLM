@@ -20,7 +20,7 @@ from fairy_core.persistence.tenant import TENANT_ID_LENGTH
 from fairy_core.storage.types import UTCDateTime
 
 
-def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table]:
+def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table]:
     sessions = Table(
         "core_realtime_sessions",
         metadata,
@@ -90,6 +90,65 @@ def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Tabl
             "duration_seconds BETWEEN 0 AND 86400",
             name="ck_core_game_memory_observations_duration",
         ),
+    )
+    digests = Table(
+        "core_companion_session_digests",
+        metadata,
+        Column("tenant_id", String(TENANT_ID_LENGTH), primary_key=True),
+        Column("id", String(36), primary_key=True),
+        Column("session_id", String(36), nullable=False),
+        Column("conversation_id", String(36), nullable=False),
+        Column("request_id", String(128), nullable=False),
+        Column("request_fingerprint", String(64), nullable=False),
+        Column("activity", String(16), nullable=False),
+        Column("subject_title", String(160)),
+        Column("started_at", UTCDateTime(), nullable=False),
+        Column("ended_at", UTCDateTime(), nullable=False),
+        Column("duration_seconds", BigInteger, nullable=False),
+        Column("activities", JSON, nullable=False),
+        Column("progress_summary", String(1_200), nullable=False),
+        Column("unresolved_issue", String(500)),
+        Column("next_goal", String(500)),
+        Column("notable_outcome", String(500)),
+        Column("source_first_sequence", BigInteger, nullable=False),
+        Column("source_last_sequence", BigInteger, nullable=False),
+        Column("source_digest", String(64), nullable=False),
+        Column("policy_version", String(64), nullable=False),
+        Column("proposal_ids", JSON, nullable=False),
+        Column("created_at", UTCDateTime(), nullable=False),
+        Column("revision", BigInteger, nullable=False),
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_core_companion_session_digests"),
+        UniqueConstraint(
+            "tenant_id",
+            "session_id",
+            "request_id",
+            name="uq_core_companion_session_digests_request",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "session_id"],
+            ["core_realtime_sessions.tenant_id", "core_realtime_sessions.id"],
+            name="fk_core_companion_session_digests_session",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["core_conversations.tenant_id", "core_conversations.id"],
+            name="fk_core_companion_session_digests_conversation",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "activity IN ('auto', 'game', 'focus')",
+            name="ck_core_companion_session_digests_activity",
+        ),
+        CheckConstraint(
+            "duration_seconds BETWEEN 0 AND 86400",
+            name="ck_core_companion_session_digests_duration",
+        ),
+        CheckConstraint(
+            "source_first_sequence >= 1 AND source_last_sequence >= source_first_sequence",
+            name="ck_core_companion_session_digests_source_range",
+        ),
+        CheckConstraint("revision >= 1", name="ck_core_companion_session_digests_revision"),
     )
     # Local-only, reviewable transcript of a voice session's stable public
     # captions. Raw audio, frames, VAD, partial captions, and hidden reasoning
@@ -192,6 +251,12 @@ def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Tabl
         memories.c.played_at,
     )
     Index(
+        "ix_core_companion_session_digests_session_created",
+        digests.c.tenant_id,
+        digests.c.session_id,
+        digests.c.created_at,
+    )
+    Index(
         "ix_core_realtime_transcript_conversation",
         transcript.c.tenant_id,
         transcript.c.conversation_id,
@@ -210,7 +275,7 @@ def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Tabl
         assistance.c.conversation_id,
         assistance.c.created_at,
     )
-    return sessions, memories, transcript, assistance
+    return sessions, memories, digests, transcript, assistance
 
 
 __all__ = ["build_realtime_tables"]

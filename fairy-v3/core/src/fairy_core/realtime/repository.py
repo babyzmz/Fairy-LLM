@@ -10,6 +10,8 @@ from sqlalchemy.exc import IntegrityError
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.realtime.models import (
+    CompanionDigestActivity,
+    CompanionSessionDigest,
     GameMemoryDigest,
     RealtimeAssistance,
     RealtimeAssistanceCitation,
@@ -23,6 +25,7 @@ from fairy_core.realtime.models import (
     RealtimeVoiceMode,
 )
 from fairy_core.storage.schema import (
+    companion_session_digests,
     game_memory_observations,
     realtime_assistance,
     realtime_sessions,
@@ -216,6 +219,72 @@ class SqlAlchemyRealtimeRepository:
             raise VersionConflictError("realtime assistance revision changed")
         return assistance
 
+    def add_digest(self, digest: CompanionSessionDigest) -> CompanionSessionDigest:
+        try:
+            self._connection.execute(
+                insert(companion_session_digests).values(**_digest_values(self._tenant_id, digest))
+            )
+        except IntegrityError as error:
+            existing = self.get_digest_by_request(digest.session_id, digest.request_id)
+            if existing is not None and existing.same_request(digest):
+                return existing
+            raise IdempotencyConflictError(
+                "companion digest request id is already in use"
+            ) from error
+        return digest
+
+    def get_digest(self, digest_id: UUID) -> CompanionSessionDigest | None:
+        row = (
+            self._connection.execute(
+                select(companion_session_digests).where(
+                    companion_session_digests.c.tenant_id == self._tenant_id,
+                    companion_session_digests.c.id == str(digest_id),
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _digest_from_row(row) if row is not None else None
+
+    def get_digest_by_request(
+        self,
+        session_id: UUID,
+        request_id: str,
+    ) -> CompanionSessionDigest | None:
+        row = (
+            self._connection.execute(
+                select(companion_session_digests).where(
+                    companion_session_digests.c.tenant_id == self._tenant_id,
+                    companion_session_digests.c.session_id == str(session_id),
+                    companion_session_digests.c.request_id == request_id,
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _digest_from_row(row) if row is not None else None
+
+    def list_digests(
+        self,
+        *,
+        session_id: UUID | None = None,
+        limit: int = 50,
+    ) -> tuple[CompanionSessionDigest, ...]:
+        if limit < 1 or limit > 200:
+            raise ValueError("companion digest limit must be between 1 and 200")
+        query = select(companion_session_digests).where(
+            companion_session_digests.c.tenant_id == self._tenant_id
+        )
+        if session_id is not None:
+            query = query.where(companion_session_digests.c.session_id == str(session_id))
+        rows = self._connection.execute(
+            query.order_by(
+                companion_session_digests.c.created_at.desc(),
+                companion_session_digests.c.id.desc(),
+            ).limit(limit)
+        ).mappings()
+        return tuple(_digest_from_row(row) for row in rows)
+
     def add_memory(self, memory: GameMemoryDigest) -> GameMemoryDigest:
         self._connection.execute(
             insert(game_memory_observations).values(
@@ -319,6 +388,28 @@ class SqlAlchemyRealtimeRepository:
         ).mappings()
         return tuple(_transcript_from_row(row) for row in rows)
 
+    def list_transcript_by_session(
+        self,
+        session_id: UUID,
+        *,
+        limit: int = 2_000,
+    ) -> tuple[RealtimeTranscriptEntry, ...]:
+        if limit < 1 or limit > 2_000:
+            raise ValueError("transcript limit must be between 1 and 2000")
+        rows = self._connection.execute(
+            select(realtime_transcript_entries)
+            .where(
+                realtime_transcript_entries.c.tenant_id == self._tenant_id,
+                realtime_transcript_entries.c.session_id == str(session_id),
+            )
+            .order_by(
+                realtime_transcript_entries.c.sequence,
+                realtime_transcript_entries.c.id,
+            )
+            .limit(limit)
+        ).mappings()
+        return tuple(_transcript_from_row(row) for row in rows)
+
     def _next_transcript_sequence(self, session_id: UUID) -> int:
         current = self._connection.execute(
             select(func.coalesce(func.max(realtime_transcript_entries.c.sequence), 0)).where(
@@ -390,6 +481,37 @@ def _assistance_values(
         "created_at": assistance.created_at,
         "updated_at": assistance.updated_at,
         "revision": assistance.revision,
+    }
+
+
+def _digest_values(
+    tenant_id: str,
+    digest: CompanionSessionDigest,
+) -> dict[str, object]:
+    return {
+        "tenant_id": tenant_id,
+        "id": str(digest.id),
+        "session_id": str(digest.session_id),
+        "conversation_id": str(digest.conversation_id),
+        "request_id": digest.request_id,
+        "request_fingerprint": digest.request_fingerprint,
+        "activity": digest.activity.value,
+        "subject_title": digest.subject_title,
+        "started_at": digest.started_at,
+        "ended_at": digest.ended_at,
+        "duration_seconds": digest.duration_seconds,
+        "activities": list(digest.activities),
+        "progress_summary": digest.progress_summary,
+        "unresolved_issue": digest.unresolved_issue,
+        "next_goal": digest.next_goal,
+        "notable_outcome": digest.notable_outcome,
+        "source_first_sequence": digest.source_first_sequence,
+        "source_last_sequence": digest.source_last_sequence,
+        "source_digest": digest.source_digest,
+        "policy_version": digest.policy_version,
+        "proposal_ids": [str(value) for value in digest.proposal_ids],
+        "created_at": digest.created_at,
+        "revision": digest.revision,
     }
 
 
@@ -492,6 +614,33 @@ def _transcript_values(tenant_id: str, entry: RealtimeTranscriptEntry) -> dict[s
         "text": entry.text,
         "created_at": entry.created_at,
     }
+
+
+def _digest_from_row(row: Mapping[str, object]) -> CompanionSessionDigest:
+    return CompanionSessionDigest(
+        id=UUID(str(row["id"])),
+        session_id=UUID(str(row["session_id"])),
+        conversation_id=UUID(str(row["conversation_id"])),
+        request_id=str(row["request_id"]),
+        request_fingerprint=str(row["request_fingerprint"]),
+        activity=CompanionDigestActivity(str(row["activity"])),
+        subject_title=str(row["subject_title"]) if row["subject_title"] else None,
+        started_at=row["started_at"],  # type: ignore[arg-type]
+        ended_at=row["ended_at"],  # type: ignore[arg-type]
+        duration_seconds=int(row["duration_seconds"]),
+        activities=tuple(str(value) for value in row["activities"]),  # type: ignore[union-attr]
+        progress_summary=str(row["progress_summary"]),
+        unresolved_issue=(str(row["unresolved_issue"]) if row["unresolved_issue"] else None),
+        next_goal=str(row["next_goal"]) if row["next_goal"] else None,
+        notable_outcome=(str(row["notable_outcome"]) if row["notable_outcome"] else None),
+        source_first_sequence=int(row["source_first_sequence"]),
+        source_last_sequence=int(row["source_last_sequence"]),
+        source_digest=str(row["source_digest"]),
+        policy_version=str(row["policy_version"]),
+        proposal_ids=tuple(UUID(str(value)) for value in row["proposal_ids"]),  # type: ignore[union-attr]
+        created_at=row["created_at"],  # type: ignore[arg-type]
+        revision=int(row["revision"]),
+    )
 
 
 def _transcript_from_row(row: Mapping[str, object]) -> RealtimeTranscriptEntry:

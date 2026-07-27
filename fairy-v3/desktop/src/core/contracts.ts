@@ -12,6 +12,11 @@ import type {
   BrowserSessionStartInput,
   BrowserSnapshot,
   BrowserWorkerHealth,
+  CompanionDigestCreateInput,
+  CompanionDigestGetInput,
+  CompanionDigestListInput,
+  CompanionSessionDigest,
+  CompanionSessionDigestPage,
   KnowledgeSyncRun,
   KnowledgeSyncRunInput,
   KnowledgeSyncStartInput,
@@ -51,6 +56,12 @@ export type {
   BrowserSnapshot,
   BrowserTab,
   BrowserWorkerHealth,
+  CompanionDigestActivity,
+  CompanionDigestCreateInput,
+  CompanionDigestGetInput,
+  CompanionDigestListInput,
+  CompanionSessionDigest,
+  CompanionSessionDigestPage,
   DialogueSource,
   DialogueTrigger,
   GeneratedDialogueRequest,
@@ -712,6 +723,18 @@ export interface CoreMethodMap {
   "realtime.assistance.cancel": {
     params: RealtimeAssistanceCancelInput;
     result: RealtimeAssistance;
+  };
+  "realtime.digests.create": {
+    params: CompanionDigestCreateInput;
+    result: CompanionSessionDigest;
+  };
+  "realtime.digests.get": {
+    params: CompanionDigestGetInput;
+    result: CompanionSessionDigest;
+  };
+  "realtime.digests.list": {
+    params: CompanionDigestListInput;
+    result: CompanionSessionDigestPage;
   };
   "realtime.memories.save": { params: GameMemorySaveInput; result: GameMemoryDigest };
   "realtime.memories.list": { params: { limit?: number }; result: GameMemoryPage };

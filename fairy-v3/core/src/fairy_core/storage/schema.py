@@ -124,6 +124,7 @@ conversations = Table(
 (
     realtime_sessions,
     game_memory_observations,
+    companion_session_digests,
     realtime_transcript_entries,
     realtime_assistance,
 ) = build_realtime_tables(state_metadata)

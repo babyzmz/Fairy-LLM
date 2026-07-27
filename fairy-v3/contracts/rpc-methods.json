@@ -805,6 +805,24 @@
       "transport": "local_only"
     },
     {
+      "name": "realtime.digests.create",
+      "request_model": "CompanionDigestCreateInput",
+      "response_model": "CompanionSessionDigestModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "realtime.digests.get",
+      "request_model": "CompanionDigestGetInput",
+      "response_model": "CompanionSessionDigestModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "realtime.digests.list",
+      "request_model": "CompanionDigestListInput",
+      "response_model": "CompanionSessionDigestPageModel",
+      "transport": "local_only"
+    },
+    {
       "name": "realtime.memories.delete",
       "request_model": "GameMemoryIdInput",
       "response_model": "GameMemoryDeleteResult",

@@ -22,6 +22,9 @@ from fairy_core.contracts.persona import (
     RealtimePersonaSnapshotModel,
 )
 from fairy_core.contracts.realtime import (
+    CompanionDigestCreateInput,
+    CompanionDigestGetInput,
+    CompanionDigestListInput,
     GameMemoryIdInput,
     GameMemoryListInput,
     GameMemorySaveInput,
@@ -92,6 +95,9 @@ class RealtimeService:
                 "realtime.assistance.cancel": self.cancel_assistance,
                 "realtime.assistance.get": self.get_assistance,
                 "realtime.assistance.request": self.request_assistance,
+                "realtime.digests.create": self.create_digest,
+                "realtime.digests.get": self.get_digest,
+                "realtime.digests.list": self.list_digests,
                 "realtime.sessions.start": self.start,
                 "realtime.sessions.get": self.get,
                 "realtime.sessions.list": self.list,
@@ -405,6 +411,22 @@ class RealtimeService:
 
     def save_memory(self, request: BaseModel):
         return self._application.save_memory(cast(GameMemorySaveInput, request))
+
+    def create_digest(self, request: BaseModel):
+        return self._application.create_digest(cast(CompanionDigestCreateInput, request))
+
+    def get_digest(self, request: BaseModel):
+        validated = cast(CompanionDigestGetInput, request)
+        return self._application.get_digest(validated.digest_id)
+
+    def list_digests(self, request: BaseModel):
+        validated = cast(CompanionDigestListInput, request)
+        return {
+            "items": self._application.list_digests(
+                session_id=validated.session_id,
+                limit=validated.limit,
+            )
+        }
 
     def list_memories(self, request: BaseModel):
         validated = cast(GameMemoryListInput, request)

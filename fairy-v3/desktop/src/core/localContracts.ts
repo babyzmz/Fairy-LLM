@@ -240,6 +240,52 @@ export interface RealtimeTranscriptPage {
   items: RealtimeTranscriptEntry[];
 }
 
+export type CompanionDigestActivity = "auto" | "game" | "focus";
+
+export interface CompanionDigestCreateInput {
+  session_id: string;
+  request_id: string;
+  activity?: CompanionDigestActivity;
+  subject_title?: string | null;
+}
+
+export interface CompanionDigestGetInput {
+  digest_id: string;
+}
+
+export interface CompanionDigestListInput {
+  session_id?: string | null;
+  limit?: number;
+}
+
+export interface CompanionSessionDigest {
+  id: string;
+  session_id: string;
+  conversation_id: string;
+  request_id: string;
+  activity: CompanionDigestActivity;
+  subject_title: string | null;
+  started_at: string;
+  ended_at: string;
+  duration_seconds: number;
+  activities: string[];
+  progress_summary: string;
+  unresolved_issue: string | null;
+  next_goal: string | null;
+  notable_outcome: string | null;
+  source_first_sequence: number;
+  source_last_sequence: number;
+  source_digest: string;
+  policy_version: string;
+  proposal_ids: string[];
+  created_at: string;
+  revision: number;
+}
+
+export interface CompanionSessionDigestPage {
+  items: CompanionSessionDigest[];
+}
+
 export type BrowserProfileKind = "persistent" | "ephemeral";
 export type BrowserSessionStatus =
   | "starting"

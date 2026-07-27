@@ -3,6 +3,8 @@ import type {
   ApprovalDecisionInput,
   BrowserActionInput,
   BrowserSessionStartInput,
+  CompanionDigestCreateInput,
+  CompanionDigestListInput,
   AssetSetCreateInput,
   ApprovalListInput,
   AssistantTurnCancelInput,
@@ -703,6 +705,14 @@ export class CoreClient {
         this.transport.call("realtime.assistance.get", input),
       cancel: (input: RealtimeAssistanceCancelInput) =>
         this.transport.call("realtime.assistance.cancel", input),
+    },
+    digests: {
+      create: (input: CompanionDigestCreateInput) =>
+        this.transport.call("realtime.digests.create", input),
+      get: (digestId: string) =>
+        this.transport.call("realtime.digests.get", { digest_id: digestId }),
+      list: (input: CompanionDigestListInput = {}) =>
+        this.transport.call("realtime.digests.list", input),
     },
     memories: {
       save: (input: GameMemorySaveInput) =>

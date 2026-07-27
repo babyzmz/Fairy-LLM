@@ -265,6 +265,11 @@ from fairy_core.contracts.presentation import (
     SelectionReferenceModel,
 )
 from fairy_core.contracts.realtime import (
+    CompanionDigestCreateInput,
+    CompanionDigestGetInput,
+    CompanionDigestListInput,
+    CompanionSessionDigestModel,
+    CompanionSessionDigestPageModel,
     GameMemoryDeleteResult,
     GameMemoryDigestModel,
     GameMemoryIdInput,
@@ -1070,6 +1075,24 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
         ),
         "realtime.memories.save": CoreMethod(
             "realtime.memories.save", GameMemorySaveInput, GameMemoryDigestModel
+        ),
+        "realtime.digests.create": CoreMethod(
+            "realtime.digests.create",
+            CompanionDigestCreateInput,
+            CompanionSessionDigestModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "realtime.digests.get": CoreMethod(
+            "realtime.digests.get",
+            CompanionDigestGetInput,
+            CompanionSessionDigestModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "realtime.digests.list": CoreMethod(
+            "realtime.digests.list",
+            CompanionDigestListInput,
+            CompanionSessionDigestPageModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "realtime.assistance.cancel": CoreMethod(
             "realtime.assistance.cancel",

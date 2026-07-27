@@ -57,6 +57,12 @@ class RealtimeAssistanceStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class CompanionDigestActivity(StrEnum):
+    AUTO = "auto"
+    GAME = "game"
+    FOCUS = "focus"
+
+
 _SESSION_TRANSITIONS: Mapping[RealtimeSessionStatus, frozenset[RealtimeSessionStatus]] = (
     MappingProxyType(
         {
@@ -350,6 +356,150 @@ class GameMemoryDigest:
 
     def accept(self) -> GameMemoryDigest:
         return self if self.accepted else replace(self, accepted=True)
+
+
+@dataclass(frozen=True, slots=True)
+class CompanionSessionDigest:
+    id: UUID
+    session_id: UUID
+    conversation_id: UUID
+    request_id: str
+    request_fingerprint: str
+    activity: CompanionDigestActivity
+    subject_title: str | None
+    started_at: datetime
+    ended_at: datetime
+    duration_seconds: int
+    activities: tuple[str, ...]
+    progress_summary: str
+    unresolved_issue: str | None
+    next_goal: str | None
+    notable_outcome: str | None
+    source_first_sequence: int
+    source_last_sequence: int
+    source_digest: str
+    policy_version: str
+    proposal_ids: tuple[UUID, ...]
+    created_at: datetime
+    revision: int
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        session_id: UUID,
+        conversation_id: UUID,
+        request_id: str,
+        activity: CompanionDigestActivity,
+        subject_title: str | None,
+        started_at: datetime,
+        ended_at: datetime,
+        activities: tuple[str, ...],
+        progress_summary: str,
+        unresolved_issue: str | None,
+        next_goal: str | None,
+        notable_outcome: str | None,
+        source_first_sequence: int,
+        source_last_sequence: int,
+        source_digest: str,
+        policy_version: str,
+        now: datetime | None = None,
+    ) -> CompanionSessionDigest:
+        normalized_session_id = UUID(str(session_id))
+        normalized_conversation_id = UUID(str(conversation_id))
+        normalized_request_id = _clean_text(request_id, name="request_id", maximum=128)
+        normalized_activity = CompanionDigestActivity(activity)
+        normalized_subject = (
+            _clean_text(subject_title, name="subject_title", maximum=160)
+            if subject_title is not None
+            else None
+        )
+        normalized_started = started_at.astimezone(UTC)
+        normalized_ended = ended_at.astimezone(UTC)
+        duration_seconds = int((normalized_ended - normalized_started).total_seconds())
+        if duration_seconds < 0 or duration_seconds > 86_400:
+            raise ValueError("duration_seconds must be between 0 and 86400")
+        if len(activities) > 12:
+            raise ValueError("a companion digest supports at most 12 activities")
+        normalized_activities = tuple(
+            _clean_text(item, name="activity_item", maximum=160) for item in activities
+        )
+        normalized_progress = _clean_text(
+            progress_summary,
+            name="progress_summary",
+            maximum=1_200,
+        )
+        normalized_unresolved = (
+            _clean_text(unresolved_issue, name="unresolved_issue", maximum=500)
+            if unresolved_issue is not None
+            else None
+        )
+        normalized_goal = (
+            _clean_text(next_goal, name="next_goal", maximum=500) if next_goal is not None else None
+        )
+        normalized_outcome = (
+            _clean_text(notable_outcome, name="notable_outcome", maximum=500)
+            if notable_outcome is not None
+            else None
+        )
+        if source_first_sequence < 1 or source_last_sequence < source_first_sequence:
+            raise ValueError("digest transcript sequence range is invalid")
+        normalized_source_digest = source_digest.strip().casefold()
+        if len(normalized_source_digest) != 64 or any(
+            value not in "0123456789abcdef" for value in normalized_source_digest
+        ):
+            raise ValueError("source_digest must be a lowercase sha256 digest")
+        normalized_policy = _clean_text(
+            policy_version,
+            name="policy_version",
+            maximum=64,
+        )
+        canonical = {
+            "session_id": str(normalized_session_id),
+            "conversation_id": str(normalized_conversation_id),
+            "request_id": normalized_request_id,
+            "activity": normalized_activity.value,
+            "subject_title": normalized_subject,
+            "source_first_sequence": source_first_sequence,
+            "source_last_sequence": source_last_sequence,
+            "source_digest": normalized_source_digest,
+            "policy_version": normalized_policy,
+        }
+        request_fingerprint = sha256(
+            json.dumps(
+                canonical,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return cls(
+            id=new_id(),
+            session_id=normalized_session_id,
+            conversation_id=normalized_conversation_id,
+            request_id=normalized_request_id,
+            request_fingerprint=request_fingerprint,
+            activity=normalized_activity,
+            subject_title=normalized_subject,
+            started_at=normalized_started,
+            ended_at=normalized_ended,
+            duration_seconds=duration_seconds,
+            activities=normalized_activities,
+            progress_summary=normalized_progress,
+            unresolved_issue=normalized_unresolved,
+            next_goal=normalized_goal,
+            notable_outcome=normalized_outcome,
+            source_first_sequence=source_first_sequence,
+            source_last_sequence=source_last_sequence,
+            source_digest=normalized_source_digest,
+            policy_version=normalized_policy,
+            proposal_ids=(),
+            created_at=(now or _now()).astimezone(UTC),
+            revision=1,
+        )
+
+    def same_request(self, other: CompanionSessionDigest) -> bool:
+        return self.request_fingerprint == other.request_fingerprint
 
 
 @dataclass(frozen=True, slots=True)
@@ -647,6 +797,8 @@ class RealtimeAssistance:
 
 
 __all__ = [
+    "CompanionDigestActivity",
+    "CompanionSessionDigest",
     "GameMemoryDigest",
     "RealtimeAssistance",
     "RealtimeAssistanceCitation",

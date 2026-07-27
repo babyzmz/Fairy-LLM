@@ -565,4 +565,36 @@ describe("CoreClient", () => {
       },
     ]);
   });
+
+  it("routes companion digests through local-only Core methods", async () => {
+    const transport = new RecordingTransport();
+    const client = new CoreClient(transport);
+    const id = "0198f4de-0114-7000-8000-000000000001";
+
+    await client.realtime.digests.create({
+      session_id: id,
+      request_id: "digest-1",
+      activity: "game",
+      subject_title: "A Test Game",
+    });
+    await client.realtime.digests.get(id);
+    await client.realtime.digests.list({ session_id: id, limit: 20 });
+
+    expect(transport.requests).toEqual([
+      {
+        method: "realtime.digests.create",
+        params: {
+          session_id: id,
+          request_id: "digest-1",
+          activity: "game",
+          subject_title: "A Test Game",
+        },
+      },
+      { method: "realtime.digests.get", params: { digest_id: id } },
+      {
+        method: "realtime.digests.list",
+        params: { session_id: id, limit: 20 },
+      },
+    ]);
+  });
 });
