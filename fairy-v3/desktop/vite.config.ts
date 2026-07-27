@@ -9,6 +9,12 @@ export default defineConfig({
   root: rootDirectory,
   publicDir: fileURLToPath(new URL("../resources", import.meta.url)),
   plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
+  optimizeDeps: {
+    // Native dependency trees can contain browser tooling examples with their own
+    // imports. Only the desktop shell is a Vite entry; native scratch must never
+    // participate in frontend dependency discovery.
+    entries: ["index.html"],
+  },
   server: {
     host: "127.0.0.1",
     port: 1430,
@@ -16,6 +22,7 @@ export default defineConfig({
     fs: { strict: !rootDirectory.includes("~") },
     watch: {
       ignored: [
+        "**/native/**",
         "**/src-tauri/runtime/**",
         "**/src-tauri/target/**",
         "**/playwright-report/**",
