@@ -122,6 +122,49 @@ test("opening Voice readiness starts no model, Voice, Realtime, or Omni worker",
   ].includes(call.method))).toBe(false);
 });
 
+test("Companion projects Cloud upload scope without starting a worker", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 640, height: 700 });
+  await page.goto("/?surface=companion&companionBackend=cloud");
+
+  await expect(page.getByRole("dialog", { name: "Game companion" })).toBeVisible();
+  await expect(page.getByText("Cloud Live · GLM Realtime Flash")).toBeVisible();
+  await expect(page.getByText(/Cloud Live sends only this session/)).toBeVisible();
+  await page.getByRole("checkbox", {
+    name: "Upload microphone for this Cloud session",
+  }).check();
+  await page.getByRole("checkbox", {
+    name: "Upload only the selected game window",
+  }).check();
+  await expect(page.getByRole("button", { name: "Start companion" })).toBeEnabled();
+
+  const calls = await fixtureCalls(page);
+  expect(calls.some((call) => call.method === "realtime.backend.preview")).toBe(true);
+  expect(calls.some((call) => call.method === "realtime_worker_start")).toBe(false);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(640);
+});
+
+test("Companion projects Local processing scope without Cloud credential lookup", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 640, height: 700 });
+  await page.goto("/?surface=companion&companionBackend=local");
+
+  await expect(page.getByRole("dialog", { name: "Game companion" })).toBeVisible();
+  await expect(page.getByText("Local · MiniCPM-o 4.5")).toBeVisible();
+  await expect(page.getByText(/Local MiniCPM processes enabled microphone/)).toBeVisible();
+  await expect(page.getByRole("checkbox", {
+    name: "Use microphone for this Local session",
+  })).toBeVisible();
+
+  const calls = await fixtureCalls(page);
+  expect(calls.some((call) => call.method === "realtime.backend.preview")).toBe(true);
+  expect(calls.some((call) => call.method === "provider_realtime_status")).toBe(false);
+  expect(calls.some((call) => call.method === "realtime_worker_start")).toBe(false);
+});
+
 async function fixtureCalls(page: import("@playwright/test").Page) {
   return page.evaluate(() => (
     window as typeof window & {

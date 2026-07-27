@@ -755,6 +755,19 @@ async function installCoreFixture(page: Page) {
         memory_enabled: true,
         memory_retention_days: 90,
         analytics_enabled: false,
+        realtime_beta_enabled: true,
+        realtime_backend: "cloud_live" as "auto" | "local_mini_cpm_o45" | "cloud_live",
+        realtime_cloud_provider: "glm_realtime_flash" as const,
+        realtime_allow_cloud_fallback: false,
+        realtime_activity_profile: "auto" as const,
+        realtime_interaction_intensity: "standard" as const,
+        realtime_voice_output: "provider_native_voice" as const,
+        realtime_game_audio_default: false,
+        realtime_online_assistance_enabled: false,
+        realtime_memory_enabled: true,
+        realtime_presence_max_minutes: 240,
+        realtime_cloud_daily_limit_minutes: 180,
+        realtime_local_keep_warm_minutes: 10,
         pet_enabled: true,
         pet_always_on_top: true,
         pet_muted: false,
@@ -1707,6 +1720,14 @@ async function installCoreFixture(page: Page) {
             return openRouterStatus;
           }
           if (command === "desktop_preferences_get") {
+            const companionBackend =
+              new URLSearchParams(window.location.search).get("companionBackend");
+            if (companionBackend === "local") {
+              return {
+                ...desktopPreferences,
+                realtime_backend: "local_mini_cpm_o45",
+              };
+            }
             return desktopPreferences;
           }
           if (command === "desktop_preferences_update") {
@@ -1734,6 +1755,61 @@ async function installCoreFixture(page: Page) {
             });
             return localReadiness();
           }
+          if (command === "realtime_backend_resolution_preview") {
+            const input = args.input as {
+              cloud_microphone_upload_consent: boolean;
+              cloud_screen_upload_consent: boolean;
+            };
+            const local =
+              new URLSearchParams(window.location.search).get("companionBackend")
+              === "local";
+            const consented =
+              input.cloud_microphone_upload_consent
+              && input.cloud_screen_upload_consent;
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: "realtime.backend.preview",
+              params: input as unknown as Record<string, unknown>,
+            });
+            return {
+              schema_version: 1,
+              resolution_token: "a".repeat(64),
+              available: local || consented,
+              backend: local
+                ? "local_mini_cpm_o45"
+                : consented
+                  ? "cloud_live"
+                  : null,
+              cloud_provider: !local && consented
+                ? "glm_realtime_flash"
+                : null,
+              reason: local || consented
+                ? null
+                : "CLOUD_UPLOAD_CONSENT_REQUIRED",
+              requires_cloud_upload_consent: !local,
+              preference_revision: 1,
+            };
+          }
+          if (command === "realtime_worker_status") {
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: "realtime.worker.status",
+              params: {},
+            });
+            return {
+              running: false,
+              session_id: null,
+              segment_id: null,
+              context_epoch: null,
+              backend: null,
+              cloud_provider: null,
+              action_required: false,
+              audio_input_ms: 0,
+              audio_output_ms: 0,
+              video_frame_count: 0,
+              interruption_count: 0,
+              tool_call_count: 0,
+            };
+          }
+          if (command === "hide_companion_window") return null;
           if (command === "omni_model_status") {
             return localReadiness().model;
           }
@@ -1805,7 +1881,11 @@ async function installCoreFixture(page: Page) {
           if (command === "select_project_folder") {
             return "C:\\Projects\\fixture";
           }
-          if (command !== "core_rpc" && command !== "settings_rpc") {
+          if (
+            command !== "core_rpc"
+            && command !== "settings_rpc"
+            && command !== "companion_rpc"
+          ) {
             throw new Error(`Unexpected Tauri command: ${command}`);
           }
           const request = args.request as {
@@ -1817,6 +1897,13 @@ async function installCoreFixture(page: Page) {
             method: request.method,
             params: request.params,
           });
+          if (request.method === "realtime.sessions.list") {
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: { items: [] },
+            };
+          }
           if (
             request.method === "permissions.update" &&
             permissionConflictPending
