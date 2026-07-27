@@ -56,6 +56,13 @@ enum CommandFrame<'a> {
         video_width: u32,
         video_height: u32,
     },
+    ContextRotate {
+        #[serde(flatten)]
+        identity: Identity,
+        next_context_epoch: u64,
+        reason: &'a str,
+        public_summary: &'a str,
+    },
     MediaCommit {
         #[serde(flatten)]
         identity: Identity,
@@ -115,6 +122,14 @@ enum RuntimeEvent {
         frame_budget: u64,
         video_width: u32,
         video_height: u32,
+    },
+    ContextRotated {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        sequence: u64,
+        reason: String,
+        public_summary: String,
     },
     Decision {
         session_id: String,
@@ -186,6 +201,12 @@ impl RuntimeEvent {
                 ..
             }
             | Self::ContextReady {
+                session_id,
+                segment_id,
+                context_epoch,
+                ..
+            }
+            | Self::ContextRotated {
                 session_id,
                 segment_id,
                 context_epoch,
@@ -396,6 +417,73 @@ impl LocalOmniBackend {
         )
     }
 
+    fn rotate_context_acknowledged(
+        &mut self,
+        next_context_epoch: u64,
+        reason: &str,
+        public_summary: &str,
+    ) -> Result<(), BackendError> {
+        if next_context_epoch
+            != self
+                .context_epoch
+                .checked_add(1)
+                .ok_or(BackendError::LocalProtocol)?
+            || reason.is_empty()
+            || reason.len() > 64
+            || public_summary.chars().count() > 2_000
+        {
+            return Err(BackendError::LocalProtocol);
+        }
+        zeroize_queue(&mut self.microphone_buffer);
+        self.microphone_buffer.clear();
+        let identity = self.identity();
+        write_control(
+            &mut self.input,
+            &CommandFrame::ContextRotate {
+                identity,
+                next_context_epoch,
+                reason,
+                public_summary,
+            },
+        )?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or(BackendError::LocalTimeout)?;
+            let event = self
+                .events
+                .recv_timeout(remaining)
+                .map_err(|_| BackendError::LocalTimeout)??;
+            let (session_id, segment_id, context_epoch) = event.identity();
+            if session_id != self.session_id || segment_id != self.segment_id {
+                return Err(BackendError::LocalProtocol);
+            }
+            if let RuntimeEvent::ContextRotated {
+                context_epoch,
+                reason: acknowledged_reason,
+                public_summary: acknowledged_summary,
+                ..
+            } = event
+            {
+                if context_epoch != next_context_epoch
+                    || acknowledged_reason != reason
+                    || acknowledged_summary != public_summary
+                {
+                    return Err(BackendError::LocalProtocol);
+                }
+                self.context_epoch = next_context_epoch;
+                self.media_sequence = 0;
+                self.media_timestamp_us = 0;
+                self.microphone_packets_since_commit = 0;
+                return Ok(());
+            }
+            if context_epoch != self.context_epoch {
+                return Err(BackendError::LocalProtocol);
+            }
+        }
+    }
+
     fn commit(&mut self) -> Result<(), BackendError> {
         if self.media_sequence == 0 {
             return Ok(());
@@ -524,6 +612,15 @@ impl RealtimeBackend for LocalOmniBackend {
         Ok(())
     }
 
+    fn rotate_context(
+        &mut self,
+        next_context_epoch: u64,
+        reason: &str,
+        public_summary: &str,
+    ) -> Result<(), BackendError> {
+        self.rotate_context_acknowledged(next_context_epoch, reason, public_summary)
+    }
+
     fn poll(&mut self) -> Result<Vec<BackendEvent>, BackendError> {
         let mut output = Vec::new();
         loop {
@@ -574,7 +671,8 @@ impl RealtimeBackend for LocalOmniBackend {
                 RuntimeEvent::Ready { .. }
                 | RuntimeEvent::LoadProgress { .. }
                 | RuntimeEvent::ModelReady { .. }
-                | RuntimeEvent::ContextReady { .. } => {}
+                | RuntimeEvent::ContextReady { .. }
+                | RuntimeEvent::ContextRotated { .. } => {}
             }
         }
         Ok(output)
@@ -935,6 +1033,39 @@ mod tests {
             "prompt": "not allowed"
         });
         assert!(serde_json::from_value::<RuntimeEvent>(value).is_err());
+    }
+
+    #[test]
+    fn local_context_rotation_uses_the_frozen_acknowledged_wire_shape() {
+        let command = CommandFrame::ContextRotate {
+            identity: Identity {
+                session_id: "session".to_owned(),
+                segment_id: "segment".to_owned(),
+                context_epoch: 1,
+                sequence: 4,
+            },
+            next_context_epoch: 2,
+            reason: "profile_changed",
+            public_summary: "",
+        };
+        let value = serde_json::to_value(command).expect("command");
+        assert_eq!(value["type"], "context_rotate");
+        assert_eq!(value["context_epoch"], 1);
+        assert_eq!(value["next_context_epoch"], 2);
+        assert_eq!(value["reason"], "profile_changed");
+        assert_eq!(value["public_summary"], "");
+
+        let event: RuntimeEvent = serde_json::from_value(serde_json::json!({
+            "type": "context_rotated",
+            "session_id": "session",
+            "segment_id": "segment",
+            "context_epoch": 2,
+            "sequence": 4,
+            "reason": "profile_changed",
+            "public_summary": ""
+        }))
+        .expect("acknowledgement");
+        assert_eq!(event.identity(), ("session", "segment", 2));
     }
 
     #[test]

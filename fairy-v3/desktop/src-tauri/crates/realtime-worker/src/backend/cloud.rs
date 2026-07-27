@@ -16,18 +16,29 @@ pub struct CloudBackendLaunch {
 
 pub struct CloudLiveBackend {
     socket: ProviderSocket,
+    provider: RealtimeCloudProviderKind,
+    credential: Zeroizing<String>,
+    system_instruction: String,
+    video_enabled: bool,
+    native_audio: bool,
 }
 
 impl CloudLiveBackend {
     pub fn connect(launch: CloudBackendLaunch) -> Result<Self, BackendError> {
+        let socket = ProviderSocket::connect(
+            launch.provider,
+            launch.credential.clone(),
+            launch.system_instruction.clone(),
+            launch.video_enabled,
+            launch.native_audio,
+        )?;
         Ok(Self {
-            socket: ProviderSocket::connect(
-                launch.provider,
-                launch.credential,
-                launch.system_instruction,
-                launch.video_enabled,
-                launch.native_audio,
-            )?,
+            socket,
+            provider: launch.provider,
+            credential: launch.credential,
+            system_instruction: launch.system_instruction,
+            video_enabled: launch.video_enabled,
+            native_audio: launch.native_audio,
         })
     }
 }
@@ -57,6 +68,26 @@ impl RealtimeBackend for CloudLiveBackend {
         self.socket
             .send_tool_result(call_id, public_summary)
             .map_err(BackendError::from)
+    }
+
+    fn rotate_context(
+        &mut self,
+        _next_context_epoch: u64,
+        reason: &str,
+        public_summary: &str,
+    ) -> Result<(), BackendError> {
+        if reason.is_empty() || reason.len() > 64 || public_summary.chars().count() > 2_000 {
+            return Err(BackendError::DialogueProtocol);
+        }
+        let replacement = ProviderSocket::connect(
+            self.provider,
+            self.credential.clone(),
+            self.system_instruction.clone(),
+            self.video_enabled,
+            self.native_audio,
+        )?;
+        self.socket = replacement;
+        Ok(())
     }
 
     fn poll(&mut self) -> Result<Vec<BackendEvent>, BackendError> {

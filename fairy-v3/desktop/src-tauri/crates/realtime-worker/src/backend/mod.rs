@@ -191,6 +191,12 @@ pub trait RealtimeBackend: Send {
         call_id: &str,
         public_summary: &str,
     ) -> Result<(), BackendError>;
+    fn rotate_context(
+        &mut self,
+        next_context_epoch: u64,
+        reason: &str,
+        public_summary: &str,
+    ) -> Result<(), BackendError>;
     fn poll(&mut self) -> Result<Vec<BackendEvent>, BackendError>;
     fn pause(&mut self) -> Result<(), BackendError>;
     fn stop(&mut self) -> Result<(), BackendError>;

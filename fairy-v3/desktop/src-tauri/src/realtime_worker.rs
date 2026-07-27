@@ -21,8 +21,9 @@ use zeroize::Zeroizing;
 
 use crate::omni_model_manifest::OmniModelManifest;
 use crate::realtime_coordinator::{
-    ContextEpochIdentity, RealtimeCoordinatorEvent, RealtimeCoordinatorStart,
-    RealtimeCoordinatorState, RealtimePresenceProjection, RealtimePresenceState,
+    ContextEpochIdentity, ContextRotationReason, PendingContextRotation, RealtimeCoordinatorEvent,
+    RealtimeCoordinatorStart, RealtimeCoordinatorState, RealtimePresenceProjection,
+    RealtimePresenceState,
 };
 use crate::realtime_dialogue::{RealtimeDialogueDecision, RealtimeDialogueDirector};
 
@@ -147,6 +148,12 @@ struct WorkerProcess {
     session_id: Option<String>,
     expected_shutdown: Arc<AtomicBool>,
     terminal: Arc<AtomicBool>,
+}
+
+enum DialogueGovernance {
+    Projection(Value),
+    Rotate(PendingContextRotation),
+    Suppress,
 }
 
 pub struct RealtimeWorkerManager {
@@ -676,6 +683,7 @@ fn spawn_worker(
     let input = Arc::new(Mutex::new(
         child.stdin.take().ok_or(RealtimeWorkerError::Protocol)?,
     ));
+    let reader_input = Arc::clone(&input);
     let output = child.stdout.take().ok_or(RealtimeWorkerError::Protocol)?;
     let mut reader = BufReader::new(output);
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -702,14 +710,48 @@ fn spawn_worker(
                         continue;
                     }
                     let value = govern_speech_state(value, &dialogue);
+                    if value.get("type").and_then(Value::as_str) == Some("context_rotated") {
+                        if let Some(projection) =
+                            commit_context_rotation_event(&value, &coordinator, &dialogue)
+                        {
+                            let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                            let _ = app.emit(REALTIME_WORKER_EVENT, value);
+                        } else if let Some(projection) = fail_context_rotation(&coordinator) {
+                            let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                        }
+                        continue;
+                    }
                     if let Some(projection) = govern_presence_event(&value, &coordinator) {
                         let _ = app.emit(REALTIME_WORKER_EVENT, projection);
                     }
                     if value.get("type").and_then(Value::as_str) == Some("perception_candidate") {
-                        if let Some(projected) =
-                            govern_dialogue_candidate(&value, &coordinator, &dialogue)
-                        {
-                            let _ = app.emit(REALTIME_WORKER_EVENT, projected);
+                        match govern_dialogue_candidate(&value, &coordinator, &dialogue) {
+                            DialogueGovernance::Projection(projected) => {
+                                let _ = app.emit(REALTIME_WORKER_EVENT, projected);
+                            }
+                            DialogueGovernance::Rotate(pending) => {
+                                let command = HostCommand::RotateContext {
+                                    session_id: pending.current.session_id.clone(),
+                                    segment_id: pending.current.segment_id.clone(),
+                                    current_context_epoch: pending.current.epoch,
+                                    next_context_epoch: pending.next_epoch,
+                                    reason: pending.reason.as_str().to_owned(),
+                                    public_summary: String::new(),
+                                };
+                                if send_command(&reader_input, &command).is_ok() {
+                                    if let Ok(mut active) = active_identity.lock() {
+                                        *active = Some(ContextEpochIdentity {
+                                            session_id: pending.current.session_id,
+                                            segment_id: pending.current.segment_id,
+                                            epoch: pending.next_epoch,
+                                        });
+                                    }
+                                } else if let Some(projection) = fail_context_rotation(&coordinator)
+                                {
+                                    let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                                }
+                            }
+                            DialogueGovernance::Suppress => {}
                         }
                         continue;
                     }
@@ -720,10 +762,25 @@ fn spawn_worker(
                         == Some("session_state")
                         && value.get("status").and_then(Value::as_str) == Some("failed");
                     if backend_failed {
-                        if let Ok(mut state) = coordinator.lock() {
+                        let projection = if let Ok(mut state) = coordinator.lock() {
                             if let Some(state) = state.as_mut() {
-                                let _ = state.apply(RealtimeCoordinatorEvent::BackendFailed);
+                                if state.pending_context_rotation().is_some() {
+                                    let _ = state.fail_context_rotation();
+                                } else {
+                                    let _ = state.apply(RealtimeCoordinatorEvent::BackendFailed);
+                                }
+                                Some(state.presence_projection())
+                            } else {
+                                None
                             }
+                        } else {
+                            None
+                        };
+                        if let Some(projection) = projection {
+                            let _ = app.emit(
+                                REALTIME_WORKER_EVENT,
+                                presence_projection_payload(projection),
+                            );
                         }
                     }
                     if value.get("type").and_then(Value::as_str) == Some("usage") {
@@ -844,12 +901,72 @@ fn govern_fairy_speech_state(
         .map(presence_projection_payload))
 }
 
-fn govern_dialogue_candidate(
+fn commit_context_rotation_event(
     value: &Value,
     coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
     dialogue: &Mutex<Option<RealtimeDialogueDirector>>,
 ) -> Option<Value> {
     let event = serde_json::from_value::<WorkerEvent>(value.clone()).ok()?;
+    let WorkerEvent::ContextRotated {
+        session_id,
+        segment_id,
+        context_epoch,
+        reason,
+    } = event
+    else {
+        return None;
+    };
+    {
+        let coordinator = coordinator.lock().ok()?;
+        let coordinator = coordinator.as_ref()?;
+        let pending = coordinator.pending_context_rotation()?;
+        if pending.current.session_id != session_id
+            || pending.current.segment_id != segment_id
+            || pending.next_epoch != context_epoch
+            || pending.reason.as_str() != reason
+        {
+            return None;
+        }
+    }
+    {
+        let mut director = dialogue.lock().ok()?;
+        let director = director.as_mut()?;
+        if director
+            .context_epoch()
+            .checked_add(1)
+            .is_none_or(|next| next != context_epoch)
+            || !director.commit_context_epoch(context_epoch)
+        {
+            return None;
+        }
+    }
+    let projection = {
+        let mut coordinator = coordinator.lock().ok()?;
+        let coordinator = coordinator.as_mut()?;
+        coordinator.commit_context_rotation(context_epoch).ok()?;
+        coordinator.presence_projection()
+    };
+    Some(presence_projection_payload(projection))
+}
+
+fn fail_context_rotation(coordinator: &Mutex<Option<RealtimeCoordinatorState>>) -> Option<Value> {
+    let projection = {
+        let mut coordinator = coordinator.lock().ok()?;
+        let coordinator = coordinator.as_mut()?;
+        coordinator.fail_context_rotation().ok()?;
+        coordinator.presence_projection()
+    };
+    Some(presence_projection_payload(projection))
+}
+
+fn govern_dialogue_candidate(
+    value: &Value,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+    dialogue: &Mutex<Option<RealtimeDialogueDirector>>,
+) -> DialogueGovernance {
+    let Ok(event) = serde_json::from_value::<WorkerEvent>(value.clone()) else {
+        return DialogueGovernance::Suppress;
+    };
     let WorkerEvent::PerceptionCandidate {
         session_id,
         segment_id,
@@ -858,26 +975,53 @@ fn govern_dialogue_candidate(
         candidate,
     } = event
     else {
-        return None;
+        return DialogueGovernance::Suppress;
     };
-    let (effective_activity, interaction_intensity, switched) = {
-        let mut coordinator = coordinator.lock().ok()?;
-        let coordinator = coordinator.as_mut()?;
-        if candidate.persona_digest != coordinator.persona_digest() || !candidate.is_valid() {
-            return None;
+    let (effective_activity, interaction_intensity, pending_rotation) = {
+        let Ok(mut coordinator) = coordinator.lock() else {
+            return DialogueGovernance::Suppress;
+        };
+        let Some(coordinator) = coordinator.as_mut() else {
+            return DialogueGovernance::Suppress;
+        };
+        let identity = coordinator.active_identity();
+        if session_id != identity.session_id
+            || segment_id != identity.segment_id
+            || context_epoch != identity.epoch
+            || coordinator.pending_context_rotation().is_some()
+            || candidate.persona_digest != coordinator.persona_digest()
+            || !candidate.is_valid()
+        {
+            return DialogueGovernance::Suppress;
         }
-        let observation = coordinator.observe_activity_candidate(sequence, &candidate)?;
+        let Some(observation) = coordinator.observe_activity_candidate(sequence, &candidate) else {
+            return DialogueGovernance::Suppress;
+        };
+        let pending = if observation.switched {
+            let Ok(pending) =
+                coordinator.prepare_context_rotation(ContextRotationReason::ProfileChanged)
+            else {
+                return DialogueGovernance::Suppress;
+            };
+            Some(pending)
+        } else {
+            None
+        };
         (
             observation.effective_activity,
             coordinator.interaction_intensity(),
-            observation.switched,
+            pending,
         )
     };
-    let mut director = dialogue.lock().ok()?;
-    let director = director.as_mut()?;
-    if switched {
+    let Ok(mut director) = dialogue.lock() else {
+        return DialogueGovernance::Suppress;
+    };
+    let Some(director) = director.as_mut() else {
+        return DialogueGovernance::Suppress;
+    };
+    if let Some(pending) = pending_rotation {
         director.reset_epoch_policy();
-        return None;
+        return DialogueGovernance::Rotate(pending);
     }
     let decision = director.evaluate_with_activity(
         &session_id,
@@ -889,39 +1033,45 @@ fn govern_dialogue_candidate(
         interaction_intensity,
     );
     match decision {
-        RealtimeDialogueDecision::Speak(projection) => Some(serde_json::json!({
-            "type": "public_caption",
-            "session_id": projection.session_id,
-            "segment_id": projection.segment_id,
-            "context_epoch": projection.context_epoch,
-            "sequence": projection.sequence,
-            "text": projection.text,
-            "stable": projection.stable,
-            "speaker": "assistant",
-            "activity": projection.activity,
-            "intent": projection.intent,
-            "response_to_user": projection.response_to_user,
-            "speech_output": projection.speech_output,
-            "speech_generation": projection.speech_generation,
-            "persona_digest": projection.persona_digest,
-        })),
-        RealtimeDialogueDecision::RequestAssistance(candidate) => Some(serde_json::json!({
-            "type": "assistance_request",
-            "session_id": candidate.session_id,
-            "segment_id": candidate.segment_id,
-            "context_epoch": candidate.context_epoch,
-            "request_id": format!(
-                "realtime-assistance-{}-{}",
-                candidate.segment_id,
-                candidate.sequence
-            ),
-            "public_intent": candidate.public_question,
-            "activity": candidate.activity,
-            "intent": candidate.intent,
-            "needs_online_assistance": candidate.needs_online_assistance,
-            "persona_digest": candidate.persona_digest,
-        })),
-        RealtimeDialogueDecision::Listen | RealtimeDialogueDecision::Suppress(_) => None,
+        RealtimeDialogueDecision::Speak(projection) => {
+            DialogueGovernance::Projection(serde_json::json!({
+                "type": "public_caption",
+                "session_id": projection.session_id,
+                "segment_id": projection.segment_id,
+                "context_epoch": projection.context_epoch,
+                "sequence": projection.sequence,
+                "text": projection.text,
+                "stable": projection.stable,
+                "speaker": "assistant",
+                "activity": projection.activity,
+                "intent": projection.intent,
+                "response_to_user": projection.response_to_user,
+                "speech_output": projection.speech_output,
+                "speech_generation": projection.speech_generation,
+                "persona_digest": projection.persona_digest,
+            }))
+        }
+        RealtimeDialogueDecision::RequestAssistance(candidate) => {
+            DialogueGovernance::Projection(serde_json::json!({
+                "type": "assistance_request",
+                "session_id": candidate.session_id,
+                "segment_id": candidate.segment_id,
+                "context_epoch": candidate.context_epoch,
+                "request_id": format!(
+                    "realtime-assistance-{}-{}",
+                    candidate.segment_id,
+                    candidate.sequence
+                ),
+                "public_intent": candidate.public_question,
+                "activity": candidate.activity,
+                "intent": candidate.intent,
+                "needs_online_assistance": candidate.needs_online_assistance,
+                "persona_digest": candidate.persona_digest,
+            }))
+        }
+        RealtimeDialogueDecision::Listen | RealtimeDialogueDecision::Suppress(_) => {
+            DialogueGovernance::Suppress
+        }
     }
 }
 
@@ -1190,7 +1340,9 @@ mod tests {
         ))
     }
 
-    fn coordinator() -> Mutex<Option<RealtimeCoordinatorState>> {
+    fn coordinator_with_profile(
+        activity_profile: RealtimeActivityProfile,
+    ) -> Mutex<Option<RealtimeCoordinatorState>> {
         Mutex::new(Some(
             RealtimeCoordinatorState::start(RealtimeCoordinatorStart {
                 session_id: "session-1".to_owned(),
@@ -1198,12 +1350,16 @@ mod tests {
                 persona_digest: "a".repeat(64),
                 backend: RealtimeBackendKind::CloudLive,
                 cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
-                activity_profile: RealtimeActivityProfile::Game,
+                activity_profile,
                 interaction_intensity: RealtimeInteractionIntensity::Standard,
                 presence_max_minutes: 240,
             })
             .expect("coordinator"),
         ))
+    }
+
+    fn coordinator() -> Mutex<Option<RealtimeCoordinatorState>> {
+        coordinator_with_profile(RealtimeActivityProfile::Game)
     }
 
     fn candidate_event(grounding: serde_json::Value) -> Value {
@@ -1227,14 +1383,36 @@ mod tests {
         })
     }
 
+    fn auto_activity_event(sequence: u64) -> Value {
+        serde_json::json!({
+            "type": "perception_candidate",
+            "session_id": "session-1",
+            "segment_id": "segment-1",
+            "context_epoch": 1,
+            "sequence": sequence,
+            "decision": "speak",
+            "activity": "game",
+            "confidence": 0.9,
+            "intent": "comment",
+            "grounding": ["current_window: stable game activity"],
+            "text": format!("Game event {sequence}."),
+            "urgency": 0.4,
+            "needs_online_assistance": false,
+            "response_to_user": false,
+            "stable": true,
+            "persona_digest": "a".repeat(64)
+        })
+    }
+
     #[test]
     fn grounded_candidate_becomes_an_approved_assistant_caption() {
-        let projected = govern_dialogue_candidate(
+        let DialogueGovernance::Projection(projected) = govern_dialogue_candidate(
             &candidate_event(serde_json::json!(["current_user_utterance"])),
             &coordinator(),
             &dialogue(),
-        )
-        .expect("approved projection");
+        ) else {
+            panic!("approved projection")
+        };
         assert_eq!(projected["type"], "public_caption");
         assert_eq!(projected["speaker"], "assistant");
         assert_eq!(projected["speech_output"], "fairy_voice");
@@ -1245,7 +1423,10 @@ mod tests {
     #[test]
     fn ungrounded_candidate_is_suppressed_without_reemitting_its_body() {
         let event = candidate_event(serde_json::json!([]));
-        assert!(govern_dialogue_candidate(&event, &coordinator(), &dialogue()).is_none());
+        assert!(matches!(
+            govern_dialogue_candidate(&event, &coordinator(), &dialogue()),
+            DialogueGovernance::Suppress
+        ));
     }
 
     #[test]
@@ -1268,12 +1449,79 @@ mod tests {
         event["decision"] = serde_json::json!("request_assistance");
         event["intent"] = serde_json::json!("assist");
         event["needs_online_assistance"] = serde_json::json!(true);
-        let projected = govern_dialogue_candidate(&event, &coordinator(), &dialogue())
-            .expect("assistance projection");
+        let DialogueGovernance::Projection(projected) =
+            govern_dialogue_candidate(&event, &coordinator(), &dialogue())
+        else {
+            panic!("assistance projection")
+        };
         assert_eq!(projected["type"], "assistance_request");
         assert_eq!(projected["needs_online_assistance"], true);
         assert!(projected.get("tool_name").is_none());
         assert!(projected.get("arguments").is_none());
+    }
+
+    #[test]
+    fn auto_activity_switch_commits_only_after_matching_worker_acknowledgement() {
+        let coordinator = coordinator_with_profile(RealtimeActivityProfile::Auto);
+        let dialogue = dialogue();
+        for sequence in 1..=2 {
+            assert!(matches!(
+                govern_dialogue_candidate(&auto_activity_event(sequence), &coordinator, &dialogue,),
+                DialogueGovernance::Suppress
+            ));
+        }
+        let DialogueGovernance::Rotate(pending) =
+            govern_dialogue_candidate(&auto_activity_event(3), &coordinator, &dialogue)
+        else {
+            panic!("rotation request")
+        };
+        assert_eq!(pending.current.epoch, 1);
+        assert_eq!(pending.next_epoch, 2);
+        assert_eq!(pending.reason, ContextRotationReason::ProfileChanged);
+        assert_eq!(
+            coordinator
+                .lock()
+                .expect("coordinator")
+                .as_ref()
+                .expect("state")
+                .active_identity()
+                .epoch,
+            1
+        );
+
+        let projection = commit_context_rotation_event(
+            &serde_json::json!({
+                "type": "context_rotated",
+                "session_id": "session-1",
+                "segment_id": "segment-1",
+                "context_epoch": 2,
+                "reason": "profile_changed"
+            }),
+            &coordinator,
+            &dialogue,
+        )
+        .expect("acknowledged projection");
+        assert_eq!(projection["context_epoch"], 2);
+        assert_eq!(projection["state"], "standby");
+        assert_eq!(
+            coordinator
+                .lock()
+                .expect("coordinator")
+                .as_ref()
+                .expect("state")
+                .active_identity()
+                .epoch,
+            2
+        );
+        assert_eq!(
+            dialogue
+                .lock()
+                .expect("dialogue")
+                .as_ref()
+                .expect("director")
+                .context_epoch(),
+            2
+        );
     }
 
     #[test]

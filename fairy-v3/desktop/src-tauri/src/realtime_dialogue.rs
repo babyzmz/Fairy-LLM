@@ -333,6 +333,23 @@ impl RealtimeDialogueDirector {
         self.invalidate_speech();
     }
 
+    pub fn commit_context_epoch(&mut self, next_context_epoch: u64) -> bool {
+        if self
+            .context_epoch
+            .checked_add(1)
+            .is_none_or(|next| next != next_context_epoch)
+        {
+            return false;
+        }
+        self.context_epoch = next_context_epoch;
+        self.reset_epoch_policy();
+        true
+    }
+
+    pub const fn context_epoch(&self) -> u64 {
+        self.context_epoch
+    }
+
     pub const fn speech_generation(&self) -> u64 {
         self.speech_generation
     }

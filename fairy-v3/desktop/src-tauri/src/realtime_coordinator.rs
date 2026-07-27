@@ -83,6 +83,24 @@ pub enum ContextRotationReason {
     Manual,
 }
 
+impl ContextRotationReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PrivacyResume => "privacy_resume",
+            Self::ProfileChanged => "profile_changed",
+            Self::WindowChanged => "window_changed",
+            Self::Manual => "manual",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingContextRotation {
+    pub current: ContextEpochIdentity,
+    pub next_epoch: u64,
+    pub reason: ContextRotationReason,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RealtimeCoordinatorEvent {
@@ -149,6 +167,7 @@ pub struct RealtimeCoordinatorState {
     background_presence_state: RealtimePresenceState,
     background_presence_level: Option<u8>,
     fairy_speech_active: bool,
+    pending_context_rotation: Option<PendingContextRotation>,
 }
 
 impl RealtimeCoordinatorState {
@@ -196,6 +215,7 @@ impl RealtimeCoordinatorState {
             background_presence_state: RealtimePresenceState::Preparing,
             background_presence_level: None,
             fairy_speech_active: false,
+            pending_context_rotation: None,
         })
     }
 
@@ -208,9 +228,9 @@ impl RealtimeCoordinatorState {
         }
 
         match event {
-            RealtimeCoordinatorEvent::RotateContext { reason: _ } => {
+            RealtimeCoordinatorEvent::RotateContext { reason } => {
                 self.require_active()?;
-                self.rotate_context()
+                self.prepare_context_rotation(reason).map(|_| ())
             }
             RealtimeCoordinatorEvent::UserApprovedBackendChange {
                 segment_id,
@@ -230,6 +250,7 @@ impl RealtimeCoordinatorState {
                 }
                 self.identity.segment_id = segment_id;
                 self.identity.epoch = 1;
+                self.pending_context_rotation = None;
                 self.backend = backend;
                 self.segment = BackendSegmentState {
                     segment_id: self.identity.segment_id.clone(),
@@ -255,7 +276,8 @@ impl RealtimeCoordinatorState {
                 }
                 self.activity_profile = profile;
                 self.activity_classifier = RealtimeActivityClassifier::new(profile);
-                self.rotate_context()
+                self.prepare_context_rotation(ContextRotationReason::ProfileChanged)
+                    .map(|_| ())
             }
             RealtimeCoordinatorEvent::PausePrivacy => {
                 self.require_active()?;
@@ -268,11 +290,9 @@ impl RealtimeCoordinatorState {
                 if self.status != RealtimeCoordinatorStatus::PrivacyPaused {
                     return Err(RealtimeCoordinatorError::InvalidTransition);
                 }
-                self.rotate_context()?;
                 self.status = RealtimeCoordinatorStatus::Active;
-                self.media_generation_enabled = true;
-                self.set_authoritative_presence(RealtimePresenceState::Standby, None)?;
-                Ok(())
+                self.prepare_context_rotation(ContextRotationReason::PrivacyResume)
+                    .map(|_| ())
             }
             RealtimeCoordinatorEvent::ExtendPresence { additional_minutes } => {
                 if additional_minutes == 0 {
@@ -345,6 +365,64 @@ impl RealtimeCoordinatorState {
         self.media_generation_enabled
     }
 
+    pub fn prepare_context_rotation(
+        &mut self,
+        reason: ContextRotationReason,
+    ) -> Result<PendingContextRotation, RealtimeCoordinatorError> {
+        self.require_active()?;
+        if self.pending_context_rotation.is_some() {
+            return Err(RealtimeCoordinatorError::InvalidTransition);
+        }
+        let next_epoch = self
+            .identity
+            .epoch
+            .checked_add(1)
+            .ok_or(RealtimeCoordinatorError::EpochOverflow)?;
+        let pending = PendingContextRotation {
+            current: self.identity.clone(),
+            next_epoch,
+            reason,
+        };
+        self.pending_context_rotation = Some(pending.clone());
+        self.media_generation_enabled = false;
+        Ok(pending)
+    }
+
+    pub fn commit_context_rotation(
+        &mut self,
+        next_epoch: u64,
+    ) -> Result<(), RealtimeCoordinatorError> {
+        let pending = self
+            .pending_context_rotation
+            .take()
+            .ok_or(RealtimeCoordinatorError::InvalidTransition)?;
+        if pending.next_epoch != next_epoch
+            || pending.current.session_id != self.identity.session_id
+            || pending.current.segment_id != self.identity.segment_id
+            || pending.current.epoch != self.identity.epoch
+        {
+            self.pending_context_rotation = Some(pending);
+            return Err(RealtimeCoordinatorError::InvalidTransition);
+        }
+        self.identity.epoch = next_epoch;
+        self.activity_classifier.reset_epoch();
+        self.media_generation_enabled = true;
+        self.set_authoritative_presence(RealtimePresenceState::Standby, None)?;
+        Ok(())
+    }
+
+    pub fn fail_context_rotation(&mut self) -> Result<(), RealtimeCoordinatorError> {
+        self.pending_context_rotation = None;
+        self.action_required = true;
+        self.media_generation_enabled = false;
+        self.set_authoritative_presence(RealtimePresenceState::Error, None)?;
+        Ok(())
+    }
+
+    pub fn pending_context_rotation(&self) -> Option<&PendingContextRotation> {
+        self.pending_context_rotation.as_ref()
+    }
+
     pub fn presence_max_minutes(&self) -> u16 {
         self.presence_max_minutes
     }
@@ -367,6 +445,7 @@ impl RealtimeCoordinatorState {
     ) -> Option<RealtimePresenceProjection> {
         let (session_id, segment_id, context_epoch, state, level) = worker_presence_input(event)?;
         if self.status == RealtimeCoordinatorStatus::Ended
+            || self.pending_context_rotation.is_some()
             || session_id != self.identity.session_id
             || segment_id != self.identity.segment_id
             || context_epoch != self.identity.epoch
@@ -426,6 +505,7 @@ impl RealtimeCoordinatorState {
     pub fn accepts_result(&self, session_id: &str, segment_id: &str, epoch: u64) -> bool {
         self.status == RealtimeCoordinatorStatus::Active
             && !self.action_required
+            && self.pending_context_rotation.is_none()
             && self.identity.session_id == session_id
             && self.identity.segment_id == segment_id
             && self.identity.epoch == epoch
@@ -437,16 +517,6 @@ impl RealtimeCoordinatorState {
         } else {
             Err(RealtimeCoordinatorError::InvalidTransition)
         }
-    }
-
-    fn rotate_context(&mut self) -> Result<(), RealtimeCoordinatorError> {
-        self.identity.epoch = self
-            .identity
-            .epoch
-            .checked_add(1)
-            .ok_or(RealtimeCoordinatorError::EpochOverflow)?;
-        self.activity_classifier.reset_epoch();
-        Ok(())
     }
 
     fn set_presence(
@@ -748,8 +818,37 @@ mod tests {
             .expect("rotate");
 
         assert!(!state.accepts_result(&first.session_id, &first.segment_id, first.epoch));
+        let pending = state
+            .pending_context_rotation()
+            .expect("pending rotation")
+            .clone();
+        state
+            .commit_context_rotation(pending.next_epoch)
+            .expect("acknowledge rotation");
         let active = state.active_identity();
         assert!(state.accepts_result(&active.session_id, &active.segment_id, active.epoch));
+    }
+
+    #[test]
+    fn prepared_context_rotation_stays_inactive_until_exact_acknowledgement() {
+        let mut state = RealtimeCoordinatorState::start(start_request()).expect("start");
+        let pending = state
+            .prepare_context_rotation(ContextRotationReason::WindowChanged)
+            .expect("prepare");
+        assert_eq!(pending.current.epoch, 1);
+        assert_eq!(pending.next_epoch, 2);
+        assert_eq!(state.active_identity().epoch, 1);
+        assert!(!state.media_generation_enabled());
+        assert!(!state.accepts_result("session-1", "segment-1", 1));
+        assert_eq!(
+            state.commit_context_rotation(3),
+            Err(RealtimeCoordinatorError::InvalidTransition)
+        );
+        assert_eq!(state.active_identity().epoch, 1);
+        state.commit_context_rotation(2).expect("commit");
+        assert_eq!(state.active_identity().epoch, 2);
+        assert!(state.media_generation_enabled());
+        assert!(state.pending_context_rotation().is_none());
     }
 
     #[test]
@@ -828,6 +927,15 @@ mod tests {
                 profile: RealtimeActivityProfile::Game,
             })
             .expect("profile");
+        assert_eq!(state.active_identity().epoch, 1);
+        assert!(!state.media_generation_enabled());
+        let profile_epoch = state
+            .pending_context_rotation()
+            .expect("profile rotation")
+            .next_epoch;
+        state
+            .commit_context_rotation(profile_epoch)
+            .expect("profile rotation acknowledgement");
         assert_eq!(state.active_identity().epoch, 2);
 
         state
@@ -837,6 +945,14 @@ mod tests {
         state
             .apply(RealtimeCoordinatorEvent::ResumePrivacy)
             .expect("resume");
+        assert!(!state.media_generation_enabled());
+        let privacy_epoch = state
+            .pending_context_rotation()
+            .expect("privacy rotation")
+            .next_epoch;
+        state
+            .commit_context_rotation(privacy_epoch)
+            .expect("privacy rotation acknowledgement");
         assert!(state.media_generation_enabled());
         assert_eq!(state.active_identity().epoch, 3);
     }

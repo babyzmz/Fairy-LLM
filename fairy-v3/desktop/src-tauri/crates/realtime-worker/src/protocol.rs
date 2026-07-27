@@ -98,6 +98,14 @@ pub enum HostCommand {
         activity_profile: RealtimeActivityProfile,
         interaction_intensity: RealtimeInteractionIntensity,
     },
+    RotateContext {
+        session_id: String,
+        segment_id: String,
+        current_context_epoch: u64,
+        next_context_epoch: u64,
+        reason: String,
+        public_summary: String,
+    },
     AssistanceResult {
         session_id: String,
         request_id: String,
@@ -354,6 +362,33 @@ mod tests {
                 cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
                 ..
             } if session_id == "session-1" && segment_id == "segment-1"
+        ));
+    }
+
+    #[test]
+    fn context_rotation_command_round_trips_with_bounded_public_fields() {
+        let command = HostCommand::RotateContext {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            current_context_epoch: 1,
+            next_context_epoch: 2,
+            reason: "profile_changed".to_owned(),
+            public_summary: "Current public goal.".to_owned(),
+        };
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &command).expect("write rotation");
+        let decoded: HostCommand = read_frame(&mut bytes.as_slice())
+            .expect("read rotation")
+            .expect("rotation frame");
+        assert!(matches!(
+            decoded,
+            HostCommand::RotateContext {
+                current_context_epoch: 1,
+                next_context_epoch: 2,
+                reason,
+                public_summary,
+                ..
+            } if reason == "profile_changed" && public_summary == "Current public goal."
         ));
     }
 

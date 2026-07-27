@@ -193,6 +193,33 @@ fn main() {
                     active.command(RuntimeCommand::SetInput { microphone, video });
                 }
             }
+            HostCommand::RotateContext {
+                session_id,
+                segment_id,
+                current_context_epoch,
+                next_context_epoch,
+                reason,
+                public_summary,
+            } if active_identity.as_ref().is_some_and(|identity| {
+                identity.session_id == session_id
+                    && identity.segment_id == segment_id
+                    && identity.context_epoch == current_context_epoch
+                    && current_context_epoch
+                        .checked_add(1)
+                        .is_some_and(|next| next == next_context_epoch)
+            }) =>
+            {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::RotateContext {
+                        next_context_epoch,
+                        reason,
+                        public_summary,
+                    });
+                    if let Some(identity) = active_identity.as_mut() {
+                        identity.context_epoch = next_context_epoch;
+                    }
+                }
+            }
             HostCommand::Ping => {
                 if write_frame(&mut stdout().lock(), &WorkerEvent::Pong).is_err() {
                     return;

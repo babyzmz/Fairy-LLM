@@ -65,6 +65,11 @@ pub enum RuntimeCommand {
         microphone: bool,
         video: bool,
     },
+    RotateContext {
+        next_context_epoch: u64,
+        reason: String,
+        public_summary: String,
+    },
 }
 
 pub struct RealtimeRuntime {
@@ -136,7 +141,7 @@ fn run_session(
         application_audio_enabled,
         voice_output,
     } = launch;
-    let identity = RuntimeIdentity {
+    let mut identity = RuntimeIdentity {
         session_id,
         segment_id,
         context_epoch,
@@ -329,6 +334,47 @@ fn run_session(
                     emit_failed(&events, &identity, error.public_code());
                     return;
                 }
+            }
+            Ok(RuntimeCommand::RotateContext {
+                next_context_epoch,
+                reason,
+                public_summary,
+            }) => {
+                let valid = identity
+                    .context_epoch
+                    .checked_add(1)
+                    .is_some_and(|next| next == next_context_epoch)
+                    && valid_rotation_reason(&reason)
+                    && public_summary.chars().count() <= 2_000;
+                if !valid
+                    || active_backend
+                        .rotate_context(next_context_epoch, &reason, &public_summary)
+                        .is_err()
+                {
+                    identity.context_epoch = next_context_epoch;
+                    emit_failed(&events, &identity, "CONTEXT_ROTATION_FAILED");
+                    return;
+                }
+                while microphone.try_recv().is_some() {}
+                if let Some(capture) = game_audio.as_mut() {
+                    while capture.try_recv().is_some() {}
+                }
+                if let Some(mut frame) = video.as_ref().and_then(VideoCapture::take_latest) {
+                    frame.jpeg.zeroize();
+                }
+                if let Some(playback) = playback.as_ref() {
+                    playback.clear();
+                }
+                identity.context_epoch = next_context_epoch;
+                frame_gate.reset(next_context_epoch);
+                current_user_utterance = false;
+                event_sequence = 0;
+                let _ = events.send(WorkerEvent::ContextRotated {
+                    session_id: identity.session_id.clone(),
+                    segment_id: identity.segment_id.clone(),
+                    context_epoch: identity.context_epoch,
+                    reason,
+                });
             }
             Ok(RuntimeCommand::SetInput { microphone, video }) => {
                 if video != video_enabled {
@@ -592,6 +638,18 @@ fn application_audio_scope_supported(
     !application_audio_enabled || backend == RealtimeBackendKind::LocalMiniCpmO45
 }
 
+fn valid_rotation_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "privacy_resume"
+            | "profile_changed"
+            | "window_changed"
+            | "context_budget"
+            | "task_changed"
+            | "manual"
+    )
+}
+
 fn assistant_caption_candidate(
     identity: &RuntimeIdentity,
     text: String,
@@ -640,7 +698,8 @@ fn startup_cancel_requested(
             }
             Ok(RuntimeCommand::Text { .. })
             | Ok(RuntimeCommand::ToolResult { .. })
-            | Ok(RuntimeCommand::SetInput { .. }) => {}
+            | Ok(RuntimeCommand::SetInput { .. })
+            | Ok(RuntimeCommand::RotateContext { .. }) => {}
             Err(mpsc::TryRecvError::Empty) => return false,
         }
     }
