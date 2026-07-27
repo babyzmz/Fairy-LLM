@@ -3,6 +3,7 @@ from __future__ import annotations
 from fairy_core.commanding import EventVisibility
 from fairy_core.contracts.realtime import (
     GameMemorySaveInput,
+    RealtimeAssistanceRequestInput,
     RealtimeProviderSelection,
     RealtimeSessionReportInput,
     RealtimeSessionStartInput,
@@ -12,6 +13,8 @@ from fairy_core.domain.errors import InvalidTransitionError, VersionConflictErro
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.realtime.models import (
     GameMemoryDigest,
+    RealtimeAssistance,
+    RealtimeAssistanceStatus,
     RealtimeMemoryMode,
     RealtimeProvider,
     RealtimeSession,
@@ -67,6 +70,137 @@ class RealtimeApplication:
     def list(self, *, limit: int) -> tuple[RealtimeSession, ...]:
         with self._unit_of_work_factory() as unit_of_work:
             return unit_of_work.realtime.list_sessions(limit=limit)
+
+    def request_assistance(
+        self,
+        request: RealtimeAssistanceRequestInput,
+    ) -> RealtimeAssistance:
+        candidate = RealtimeAssistance.create(
+            session_id=request.session_id,
+            conversation_id=request.conversation_id,
+            request_id=request.request_id,
+            segment_id=request.segment_id,
+            context_epoch=request.context_epoch,
+            question=request.question,
+            activity_profile=request.activity_profile,
+            application_title=request.application_title,
+            observed_facts=request.observed_facts,
+            allow_network=request.allow_network,
+            locale=request.locale,
+        )
+        with self._unit_of_work_factory() as unit_of_work:
+            session = unit_of_work.realtime.get_session(request.session_id)
+            if session is None:
+                raise KeyError(f"realtime session not found: {request.session_id}")
+            if session.conversation_id != request.conversation_id:
+                raise ValueError("Realtime Assistance conversation does not match the session")
+            if session.status not in {
+                RealtimeSessionStatus.STARTING,
+                RealtimeSessionStatus.ACTIVE,
+            }:
+                raise InvalidTransitionError(
+                    "Realtime Assistance requires an active realtime session"
+                )
+            conversation = unit_of_work.state.get_conversation(request.conversation_id)
+            if conversation is None:
+                raise KeyError(f"conversation not found: {request.conversation_id}")
+            existing = unit_of_work.realtime.get_assistance_by_request(
+                request.session_id,
+                candidate.request_id,
+            )
+            if existing is not None:
+                if not existing.same_request(candidate):
+                    # Keep the repository's public conflict semantics without
+                    # attempting an insert that could obscure scope validation.
+                    unit_of_work.realtime.add_assistance(candidate)
+                return existing
+            active = unit_of_work.realtime.nonterminal_assistance_for_session(request.session_id)
+            if active is not None:
+                raise InvalidTransitionError(
+                    "a Realtime Assistance request is already active for this session"
+                )
+            saved = unit_of_work.realtime.add_assistance(candidate)
+            unit_of_work.commands.append_domain_event(
+                event_type="realtime.assistance.requested",
+                visibility=EventVisibility.USER,
+                message="Realtime Assistance requested",
+                payload={
+                    "assistance_id": str(saved.id),
+                    "session_id": str(saved.session_id),
+                    "request_id": saved.request_id,
+                    "status": saved.status.value,
+                    "allow_network": saved.allow_network,
+                },
+                actor="realtime",
+                conversation_id=saved.conversation_id,
+            )
+            unit_of_work.commit()
+            return saved
+
+    def get_assistance(
+        self,
+        session_id,
+        request_id: str,
+    ) -> RealtimeAssistance:
+        with self._unit_of_work_factory() as unit_of_work:
+            assistance = unit_of_work.realtime.get_assistance_by_request(
+                session_id,
+                request_id,
+            )
+        if assistance is None:
+            raise KeyError(f"realtime assistance not found: {session_id}/{request_id}")
+        return assistance
+
+    def update_assistance(
+        self,
+        assistance: RealtimeAssistance,
+        *,
+        expected_revision: int,
+    ) -> RealtimeAssistance:
+        with self._unit_of_work_factory() as unit_of_work:
+            saved = unit_of_work.realtime.update_assistance(
+                assistance,
+                expected_revision=expected_revision,
+            )
+            unit_of_work.commands.append_domain_event(
+                event_type="realtime.assistance.state.changed",
+                visibility=EventVisibility.USER,
+                message="Realtime Assistance state changed",
+                payload={
+                    "assistance_id": str(saved.id),
+                    "session_id": str(saved.session_id),
+                    "request_id": saved.request_id,
+                    "status": saved.status.value,
+                    "requires_user_confirmation": saved.requires_user_confirmation,
+                    "error_code": saved.error_code,
+                },
+                actor="core",
+                conversation_id=saved.conversation_id,
+                task_id=saved.task_id,
+            )
+            unit_of_work.commit()
+            return saved
+
+    def cancel_assistance(
+        self,
+        session_id,
+        request_id: str,
+        *,
+        expected_revision: int,
+    ) -> RealtimeAssistance:
+        current = self.get_assistance(session_id, request_id)
+        if current.status in {
+            RealtimeAssistanceStatus.COMPLETED,
+            RealtimeAssistanceStatus.FAILED,
+            RealtimeAssistanceStatus.CANCELLED,
+        }:
+            return current
+        if current.revision != expected_revision:
+            raise VersionConflictError("realtime assistance revision changed")
+        return self.update_assistance(
+            current.cancel(),
+            expected_revision=current.revision,
+        )
 
     def request_stop(self, session_id, *, expected_revision: int) -> RealtimeSession:
         with self._unit_of_work_factory() as unit_of_work:
@@ -147,9 +281,7 @@ class RealtimeApplication:
         with self._unit_of_work_factory() as unit_of_work:
             return unit_of_work.realtime.list_memories(limit=limit)
 
-    def append_transcript(
-        self, request: RealtimeTranscriptAppendInput
-    ) -> RealtimeTranscriptEntry:
+    def append_transcript(self, request: RealtimeTranscriptAppendInput) -> RealtimeTranscriptEntry:
         with self._unit_of_work_factory() as unit_of_work:
             session = unit_of_work.realtime.get_session(request.session_id)
             if session is None:

@@ -181,6 +181,19 @@ class SqlAlchemyRealtimeRepository:
         )
         return _assistance_from_row(row) if row is not None else None
 
+    def assistance_for_task(self, task_id: UUID) -> RealtimeAssistance | None:
+        row = (
+            self._connection.execute(
+                select(realtime_assistance).where(
+                    realtime_assistance.c.tenant_id == self._tenant_id,
+                    realtime_assistance.c.task_id == str(task_id),
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _assistance_from_row(row) if row is not None else None
+
     def update_assistance(
         self,
         assistance: RealtimeAssistance,

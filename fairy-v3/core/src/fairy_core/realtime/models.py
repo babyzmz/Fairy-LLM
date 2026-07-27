@@ -521,6 +521,28 @@ class RealtimeAssistance:
     def same_request(self, other: RealtimeAssistance) -> bool:
         return self.request_fingerprint == other.request_fingerprint
 
+    def with_queue_reason(
+        self,
+        error_code: str | None,
+        *,
+        now: datetime | None = None,
+    ) -> RealtimeAssistance:
+        if self.status is not RealtimeAssistanceStatus.QUEUED:
+            raise InvalidTransitionError("only queued Realtime Assistance has a queue reason")
+        normalized = (
+            _clean_text(error_code, name="error_code", maximum=128)
+            if error_code is not None
+            else None
+        )
+        if normalized == self.error_code:
+            return self
+        return replace(
+            self,
+            error_code=normalized,
+            updated_at=(now or _now()).astimezone(UTC),
+            revision=self.revision + 1,
+        )
+
     def start(
         self,
         *,
@@ -536,6 +558,7 @@ class RealtimeAssistance:
             RealtimeAssistanceStatus.RUNNING,
             task_id=task_id,
             turn_id=turn_id,
+            error_code=None,
             now=now,
         )
 

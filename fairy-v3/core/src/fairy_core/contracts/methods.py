@@ -269,6 +269,10 @@ from fairy_core.contracts.realtime import (
     GameMemoryListInput,
     GameMemoryPageModel,
     GameMemorySaveInput,
+    RealtimeAssistanceCancelInput,
+    RealtimeAssistanceGetInput,
+    RealtimeAssistanceModel,
+    RealtimeAssistanceRequestInput,
     RealtimeSessionIdInput,
     RealtimeSessionListInput,
     RealtimeSessionModel,
@@ -1095,6 +1099,24 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
         ),
         "realtime.memories.save": CoreMethod(
             "realtime.memories.save", GameMemorySaveInput, GameMemoryDigestModel
+        ),
+        "realtime.assistance.cancel": CoreMethod(
+            "realtime.assistance.cancel",
+            RealtimeAssistanceCancelInput,
+            RealtimeAssistanceModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "realtime.assistance.get": CoreMethod(
+            "realtime.assistance.get",
+            RealtimeAssistanceGetInput,
+            RealtimeAssistanceModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "realtime.assistance.request": CoreMethod(
+            "realtime.assistance.request",
+            RealtimeAssistanceRequestInput,
+            RealtimeAssistanceModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "realtime.persona.snapshot": CoreMethod(
             "realtime.persona.snapshot",

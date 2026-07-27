@@ -56,6 +56,10 @@ class ModelCatalogService:
     def get_selection(self, _request: BaseModel) -> dict[str, Any]:
         return _selection_response(self._application.get_selection())
 
+    def selection_preference(self) -> ModelSelectionPreference:
+        """Return the typed current selection for other Core-owned workflows."""
+        return self._application.get_selection()
+
     def update_selection(self, request: BaseModel) -> dict[str, Any]:
         validated = cast(ModelSelectionUpdateInput, request)
         selection = self._application.update_selection(

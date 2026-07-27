@@ -104,6 +104,7 @@ from fairy_core.persona import (
 )
 from fairy_core.presentation.packs import RendererPackInstaller
 from fairy_core.providers import ProviderRegistry
+from fairy_core.realtime.tools import RealtimeAssistanceToolExecutor
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.pool_scheduler import PreviewIdleScheduler
@@ -306,12 +307,6 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         )
         self._turn_trace_service = TurnTraceService(unit_of_work_factory)
         self._turn_trace_runtime = TurnTraceRuntime(unit_of_work_factory)
-        self._realtime_service = RealtimeService(
-            unit_of_work_factory,
-            persona_authority=persona_authority,
-            scratch_conversation_factory=(application.create_scratch_conversation_in_unit_of_work),
-            scratch_conversation_cleanup=application.purge_scratch_conversation,
-        )
         self._browser_service = browser_service
         self._execution_planning = application.execution_planning
         media = build_media_composition(
@@ -405,6 +400,10 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
                 scheduler=media.scheduler,
                 delegate=effective_tool_executor,
             )
+        effective_tool_executor = RealtimeAssistanceToolExecutor(
+            unit_of_work_factory=unit_of_work_factory,
+            delegate=effective_tool_executor,
+        )
         self._tool_executor = effective_tool_executor
         self._assistant_application = AssistantApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -419,6 +418,20 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         self._assistant_scheduler = AssistantTurnScheduler(
             application=self._assistant_application,
             ledger=self._assistant_ledger,
+        )
+        self._realtime_service = RealtimeService(
+            unit_of_work_factory,
+            persona_authority=persona_authority,
+            scratch_conversation_factory=(application.create_scratch_conversation_in_unit_of_work),
+            scratch_conversation_cleanup=application.purge_scratch_conversation,
+            task_factory=application.create_task,
+            turn_factory=self._create_assistant_turn,
+            turn_starter=self._assistant_scheduler.start,
+            turn_canceller=lambda turn_id, revision: self._cancel_assistant_turn_by_id(
+                turn_id,
+                expected_cancellation_revision=revision,
+            ),
+            selection_provider=self._model_catalog_service.selection_preference,
         )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
         selected_obsidian = obsidian_connector or ObsidianConnector()
