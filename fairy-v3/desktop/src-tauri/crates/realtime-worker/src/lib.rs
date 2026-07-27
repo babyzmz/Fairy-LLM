@@ -1,3 +1,4 @@
+mod backend;
 mod media;
 mod protocol;
 mod provider;
@@ -5,6 +6,10 @@ mod runtime;
 mod session;
 mod transport;
 
+pub use backend::{
+    validate_backend_start, BackendStartRequest, RealtimeActivityProfile, RealtimeBackendKind,
+    RealtimeCloudProviderKind, RealtimeInteractionIntensity, RealtimeVoiceOutput,
+};
 pub use media::{
     resample_pcm16, AudioPacket, AudioPlayback, MicrophoneCapture, VideoCapture, VideoFrame,
 };

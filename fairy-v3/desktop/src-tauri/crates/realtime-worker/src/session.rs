@@ -6,13 +6,12 @@
 //! opened, so an empty credential or an inconsistent capture scope fails fast
 //! with a clear reason instead of surfacing as an opaque connection error.
 
-use thiserror::Error;
+use crate::backend::{
+    validate_backend_start, BackendStartRequest, RealtimeActivityProfile, RealtimeBackendKind,
+    RealtimeCloudProviderKind, RealtimeInteractionIntensity, RealtimeVoiceOutput,
+};
 
-#[derive(Debug, Error, Eq, PartialEq)]
-pub enum StartValidationError {
-    #[error("the realtime start request is invalid")]
-    Invalid,
-}
+pub use crate::backend::StartValidationError;
 
 /// Validate the invariants a Start request must satisfy before the worker dials
 /// a provider or opens any capture device:
@@ -29,16 +28,28 @@ pub fn validate_start(
     game_audio_enabled: bool,
     credential: &str,
 ) -> Result<(), StartValidationError> {
-    let valid = !session_id.is_empty()
-        && !credential.trim().is_empty()
-        && matches!(voice_mode, "native" | "fairy")
-        && screen_enabled == source_id.is_some()
-        && (screen_enabled || !game_audio_enabled);
-    if valid {
-        Ok(())
-    } else {
-        Err(StartValidationError::Invalid)
-    }
+    let voice_output = match voice_mode {
+        "native" => RealtimeVoiceOutput::ProviderNativeVoice,
+        "fairy" => RealtimeVoiceOutput::FairyVoice,
+        _ => return Err(StartValidationError::Invalid),
+    };
+    validate_backend_start(&BackendStartRequest {
+        session_id: session_id.to_owned(),
+        segment_id: "legacy-cloud-segment".to_owned(),
+        context_epoch: 1,
+        backend: RealtimeBackendKind::CloudLive,
+        cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
+        cloud_credential_present: !credential.trim().is_empty(),
+        persona_snapshot_present: true,
+        activity_profile: RealtimeActivityProfile::Game,
+        interaction_intensity: RealtimeInteractionIntensity::Standard,
+        voice_output,
+        source_id,
+        microphone_enabled: true,
+        screen_enabled,
+        application_audio_enabled: game_audio_enabled,
+        online_assistance_enabled: false,
+    })
 }
 
 #[cfg(test)]
