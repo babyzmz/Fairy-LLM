@@ -60,6 +60,7 @@ pub mod capture;
 pub mod desktop_preferences;
 pub mod hardware_capabilities;
 pub mod obsidian_path_registry;
+pub mod omni_model_catalog;
 pub mod omni_model_manifest;
 pub mod presence_backdrop;
 pub mod presence_coordinator;
