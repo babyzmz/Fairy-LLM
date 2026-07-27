@@ -54,6 +54,9 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
   };
 
   const selectChatConversation = (conversationId: string) => {
+    if (!chatConversations.some((conversation) => conversation.id === conversationId)) {
+      void invalidateHistory();
+    }
     setMode("chat");
     if (chatConversationSelection === conversationId) return;
     setChatConversationSelection(conversationId);

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,7 +22,7 @@ import type {
 import { CoreRpcError, type InvokeFunction } from "../core/tauriTransport";
 import { SettingsClient, type DesktopPreferences } from "../settings/client";
 import { App } from "./App";
-import type { MainViewHost } from "./mainViewBridge";
+import type { MainViewHost, MainViewRequest } from "./mainViewBridge";
 import type { WorkspaceClient } from "./workspaceModel";
 
 const ID = {
@@ -472,6 +472,55 @@ describe("App", () => {
     render(<App client={client} mainViewHost={mainViewHost} />);
 
     expect(await screen.findByText("Scratch chat is durable")).toBeVisible();
+    expect(screen.getByTestId("workspace-view")).not.toHaveAttribute("hidden");
+  });
+
+  it("refreshes history before opening a Realtime-linked conversation created outside the main WebView", async () => {
+    let navigate: ((request: MainViewRequest) => void) | undefined;
+    const request = {
+      schema_version: 1 as const,
+      sequence: 9,
+      view: "workspace" as const,
+      settings_category: null,
+      conversation_id: ID.scratchConversation,
+    };
+    const mainViewHost: MainViewHost = {
+      get: vi.fn(async () => ({
+        ...request,
+        sequence: 0,
+        conversation_id: null,
+      })),
+      navigate: vi.fn(async () => request),
+      subscribe: vi.fn(async (listener) => {
+        navigate = listener;
+        return () => undefined;
+      }),
+    };
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [],
+    );
+    const listConversations = vi
+      .fn<WorkspaceClient["conversations"]["list"]>()
+      .mockResolvedValueOnce({ items: [], next_cursor: null })
+      .mockResolvedValue({ items: [scratchConversation], next_cursor: null });
+    client.conversations.list = listConversations;
+    client.messages.list = vi.fn(async () => ({
+      items: [scratchMessage],
+      next_cursor: null,
+    }));
+
+    render(<App client={client} mainViewHost={mainViewHost} />);
+
+    await screen.findByText("No chats");
+    await waitFor(() => expect(listConversations).toHaveBeenCalledTimes(1));
+    await act(async () => navigate?.(request));
+    expect(await screen.findByText("Scratch chat is durable")).toBeVisible();
+    expect(listConversations).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("workspace-view")).not.toHaveAttribute("hidden");
   });
 
