@@ -7,7 +7,11 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fairy_realtime_worker::{read_frame, write_frame, HostCommand, ProviderKind, SecretString};
+use fairy_realtime_worker::{
+    read_frame, validate_backend_start, write_frame, BackendStartRequest, HostCommand,
+    RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
+    RealtimeInteractionIntensity, RealtimeVoiceOutput, SecretString,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
@@ -15,7 +19,7 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 pub const REALTIME_WORKER_EVENT: &str = "fairy-realtime-event";
-const REALTIME_PROTOCOL: &str = "fairy-realtime-worker-v1";
+const REALTIME_PROTOCOL: &str = "fairy-realtime-worker-v2";
 const WORKER_STOP_GRACE: Duration = Duration::from_millis(80);
 
 #[derive(Clone, Debug)]
@@ -24,29 +28,16 @@ pub struct RealtimeWorkerLaunch {
     pub log_path: PathBuf,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RealtimeProvider {
-    GeminiLive,
-    GlmRealtimeFlash,
-    GlmRealtimeAir,
+trait RealtimeCredentialProvider {
+    fn credential_provider(&self) -> &'static str;
 }
 
-impl From<RealtimeProvider> for ProviderKind {
-    fn from(value: RealtimeProvider) -> Self {
-        match value {
-            RealtimeProvider::GeminiLive => Self::GeminiLive,
-            RealtimeProvider::GlmRealtimeFlash => Self::GlmRealtimeFlash,
-            RealtimeProvider::GlmRealtimeAir => Self::GlmRealtimeAir,
-        }
-    }
-}
-
-impl RealtimeProvider {
-    pub fn credential_provider(&self) -> &'static str {
+impl RealtimeCredentialProvider for RealtimeCloudProviderKind {
+    fn credential_provider(&self) -> &'static str {
         match self {
-            Self::GeminiLive => "gemini",
-            Self::GlmRealtimeFlash | Self::GlmRealtimeAir => "zhipu",
+            RealtimeCloudProviderKind::GeminiLive => "gemini",
+            RealtimeCloudProviderKind::GlmRealtimeFlash
+            | RealtimeCloudProviderKind::GlmRealtimeAir => "zhipu",
         }
     }
 }
@@ -54,11 +45,27 @@ impl RealtimeProvider {
 #[derive(Clone, Debug, Deserialize)]
 pub struct RealtimeWorkerStartInput {
     pub session_id: String,
-    pub provider: RealtimeProvider,
-    pub voice_mode: String,
+    pub segment_id: String,
+    pub context_epoch: u64,
+    pub locale: String,
+    pub backend: RealtimeBackendKind,
+    pub cloud_provider: Option<RealtimeCloudProviderKind>,
+    pub activity_profile: RealtimeActivityProfile,
+    pub interaction_intensity: RealtimeInteractionIntensity,
+    pub voice_output: RealtimeVoiceOutput,
     pub source_id: Option<u64>,
+    pub microphone_enabled: bool,
     pub screen_enabled: bool,
-    pub game_audio_enabled: bool,
+    pub application_audio_enabled: bool,
+    pub online_assistance_enabled: bool,
+}
+
+impl RealtimeWorkerStartInput {
+    pub fn credential_provider(&self) -> Option<&'static str> {
+        self.cloud_provider
+            .as_ref()
+            .map(RealtimeCredentialProvider::credential_provider)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -151,9 +158,18 @@ impl RealtimeWorkerManager {
         &self,
         app: &AppHandle,
         input: RealtimeWorkerStartInput,
-        credential: Zeroizing<String>,
+        credential: Option<Zeroizing<String>>,
+        persona_snapshot: Zeroizing<String>,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
         validate_capture_scope(&input)?;
+        if input.backend == RealtimeBackendKind::CloudLive && credential.is_none() {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        if persona_snapshot.trim().is_empty()
+            || serde_json::from_str::<Value>(&persona_snapshot).is_err()
+        {
+            return Err(RealtimeWorkerError::Protocol);
+        }
         let mut guard = self
             .process
             .lock()
@@ -170,12 +186,20 @@ impl RealtimeWorkerManager {
         let mut process = spawn_worker(&self.launch, app.clone(), Arc::clone(&self.usage))?;
         let command = HostCommand::Start {
             session_id: input.session_id.clone(),
-            provider: input.provider.into(),
-            voice_mode: input.voice_mode,
+            segment_id: input.segment_id,
+            context_epoch: input.context_epoch,
+            backend: input.backend,
+            cloud_provider: input.cloud_provider,
+            cloud_credential: credential.map(SecretString::from),
+            persona_snapshot: SecretString::from(persona_snapshot),
+            activity_profile: input.activity_profile,
+            interaction_intensity: input.interaction_intensity,
+            voice_output: input.voice_output,
             source_id: input.source_id,
+            microphone_enabled: input.microphone_enabled,
             screen_enabled: input.screen_enabled,
-            game_audio_enabled: input.game_audio_enabled,
-            credential: SecretString::from(credential),
+            application_audio_enabled: input.application_audio_enabled,
+            online_assistance_enabled: input.online_assistance_enabled,
         };
         if send_command(&process.input, &command).is_err() {
             let _ = process.child.kill();
@@ -286,13 +310,24 @@ impl RealtimeWorkerManager {
 }
 
 fn validate_capture_scope(input: &RealtimeWorkerStartInput) -> Result<(), RealtimeWorkerError> {
-    if (input.screen_enabled || input.game_audio_enabled) && input.source_id.is_none() {
-        return Err(RealtimeWorkerError::Protocol);
-    }
-    if input.game_audio_enabled && !input.screen_enabled {
-        return Err(RealtimeWorkerError::Protocol);
-    }
-    Ok(())
+    validate_backend_start(&BackendStartRequest {
+        session_id: input.session_id.clone(),
+        segment_id: input.segment_id.clone(),
+        context_epoch: input.context_epoch,
+        backend: input.backend,
+        cloud_provider: input.cloud_provider,
+        cloud_credential_present: input.backend == RealtimeBackendKind::CloudLive,
+        persona_snapshot_present: true,
+        activity_profile: input.activity_profile,
+        interaction_intensity: input.interaction_intensity,
+        voice_output: input.voice_output,
+        source_id: input.source_id,
+        microphone_enabled: input.microphone_enabled,
+        screen_enabled: input.screen_enabled,
+        application_audio_enabled: input.application_audio_enabled,
+        online_assistance_enabled: input.online_assistance_enabled,
+    })
+    .map_err(|_| RealtimeWorkerError::Protocol)
 }
 
 impl Drop for RealtimeWorkerManager {
@@ -458,13 +493,16 @@ mod tests {
 
     #[test]
     fn providers_map_to_separate_credential_accounts() {
-        assert_eq!(RealtimeProvider::GeminiLive.credential_provider(), "gemini");
         assert_eq!(
-            RealtimeProvider::GlmRealtimeFlash.credential_provider(),
+            RealtimeCloudProviderKind::GeminiLive.credential_provider(),
+            "gemini"
+        );
+        assert_eq!(
+            RealtimeCloudProviderKind::GlmRealtimeFlash.credential_provider(),
             "zhipu"
         );
         assert_eq!(
-            RealtimeProvider::GlmRealtimeAir.credential_provider(),
+            RealtimeCloudProviderKind::GlmRealtimeAir.credential_provider(),
             "zhipu"
         );
     }
@@ -481,17 +519,25 @@ mod tests {
     fn capture_and_process_audio_require_one_selected_window() {
         let mut input = RealtimeWorkerStartInput {
             session_id: "session-1".to_owned(),
-            provider: RealtimeProvider::GeminiLive,
-            voice_mode: "native".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            locale: "en-AU".to_owned(),
+            backend: RealtimeBackendKind::CloudLive,
+            cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
+            activity_profile: RealtimeActivityProfile::Game,
+            interaction_intensity: RealtimeInteractionIntensity::Standard,
+            voice_output: RealtimeVoiceOutput::ProviderNativeVoice,
             source_id: None,
+            microphone_enabled: true,
             screen_enabled: true,
-            game_audio_enabled: false,
+            application_audio_enabled: false,
+            online_assistance_enabled: false,
         };
         assert!(validate_capture_scope(&input).is_err());
 
         input.source_id = Some(42);
         input.screen_enabled = false;
-        input.game_audio_enabled = true;
+        input.application_audio_enabled = true;
         assert!(validate_capture_scope(&input).is_err());
 
         input.screen_enabled = true;

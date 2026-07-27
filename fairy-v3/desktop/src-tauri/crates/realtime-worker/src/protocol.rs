@@ -5,6 +5,11 @@ use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializ
 use thiserror::Error;
 use zeroize::Zeroizing;
 
+use crate::backend::{
+    RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
+    RealtimeInteractionIntensity, RealtimeVoiceOutput,
+};
+
 pub const MAX_CONTROL_FRAME_BYTES: usize = 256 * 1024;
 
 /// A credential carried over the worker's stdin control channel.
@@ -58,25 +63,25 @@ impl<'de> Deserialize<'de> for SecretString {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderKind {
-    GeminiLive,
-    GlmRealtimeFlash,
-    GlmRealtimeAir,
-}
-
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostCommand {
     Start {
         session_id: String,
-        provider: ProviderKind,
-        voice_mode: String,
+        segment_id: String,
+        context_epoch: u64,
+        backend: RealtimeBackendKind,
+        cloud_provider: Option<RealtimeCloudProviderKind>,
+        cloud_credential: Option<SecretString>,
+        persona_snapshot: SecretString,
+        activity_profile: RealtimeActivityProfile,
+        interaction_intensity: RealtimeInteractionIntensity,
+        voice_output: RealtimeVoiceOutput,
         source_id: Option<u64>,
+        microphone_enabled: bool,
         screen_enabled: bool,
-        game_audio_enabled: bool,
-        credential: SecretString,
+        application_audio_enabled: bool,
+        online_assistance_enabled: bool,
     },
     Stop {
         session_id: String,
@@ -85,6 +90,23 @@ pub enum HostCommand {
         session_id: String,
         microphone: bool,
         video: bool,
+    },
+    SetProfile {
+        session_id: String,
+        activity_profile: RealtimeActivityProfile,
+        interaction_intensity: RealtimeInteractionIntensity,
+    },
+    AssistanceResult {
+        session_id: String,
+        request_id: String,
+        public_summary: String,
+        succeeded: bool,
+    },
+    Pause {
+        session_id: String,
+    },
+    Resume {
+        session_id: String,
     },
     UpdateUsage {
         session_id: String,
@@ -102,45 +124,119 @@ pub enum HostCommand {
     Ping,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkerEvent {
     Ready {
-        protocol: &'static str,
+        protocol: String,
+    },
+    BackendState {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        backend: RealtimeBackendKind,
+        status: String,
+        error_code: Option<String>,
+    },
+    ModelLoadProgress {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        completed_bytes: u64,
+        total_bytes: u64,
     },
     SessionState {
         session_id: String,
-        status: &'static str,
-        provider: Option<ProviderKind>,
-        error_code: Option<&'static str>,
+        segment_id: String,
+        context_epoch: u64,
+        status: String,
+        backend: RealtimeBackendKind,
+        cloud_provider: Option<RealtimeCloudProviderKind>,
+        error_code: Option<String>,
     },
     PublicCaption {
         session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        sequence: u64,
         text: String,
         stable: bool,
-        speaker: &'static str,
+        speaker: String,
     },
     Presence {
         session_id: String,
-        state: &'static str,
+        segment_id: String,
+        context_epoch: u64,
+        state: String,
         level: Option<u8>,
     },
     BargeIn {
         session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+    },
+    PerceptionCandidate {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        sequence: u64,
+        public_summary: String,
+    },
+    AssistanceRequest {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        request_id: String,
+        public_intent: String,
+    },
+    AssistanceState {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        request_id: String,
+        status: String,
+        error_code: Option<String>,
     },
     ToolRequest {
         session_id: String,
+        segment_id: String,
+        context_epoch: u64,
         call_id: String,
         tool_name: String,
         public_intent: String,
     },
+    ResourcePressure {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        code: String,
+    },
+    ContextRotated {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        reason: String,
+    },
+    PrivacyPaused {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+    },
     Usage {
         session_id: String,
+        segment_id: String,
+        context_epoch: u64,
         audio_input_ms: u64,
         audio_output_ms: u64,
         video_frame_count: u64,
         interruption_count: u64,
         tool_call_count: u64,
+    },
+    Diagnostic {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        code: String,
     },
     Pong,
 }
@@ -188,6 +284,10 @@ pub fn write_frame<T: Serialize>(writer: &mut impl Write, value: &T) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::{
+        RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
+        RealtimeInteractionIntensity, RealtimeVoiceOutput,
+    };
 
     #[test]
     fn length_prefixed_frames_round_trip_without_line_parsing() {
@@ -207,5 +307,203 @@ mod tests {
         bytes.extend_from_slice(b"{}");
         let result = read_frame::<serde_json::Value>(&mut bytes.as_slice());
         assert!(matches!(result, Err(ProtocolError::FrameTooLarge)));
+    }
+
+    #[test]
+    fn governed_cloud_start_round_trips_and_redacts_control_secrets() {
+        let command = HostCommand::Start {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            backend: RealtimeBackendKind::CloudLive,
+            cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
+            cloud_credential: Some(SecretString::from("credential-secret".to_owned())),
+            persona_snapshot: SecretString::from(valid_snapshot_json()),
+            activity_profile: RealtimeActivityProfile::Auto,
+            interaction_intensity: RealtimeInteractionIntensity::Standard,
+            voice_output: RealtimeVoiceOutput::FairyVoice,
+            source_id: Some(42),
+            microphone_enabled: true,
+            screen_enabled: true,
+            application_audio_enabled: false,
+            online_assistance_enabled: false,
+        };
+
+        let debug = format!("{command:?}");
+        assert!(!debug.contains("credential-secret"));
+        assert!(!debug.contains("persona-secret-marker"));
+        assert!(debug.contains("***"));
+
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &command).expect("write start");
+        let decoded: HostCommand = read_frame(&mut bytes.as_slice())
+            .expect("read start")
+            .expect("start frame");
+        assert!(matches!(
+            decoded,
+            HostCommand::Start {
+                session_id,
+                segment_id,
+                context_epoch: 1,
+                backend: RealtimeBackendKind::CloudLive,
+                cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
+                ..
+            } if session_id == "session-1" && segment_id == "segment-1"
+        ));
+    }
+
+    #[test]
+    fn diagnostics_reject_unknown_content_fields() {
+        let value = serde_json::json!({
+            "type": "diagnostic",
+            "session_id": "session-1",
+            "segment_id": "segment-1",
+            "context_epoch": 1,
+            "code": "SAFE_CODE",
+            "provider_payload": {"secret": true}
+        });
+
+        assert!(serde_json::from_value::<WorkerEvent>(value).is_err());
+    }
+
+    #[test]
+    fn every_frozen_worker_event_round_trips() {
+        let identity = || ("session-1".to_owned(), "segment-1".to_owned(), 1_u64);
+        let mut events = vec![
+            WorkerEvent::Ready {
+                protocol: "fairy-realtime-worker-v2".to_owned(),
+            },
+            WorkerEvent::ModelLoadProgress {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                completed_bytes: 5,
+                total_bytes: 10,
+            },
+            WorkerEvent::PublicCaption {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                sequence: 2,
+                text: "hello".to_owned(),
+                stable: true,
+                speaker: "assistant".to_owned(),
+            },
+            WorkerEvent::Presence {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                state: "listening".to_owned(),
+                level: Some(4),
+            },
+            WorkerEvent::BargeIn {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+            },
+            WorkerEvent::PerceptionCandidate {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                sequence: 3,
+                public_summary: "A menu is open".to_owned(),
+            },
+            WorkerEvent::AssistanceRequest {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                request_id: "request-1".to_owned(),
+                public_intent: "Look up a public fact".to_owned(),
+            },
+            WorkerEvent::AssistanceState {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                request_id: "request-1".to_owned(),
+                status: "completed".to_owned(),
+                error_code: None,
+            },
+            WorkerEvent::ToolRequest {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                call_id: "call-1".to_owned(),
+                tool_name: "observe".to_owned(),
+                public_intent: "Observe a public state".to_owned(),
+            },
+            WorkerEvent::ResourcePressure {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                code: "GPU_BUDGET_LOW".to_owned(),
+            },
+            WorkerEvent::ContextRotated {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 2,
+                reason: "privacy_resume".to_owned(),
+            },
+            WorkerEvent::PrivacyPaused {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 2,
+            },
+            WorkerEvent::Usage {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 2,
+                audio_input_ms: 1,
+                audio_output_ms: 2,
+                video_frame_count: 3,
+                interruption_count: 4,
+                tool_call_count: 5,
+            },
+            WorkerEvent::Diagnostic {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 2,
+                code: "SAFE_CODE".to_owned(),
+            },
+            WorkerEvent::Pong,
+        ];
+        for backend in [
+            RealtimeBackendKind::CloudLive,
+            RealtimeBackendKind::LocalMiniCpmO45,
+        ] {
+            events.push(WorkerEvent::BackendState {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                backend,
+                status: "ready".to_owned(),
+                error_code: None,
+            });
+            events.push(WorkerEvent::SessionState {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                status: "active".to_owned(),
+                backend,
+                cloud_provider: (backend == RealtimeBackendKind::CloudLive)
+                    .then_some(RealtimeCloudProviderKind::GeminiLive),
+                error_code: None,
+            });
+        }
+
+        for event in events {
+            let encoded = serde_json::to_value(&event).expect("serialize event");
+            let decoded =
+                serde_json::from_value::<WorkerEvent>(encoded).expect("deserialize event");
+            assert_eq!(decoded, event);
+        }
+    }
+
+    fn valid_snapshot_json() -> String {
+        serde_json::json!({
+            "schema_version": 1,
+            "persona_digest": "a".repeat(64),
+            "identity": {"name": "Fairy", "marker": "persona-secret-marker"}
+        })
+        .to_string()
     }
 }

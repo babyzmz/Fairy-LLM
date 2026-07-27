@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { LoaderCircle, Mic, MicOff, Monitor, Pause, Play, RotateCcw, Save, ShieldCheck, SlidersHorizontal, Square, X } from "lucide-react";
+import { LoaderCircle, Mic, MicOff, Monitor, Pause, Play, RotateCcw, Save, ShieldCheck, SlidersHorizontal, Square, Volume2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
@@ -9,7 +9,6 @@ import type {
   RealtimeProviderCredentialStatus,
   RealtimeSession,
   RealtimeSessionStatus,
-  RealtimeWorkerProvider,
 } from "../core/client";
 import type { InvokeFunction } from "../core/tauriTransport";
 import type { DesktopPreferences } from "../settings/client";
@@ -27,12 +26,12 @@ interface CaptureSurface {
 }
 
 type WorkerEvent =
-  | { type: "session_state"; session_id: string; status: string; error_code?: string | null }
-  | { type: "public_caption"; session_id: string; text: string; stable: boolean; speaker: "user" | "assistant" }
-  | { type: "presence"; session_id: string; state: string; level?: number | null }
-  | { type: "barge_in"; session_id: string }
-  | { type: "tool_request"; session_id: string; call_id: string; tool_name: string; public_intent: string }
-  | { type: "usage"; session_id: string; audio_input_ms: number; audio_output_ms: number; video_frame_count: number; interruption_count: number; tool_call_count: number }
+  | { type: "session_state"; session_id: string; segment_id: string; context_epoch: number; status: string; error_code?: string | null }
+  | { type: "public_caption"; session_id: string; segment_id: string; context_epoch: number; sequence: number; text: string; stable: boolean; speaker: "user" | "assistant" }
+  | { type: "presence"; session_id: string; segment_id: string; context_epoch: number; state: string; level?: number | null }
+  | { type: "barge_in"; session_id: string; segment_id: string; context_epoch: number }
+  | { type: "tool_request"; session_id: string; segment_id: string; context_epoch: number; call_id: string; tool_name: string; public_intent: string }
+  | { type: "usage"; session_id: string; segment_id: string; context_epoch: number; audio_input_ms: number; audio_output_ms: number; video_frame_count: number; interruption_count: number; tool_call_count: number }
   | { type: "worker_interrupted"; error_code: string }
   | { type: "ready" | "pong" };
 
@@ -85,6 +84,7 @@ export function RealtimeCompanion({
   const [sourceId, setSourceId] = useState("");
   const [microphoneConsent, setMicrophoneConsent] = useState(false);
   const [screenConsent, setScreenConsent] = useState(false);
+  const [applicationAudioConsent, setApplicationAudioConsent] = useState(false);
   const [session, setSession] = useState<RealtimeSession | null>(null);
   const sessionRef = useRef<RealtimeSession | null>(null);
   const [presence, setPresence] = useState<RealtimePresenceState>("idle");
@@ -173,16 +173,17 @@ export function RealtimeCompanion({
         client.sessions.list(20),
         client.worker.status(),
       ]);
-      const credentialProvider = credentialProviderFor(
-        nextPreferences.realtime_cloud_provider,
-      );
+      const localRequested = nextPreferences.realtime_backend === "local_mini_cpm_o45";
+      const credentialProvider = credentialProviderFor(nextPreferences.realtime_cloud_provider);
       // An unreadable stored key (e.g. a DPAPI blob from another machine) must
       // not blank the whole panel: treat a failed status lookup as "not ready"
       // so the Configure-in-Settings guidance shows instead of a raw error.
-      const credential = await hostInvoke<RealtimeProviderCredentialStatus>(
-        "provider_realtime_status",
-        { input: { provider: credentialProvider } },
-      ).catch(() => ({ provider: credentialProvider, configured: false }));
+      const credential = localRequested
+        ? null
+        : await hostInvoke<RealtimeProviderCredentialStatus>(
+          "provider_realtime_status",
+          { input: { provider: credentialProvider } },
+        ).catch(() => ({ provider: credentialProvider, configured: false }));
       const localDeviceId = deviceId();
       for (const stale of recentSessions.items) {
         if (
@@ -215,7 +216,7 @@ export function RealtimeCompanion({
       }
       const windows = captureSurfaces.filter((item) => item.kind === "window");
       setPreferences(nextPreferences);
-      setCredentialReady(credential.configured);
+      setCredentialReady(credential?.configured ?? null);
       setSurfaces(windows);
       setSourceId((current) => current || windows[0]?.source_id || "");
     } catch (caught) {
@@ -393,7 +394,9 @@ export function RealtimeCompanion({
 
   const start = async () => {
     if (
-      preferences === null || credentialReady !== true || !microphoneConsent
+      preferences === null || !preferences.realtime_beta_enabled
+      || preferences.realtime_backend === "local_mini_cpm_o45"
+      || credentialReady !== true || !microphoneConsent
       || !screenConsent || sourceId === ""
     ) return;
     setBusy(true);
@@ -435,11 +438,19 @@ export function RealtimeCompanion({
       startedAt.current = Date.now();
       await client.worker.start({
         session_id: created.id,
-        provider: created.provider as RealtimeWorkerProvider,
-        voice_mode: created.voice_mode,
+        segment_id: crypto.randomUUID(),
+        context_epoch: 1,
+        locale: navigator.language || "zh-CN",
+        backend: "cloud_live",
+        cloud_provider: preferences.realtime_cloud_provider,
+        activity_profile: preferences.realtime_activity_profile,
+        interaction_intensity: preferences.realtime_interaction_intensity,
+        voice_output: preferences.realtime_voice_output,
         source_id: Number(sourceId),
+        microphone_enabled: true,
         screen_enabled: true,
-        game_audio_enabled: false,
+        application_audio_enabled: applicationAudioConsent,
+        online_assistance_enabled: preferences.realtime_online_assistance_enabled,
       });
       setPresence("connecting");
     } catch (caught) {
@@ -566,11 +577,14 @@ export function RealtimeCompanion({
           {!active ? <div className="realtime-config">
             <label><span><Monitor size={15} /> Game window</span><select value={sourceId} onChange={(event) => setSourceId(event.target.value)} disabled={busy}>{surfaces.map((surface) => <option key={surface.source_id} value={surface.source_id}>{surface.label} · {surface.width}×{surface.height}</option>)}</select></label>
             <div className="realtime-policy"><span>Provider</span><strong>{providerLabel(preferences?.realtime_cloud_provider)}</strong><span>Voice</span><strong>{voiceOutputLabel(preferences?.realtime_voice_output)}</strong></div>
-            {credentialReady === false ? <div className="realtime-error" role="alert">Configure the selected realtime provider in Settings before starting.</div> : null}
+            {preferences?.realtime_beta_enabled === false ? <div className="realtime-error" role="alert">Enable Realtime Beta in Settings before starting.</div> : null}
+            {preferences?.realtime_backend === "local_mini_cpm_o45" ? <div className="realtime-error" role="alert">Local Beta is not available until hardware, model, and runtime readiness are verified.</div> : null}
+            {preferences?.realtime_backend !== "local_mini_cpm_o45" && credentialReady === false ? <div className="realtime-error" role="alert">Configure the selected realtime provider in Settings before starting.</div> : null}
             <label className="realtime-consent"><input type="checkbox" checked={microphoneConsent} onChange={(event) => setMicrophoneConsent(event.target.checked)} /><Mic size={15} /><span>Share microphone for this session</span></label>
             <label className="realtime-consent"><input type="checkbox" checked={screenConsent} onChange={(event) => setScreenConsent(event.target.checked)} /><Monitor size={15} /><span>Share only the selected game window</span></label>
-            <p className="realtime-note">Game and system audio are not captured. Fairy uses only your microphone and the selected window image.</p>
-            <button className="realtime-primary" type="button" disabled={busy || credentialReady !== true || !microphoneConsent || !screenConsent || sourceId === ""} onClick={() => void start()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Mic size={15} />} Start companion</button>
+            <label className="realtime-consent"><input type="checkbox" checked={applicationAudioConsent} onChange={(event) => setApplicationAudioConsent(event.target.checked)} /><Volume2 size={15} /><span>Share selected application audio for this session</span></label>
+            <p className="realtime-note">System-wide audio is never captured. Each enabled source remains scoped to this session.</p>
+            <button className="realtime-primary" type="button" disabled={busy || preferences?.realtime_beta_enabled !== true || preferences?.realtime_backend === "local_mini_cpm_o45" || credentialReady !== true || !microphoneConsent || !screenConsent || sourceId === ""} onClick={() => void start()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Mic size={15} />} Start companion</button>
           </div> : <div className="realtime-live"><div className="realtime-live-status"><span className={`realtime-pulse ${presence}`} /><div><strong>{presenceLabel(presence)}</strong><small>{session.provider.replaceAll("_", " ")}</small></div><button type="button" disabled={busy} onClick={() => void stop()}><Square size={14} /> Stop</button></div><div className="realtime-usage" aria-label="Session usage"><span>Voice {formatUsageMinutes(liveUsage.audio_input_ms + liveUsage.audio_output_ms)}</span><span>Frames {liveUsage.video_frame_count}</span></div><div className="realtime-captions" aria-live="polite">{captions.length === 0 && draftCaption === "" ? <span>Listening for the conversation and game context…</span> : <>{captions.map((text, index) => <p key={`${index}-${text.slice(0, 16)}`}>{text}</p>)}{draftCaption ? <p className="is-streaming">{draftCaption}</p> : null}</>}</div></div>}
           {memory ? <div className="realtime-memory"><h3>Save game progress</h3><label>Game<input value={memory.gameTitle} maxLength={160} onChange={(event) => setMemory({ ...memory, gameTitle: event.target.value })} /></label><label>Progress<textarea value={memory.progress} maxLength={800} onChange={(event) => setMemory({ ...memory, progress: event.target.value })} /></label><label>Next goal<input value={memory.nextGoal} maxLength={300} onChange={(event) => setMemory({ ...memory, nextGoal: event.target.value })} /></label><button type="button" disabled={busy || !memory.gameTitle.trim() || !memory.progress.trim()} onClick={() => void saveMemory()}><Save size={14} /> Save summary</button></div> : null}
           {unsavedCount > 0 ? <div className="realtime-transcript-warning" role="status"><span>{unsavedCount} {unsavedCount === 1 ? "caption" : "captions"} unsaved</span><button type="button" onClick={retryUnsaved}><RotateCcw size={13} /> Retry saving</button></div> : null}

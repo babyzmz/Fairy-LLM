@@ -6,18 +6,19 @@ use std::time::{Duration, Instant};
 
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::backend::{RealtimeBackendKind, RealtimeCloudProviderKind, RealtimeVoiceOutput};
 use crate::media::{
     mix_pcm16_queue, resample_pcm16, AudioPlayback, MicrophoneCapture, ProcessLoopbackCapture,
     VideoCapture,
 };
-use crate::protocol::{ProviderKind, WorkerEvent};
+use crate::protocol::WorkerEvent;
 use crate::provider::{CaptionSpeaker, ProviderOutput};
 use crate::transport::ProviderSocket;
 
 // Absolute worker-side ceiling as defense in depth: the renderer enforces the
 // user's configurable maximum, and this backstop stops a runaway session if the
 // renderer timer ever fails to fire. It sits above the maximum renderer setting.
-const SESSION_HARD_LIMIT: Duration = Duration::from_secs(130 * 60);
+const SESSION_HARD_LIMIT: Duration = Duration::from_secs(250 * 60);
 
 fn frame_hash(bytes: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -56,13 +57,26 @@ impl Drop for EphemeralAudioQueue {
 
 pub struct RuntimeLaunch {
     pub session_id: String,
-    pub provider: ProviderKind,
+    pub segment_id: String,
+    pub context_epoch: u64,
+    pub backend: RealtimeBackendKind,
+    pub cloud_provider: RealtimeCloudProviderKind,
     pub credential: Zeroizing<String>,
     pub system_instruction: String,
     pub source_id: Option<u64>,
+    pub microphone_enabled: bool,
     pub screen_enabled: bool,
-    pub game_audio_enabled: bool,
-    pub voice_mode: String,
+    pub application_audio_enabled: bool,
+    pub voice_output: RealtimeVoiceOutput,
+}
+
+#[derive(Clone, Debug)]
+struct RuntimeIdentity {
+    session_id: String,
+    segment_id: String,
+    context_epoch: u64,
+    backend: RealtimeBackendKind,
+    cloud_provider: RealtimeCloudProviderKind,
 }
 
 pub enum RuntimeCommand {
@@ -132,25 +146,29 @@ fn run_session(
 ) {
     let RuntimeLaunch {
         session_id,
-        provider: provider_kind,
+        segment_id,
+        context_epoch,
+        backend,
+        cloud_provider,
         credential,
         system_instruction,
         source_id,
+        microphone_enabled: initial_microphone_enabled,
         screen_enabled,
-        game_audio_enabled,
-        voice_mode,
+        application_audio_enabled,
+        voice_output,
     } = launch;
-    let native_audio = match voice_mode.as_str() {
-        "native" => true,
-        "fairy" => false,
-        _ => {
-            emit_failed(&events, &session_id, "REALTIME_VOICE_MODE_INVALID");
-            return;
-        }
+    let identity = RuntimeIdentity {
+        session_id,
+        segment_id,
+        context_epoch,
+        backend,
+        cloud_provider,
     };
+    let native_audio = voice_output == RealtimeVoiceOutput::ProviderNativeVoice;
     let (provider_sender, provider_receiver) = mpsc::sync_channel(1);
     let connect_cancelled = Arc::clone(&cancelled);
-    let connect_provider = provider_kind.clone();
+    let connect_provider = identity.cloud_provider;
     if thread::Builder::new()
         .name("fairy-realtime-connect".to_owned())
         .spawn(move || {
@@ -167,53 +185,53 @@ fn run_session(
         })
         .is_err()
     {
-        emit_failed(&events, &session_id, "WORKER_INTERRUPTED");
+        emit_failed(&events, &identity, "WORKER_INTERRUPTED");
         return;
     }
     let provider_deadline = Instant::now() + Duration::from_secs(15);
     let mut provider = loop {
         if startup_cancel_requested(&commands, &cancelled) {
-            emit_cancelled(&events, &session_id);
+            emit_cancelled(&events, &identity);
             return;
         }
         match provider_receiver.recv_timeout(Duration::from_millis(5)) {
             Ok(Ok(provider)) => break provider,
             Ok(Err(error)) => {
-                emit_failed(&events, &session_id, error.public_code());
+                emit_failed(&events, &identity, error.public_code());
                 return;
             }
             Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < provider_deadline => {}
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 cancelled.store(true, Ordering::Release);
-                emit_failed(&events, &session_id, "REALTIME_PROVIDER_TIMEOUT");
+                emit_failed(&events, &identity, "REALTIME_PROVIDER_TIMEOUT");
                 return;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                emit_failed(&events, &session_id, "WORKER_INTERRUPTED");
+                emit_failed(&events, &identity, "WORKER_INTERRUPTED");
                 return;
             }
         }
     };
     if startup_cancel_requested(&commands, &cancelled) {
-        emit_cancelled(&events, &session_id);
+        emit_cancelled(&events, &identity);
         return;
     }
     let microphone = match MicrophoneCapture::start() {
         Ok(microphone) => microphone,
         Err(_) => {
-            emit_failed(&events, &session_id, "MICROPHONE_UNAVAILABLE");
+            emit_failed(&events, &identity, "MICROPHONE_UNAVAILABLE");
             return;
         }
     };
     if startup_cancel_requested(&commands, &cancelled) {
-        emit_cancelled(&events, &session_id);
+        emit_cancelled(&events, &identity);
         return;
     }
-    let mut game_audio = if game_audio_enabled {
+    let mut game_audio = if application_audio_enabled {
         match source_id.and_then(|source_id| ProcessLoopbackCapture::start(source_id).ok()) {
             Some(capture) => Some(capture),
             None => {
-                emit_failed(&events, &session_id, "PROCESS_LOOPBACK_UNAVAILABLE");
+                emit_failed(&events, &identity, "PROCESS_LOOPBACK_UNAVAILABLE");
                 return;
             }
         }
@@ -221,14 +239,14 @@ fn run_session(
         None
     };
     if startup_cancel_requested(&commands, &cancelled) {
-        emit_cancelled(&events, &session_id);
+        emit_cancelled(&events, &identity);
         return;
     }
     let playback = if native_audio {
         match AudioPlayback::start() {
             Ok(playback) => Some(playback),
             Err(_) => {
-                emit_failed(&events, &session_id, "AUDIO_OUTPUT_UNAVAILABLE");
+                emit_failed(&events, &identity, "AUDIO_OUTPUT_UNAVAILABLE");
                 return;
             }
         }
@@ -236,14 +254,14 @@ fn run_session(
         None
     };
     if startup_cancel_requested(&commands, &cancelled) {
-        emit_cancelled(&events, &session_id);
+        emit_cancelled(&events, &identity);
         return;
     }
     let video = if screen_enabled {
         match source_id.and_then(|id| VideoCapture::start(id, 30).ok()) {
             Some(video) => Some(video),
             None => {
-                emit_failed(&events, &session_id, "CAPTURE_SOURCE_UNAVAILABLE");
+                emit_failed(&events, &identity, "CAPTURE_SOURCE_UNAVAILABLE");
                 return;
             }
         }
@@ -251,13 +269,16 @@ fn run_session(
         None
     };
     if startup_cancel_requested(&commands, &cancelled) {
-        emit_cancelled(&events, &session_id);
+        emit_cancelled(&events, &identity);
         return;
     }
     let _ = events.send(WorkerEvent::SessionState {
-        session_id: session_id.clone(),
-        status: "active",
-        provider: Some(provider_kind),
+        session_id: identity.session_id.clone(),
+        segment_id: identity.segment_id.clone(),
+        context_epoch: identity.context_epoch,
+        status: "active".to_owned(),
+        backend: identity.backend,
+        cloud_provider: Some(identity.cloud_provider),
         error_code: None,
     });
     let session_start = Instant::now();
@@ -266,7 +287,7 @@ fn run_session(
     let mut last_frame_hash: Option<u64> = None;
     // Input gating for the mute (microphone) and pause (microphone + screen)
     // controls. Both default on; muted/paused input is not sent to the provider.
-    let mut microphone_enabled = true;
+    let mut microphone_enabled = initial_microphone_enabled;
     let mut video_enabled = true;
     let mut game_audio_queue = EphemeralAudioQueue::with_capacity(32_000);
     let mut audio_input_samples = 0_u64;
@@ -274,6 +295,7 @@ fn run_session(
     let mut video_frame_count = 0_u64;
     let mut interruption_count = 0_u64;
     let mut tool_call_count = 0_u64;
+    let mut event_sequence = 0_u64;
     loop {
         if cancelled.load(Ordering::Acquire) {
             break;
@@ -288,7 +310,7 @@ fn run_session(
                 public_summary,
             }) => {
                 if let Err(error) = provider.send_tool_result(&call_id, &public_summary) {
-                    emit_failed(&events, &session_id, error.public_code());
+                    emit_failed(&events, &identity, error.public_code());
                     return;
                 }
             }
@@ -323,7 +345,7 @@ fn run_session(
             samples.zeroize();
             if let Err(error) = provider.send_audio(&bytes) {
                 bytes.zeroize();
-                emit_failed(&events, &session_id, error.public_code());
+                emit_failed(&events, &identity, error.public_code());
                 return;
             }
             bytes.zeroize();
@@ -339,7 +361,7 @@ fn run_session(
                 } else {
                     if let Err(error) = provider.send_video(&frame.jpeg) {
                         frame.jpeg.zeroize();
-                        emit_failed(&events, &session_id, error.public_code());
+                        emit_failed(&events, &identity, error.public_code());
                         return;
                     }
                     frame.jpeg.zeroize();
@@ -352,7 +374,7 @@ fn run_session(
         let outputs = match provider.receive() {
             Ok(outputs) => outputs,
             Err(error) => {
-                emit_failed(&events, &session_id, error.public_code());
+                emit_failed(&events, &identity, error.public_code());
                 return;
             }
         };
@@ -375,8 +397,10 @@ fn run_session(
                     }
                     bytes.zeroize();
                     let _ = events.send(WorkerEvent::Presence {
-                        session_id: session_id.clone(),
-                        state: "speaking",
+                        session_id: identity.session_id.clone(),
+                        segment_id: identity.segment_id.clone(),
+                        context_epoch: identity.context_epoch,
+                        state: "speaking".to_owned(),
                         level: None,
                     });
                 }
@@ -385,13 +409,17 @@ fn run_session(
                     stable,
                     speaker,
                 } => {
+                    event_sequence = event_sequence.saturating_add(1);
                     let _ = events.send(WorkerEvent::PublicCaption {
-                        session_id: session_id.clone(),
+                        session_id: identity.session_id.clone(),
+                        segment_id: identity.segment_id.clone(),
+                        context_epoch: identity.context_epoch,
+                        sequence: event_sequence,
                         text,
                         stable,
                         speaker: match speaker {
-                            CaptionSpeaker::User => "user",
-                            CaptionSpeaker::Assistant => "assistant",
+                            CaptionSpeaker::User => "user".to_owned(),
+                            CaptionSpeaker::Assistant => "assistant".to_owned(),
                         },
                     });
                 }
@@ -401,18 +429,24 @@ fn run_session(
                         playback.clear();
                     }
                     let _ = events.send(WorkerEvent::BargeIn {
-                        session_id: session_id.clone(),
+                        session_id: identity.session_id.clone(),
+                        segment_id: identity.segment_id.clone(),
+                        context_epoch: identity.context_epoch,
                     });
                     let _ = events.send(WorkerEvent::Presence {
-                        session_id: session_id.clone(),
-                        state: "listening",
+                        session_id: identity.session_id.clone(),
+                        segment_id: identity.segment_id.clone(),
+                        context_epoch: identity.context_epoch,
+                        state: "listening".to_owned(),
                         level: None,
                     });
                 }
                 ProviderOutput::SpeechStopped => {
                     let _ = events.send(WorkerEvent::Presence {
-                        session_id: session_id.clone(),
-                        state: "analyzing",
+                        session_id: identity.session_id.clone(),
+                        segment_id: identity.segment_id.clone(),
+                        context_epoch: identity.context_epoch,
+                        state: "analyzing".to_owned(),
                         level: None,
                     });
                 }
@@ -423,7 +457,9 @@ fn run_session(
                 } => {
                     tool_call_count = tool_call_count.saturating_add(1);
                     let _ = events.send(WorkerEvent::ToolRequest {
-                        session_id: session_id.clone(),
+                        session_id: identity.session_id.clone(),
+                        segment_id: identity.segment_id.clone(),
+                        context_epoch: identity.context_epoch,
                         call_id,
                         tool_name: name,
                         public_intent: "Fairy wants to use a companion tool".to_owned(),
@@ -431,7 +467,7 @@ fn run_session(
                 }
                 ProviderOutput::Usage(_) => {}
                 ProviderOutput::GoAway => {
-                    emit_failed(&events, &session_id, "REALTIME_PROVIDER_GOING_AWAY");
+                    emit_failed(&events, &identity, "REALTIME_PROVIDER_GOING_AWAY");
                     return;
                 }
             }
@@ -439,7 +475,7 @@ fn run_session(
         if last_usage_sent.elapsed() >= Duration::from_secs(5) {
             emit_usage(
                 &events,
-                &session_id,
+                &identity,
                 audio_input_samples,
                 audio_output_samples,
                 video_frame_count,
@@ -454,7 +490,7 @@ fn run_session(
     }
     emit_usage(
         &events,
-        &session_id,
+        &identity,
         audio_input_samples,
         audio_output_samples,
         video_frame_count,
@@ -462,9 +498,12 @@ fn run_session(
         tool_call_count,
     );
     let _ = events.send(WorkerEvent::SessionState {
-        session_id,
-        status: "completed",
-        provider: None,
+        session_id: identity.session_id,
+        segment_id: identity.segment_id,
+        context_epoch: identity.context_epoch,
+        status: "completed".to_owned(),
+        backend: identity.backend,
+        cloud_provider: Some(identity.cloud_provider),
         error_code: None,
     });
 }
@@ -490,7 +529,7 @@ fn startup_cancel_requested(
 
 fn emit_usage(
     events: &mpsc::Sender<WorkerEvent>,
-    session_id: &str,
+    identity: &RuntimeIdentity,
     audio_input_samples: u64,
     audio_output_samples: u64,
     video_frame_count: u64,
@@ -498,7 +537,9 @@ fn emit_usage(
     tool_call_count: u64,
 ) {
     let _ = events.send(WorkerEvent::Usage {
-        session_id: session_id.to_owned(),
+        session_id: identity.session_id.clone(),
+        segment_id: identity.segment_id.clone(),
+        context_epoch: identity.context_epoch,
         audio_input_ms: audio_input_samples.saturating_mul(1_000) / 16_000,
         audio_output_ms: audio_output_samples.saturating_mul(1_000) / 24_000,
         video_frame_count,
@@ -507,20 +548,30 @@ fn emit_usage(
     });
 }
 
-fn emit_failed(events: &mpsc::Sender<WorkerEvent>, session_id: &str, error_code: &'static str) {
+fn emit_failed(
+    events: &mpsc::Sender<WorkerEvent>,
+    identity: &RuntimeIdentity,
+    error_code: &'static str,
+) {
     let _ = events.send(WorkerEvent::SessionState {
-        session_id: session_id.to_owned(),
-        status: "failed",
-        provider: None,
-        error_code: Some(error_code),
+        session_id: identity.session_id.clone(),
+        segment_id: identity.segment_id.clone(),
+        context_epoch: identity.context_epoch,
+        status: "failed".to_owned(),
+        backend: identity.backend,
+        cloud_provider: Some(identity.cloud_provider),
+        error_code: Some(error_code.to_owned()),
     });
 }
 
-fn emit_cancelled(events: &mpsc::Sender<WorkerEvent>, session_id: &str) {
+fn emit_cancelled(events: &mpsc::Sender<WorkerEvent>, identity: &RuntimeIdentity) {
     let _ = events.send(WorkerEvent::SessionState {
-        session_id: session_id.to_owned(),
-        status: "cancelled",
-        provider: None,
+        session_id: identity.session_id.clone(),
+        segment_id: identity.segment_id.clone(),
+        context_epoch: identity.context_epoch,
+        status: "cancelled".to_owned(),
+        backend: identity.backend,
+        cloud_provider: Some(identity.cloud_provider),
         error_code: None,
     });
 }
@@ -537,9 +588,9 @@ mod tests {
 
     #[test]
     fn session_hard_limit_backstops_above_the_max_renderer_setting() {
-        // The renderer maximum is 120 minutes; the worker ceiling sits above it
+        // The Presence maximum is 240 minutes; the worker ceiling sits above it
         // so the renderer normally stops first and this only catches a runaway.
-        assert!(SESSION_HARD_LIMIT > Duration::from_secs(120 * 60));
+        assert!(SESSION_HARD_LIMIT > Duration::from_secs(240 * 60));
     }
 
     #[test]

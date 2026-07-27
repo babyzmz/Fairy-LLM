@@ -15,6 +15,8 @@ const invoke = vi.fn();
 const voiceMocks = vi.hoisted(() => ({ startRealtimeVoice: vi.fn() }));
 let eventListener: ((event: { payload: Record<string, unknown> }) => void) | null = null;
 let realtimeVoiceOutput: "provider_native_voice" | "fairy_voice" = "provider_native_voice";
+let realtimeBetaEnabled = true;
+let realtimeBackend: "auto" | "local_mini_cpm_o45" | "cloud_live" = "cloud_live";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -73,12 +75,14 @@ describe("RealtimeCompanion", () => {
       stop: vi.fn(),
     });
     realtimeVoiceOutput = "provider_native_voice";
+    realtimeBetaEnabled = true;
+    realtimeBackend = "cloud_live";
     localStorage.clear();
     localStorage.setItem("fairy.realtime.device-id", "test-device");
     invoke.mockImplementation(async (command: string) => {
       if (command === "desktop_preferences_get") return {
-        realtime_beta_enabled: true,
-        realtime_backend: "cloud_live",
+        realtime_beta_enabled: realtimeBetaEnabled,
+        realtime_backend: realtimeBackend,
         realtime_cloud_provider: "glm_realtime_flash",
         realtime_allow_cloud_fallback: false,
         realtime_activity_profile: "auto",
@@ -122,6 +126,53 @@ describe("RealtimeCompanion", () => {
     expect(
       await screen.findByRole("dialog", { name: "Game companion" }),
     ).not.toBeNull();
+  });
+
+  it("cannot start while Realtime Beta is disabled", async () => {
+    realtimeBetaEnabled = false;
+    const start = vi.fn();
+    const client = {
+      sessions: { list: vi.fn(async () => ({ items: [] })) },
+      memories: { save: vi.fn() },
+      worker: {
+        status: vi.fn(async () => workerStatus(false)),
+        start,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+    fireEvent.click(screen.getAllByRole("checkbox")[0]);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+
+    expect(screen.getByText("Enable Realtime Beta in Settings before starting.")).not.toBeNull();
+    expect((screen.getByRole("button", { name: "Start companion" }) as HTMLButtonElement).disabled)
+      .toBe(true);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for Local Beta until a real readiness report exists", async () => {
+    realtimeBackend = "local_mini_cpm_o45";
+    const start = vi.fn();
+    const client = {
+      sessions: { list: vi.fn(async () => ({ items: [] })) },
+      memories: { save: vi.fn() },
+      worker: {
+        status: vi.fn(async () => workerStatus(false)),
+        start,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+
+    expect(screen.getByText(
+      "Local Beta is not available until hardware, model, and runtime readiness are verified.",
+    )).not.toBeNull();
+    expect((screen.getByRole("button", { name: "Start companion" }) as HTMLButtonElement).disabled)
+      .toBe(true);
+    expect(start).not.toHaveBeenCalled();
+    expect(invoke.mock.calls.some(([command]) => command === "provider_realtime_status")).toBe(false);
   });
 
   it("persists stable captions to the linked transcript, never into the usage report", async () => {
@@ -283,7 +334,7 @@ describe("RealtimeCompanion", () => {
     ));
   });
 
-  it("no longer offers a game or system audio consent control", async () => {
+  it("keeps application audio as an explicit selected-app session consent", async () => {
     const client = {
       sessions: { list: vi.fn(async () => ({ items: [] })) },
       memories: { save: vi.fn() },
@@ -292,9 +343,49 @@ describe("RealtimeCompanion", () => {
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
-    // Only microphone and window-image consent remain.
-    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
-    expect(screen.queryByText(/game audio/i)).toBeNull();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(3);
+    expect((screen.getByRole("checkbox", {
+      name: "Share selected application audio for this session",
+    }) as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText(/System-wide audio is never captured/)).not.toBeNull();
+  });
+
+  it("sends the governed cloud controls without credential or Persona bodies", async () => {
+    const start = vi.fn(async (_input: Record<string, unknown>) => workerStatus(true));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        status: vi.fn(async () => workerStatus(false)),
+        start,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+    for (const consent of screen.getAllByRole("checkbox")) fireEvent.click(consent);
+    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+
+    await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: session("starting", 1).id,
+      segment_id: expect.any(String),
+      context_epoch: 1,
+      backend: "cloud_live",
+      cloud_provider: "glm_realtime_flash",
+      activity_profile: "auto",
+      interaction_intensity: "standard",
+      voice_output: "provider_native_voice",
+      microphone_enabled: true,
+      screen_enabled: true,
+      application_audio_enabled: true,
+      online_assistance_enabled: false,
+    })));
+    const request = start.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(request).not.toHaveProperty("credential");
+    expect(request).not.toHaveProperty("persona_snapshot");
   });
 
   it("cancels a session that is still connecting without reporting completion", async () => {

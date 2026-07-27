@@ -12,7 +12,7 @@ use tungstenite::{connect, Message, WebSocket};
 use url::Url;
 use zeroize::Zeroizing;
 
-use crate::protocol::ProviderKind;
+use crate::backend::RealtimeCloudProviderKind;
 use crate::provider::{
     GeminiProtocol, GlmProtocol, ProviderOutput, ProviderProtocolError, RealtimeProtocol,
 };
@@ -73,7 +73,7 @@ pub struct ProviderSocket {
 
 impl ProviderSocket {
     pub fn connect(
-        provider: ProviderKind,
+        provider: RealtimeCloudProviderKind,
         credential: Zeroizing<String>,
         system_instruction: String,
         video_enabled: bool,
@@ -81,7 +81,7 @@ impl ProviderSocket {
     ) -> Result<Self, ProviderTransportError> {
         ensure_tls_provider()?;
         let (request, protocol): (_, Box<dyn RealtimeProtocol + Send>) = match provider {
-            ProviderKind::GeminiLive => {
+            RealtimeCloudProviderKind::GeminiLive => {
                 let mut url =
                     Url::parse(GEMINI_ENDPOINT).map_err(|_| ProviderTransportError::Connection)?;
                 url.query_pairs_mut().append_pair("key", &credential);
@@ -98,7 +98,8 @@ impl ProviderSocket {
                     }),
                 )
             }
-            ProviderKind::GlmRealtimeFlash | ProviderKind::GlmRealtimeAir => {
+            RealtimeCloudProviderKind::GlmRealtimeFlash
+            | RealtimeCloudProviderKind::GlmRealtimeAir => {
                 let mut request = GLM_ENDPOINT
                     .into_client_request()
                     .map_err(|_| ProviderTransportError::Connection)?;
@@ -109,9 +110,9 @@ impl ProviderSocket {
                         .map_err(|_| ProviderTransportError::Connection)?,
                 );
                 let model = match provider {
-                    ProviderKind::GlmRealtimeFlash => "glm-realtime-flash",
-                    ProviderKind::GlmRealtimeAir => "glm-realtime-air",
-                    ProviderKind::GeminiLive => unreachable!(),
+                    RealtimeCloudProviderKind::GlmRealtimeFlash => "glm-realtime-flash",
+                    RealtimeCloudProviderKind::GlmRealtimeAir => "glm-realtime-air",
+                    RealtimeCloudProviderKind::GeminiLive => unreachable!(),
                 };
                 (
                     request,

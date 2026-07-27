@@ -569,6 +569,22 @@ async fn realtime_worker_status(
     Ok(state.realtime.status())
 }
 
+fn validate_realtime_activation(
+    preferences: &DesktopPreferences,
+    input: &RealtimeWorkerStartInput,
+) -> Result<(), &'static str> {
+    if !preferences.realtime_beta_enabled {
+        return Err("REALTIME_BETA_DISABLED");
+    }
+    if input.backend == fairy_realtime_worker::RealtimeBackendKind::LocalMiniCpmO45 {
+        return Err("LOCAL_BACKEND_NOT_IMPLEMENTED");
+    }
+    if input.cloud_provider.is_none() {
+        return Err("REALTIME_CLOUD_PROVIDER_REQUIRED");
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn realtime_worker_start(
     window: WebviewWindow,
@@ -577,14 +593,45 @@ async fn realtime_worker_start(
     input: RealtimeWorkerStartInput,
 ) -> Result<RealtimeWorkerStatus, String> {
     authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
-    let credential_provider = input.provider.credential_provider();
+    let preferences = DesktopPreferencesStore::new(&state.data_dir)
+        .load()
+        .map_err(|error| error.to_string())?;
+    validate_realtime_activation(&preferences, &input).map_err(str::to_owned)?;
+    let credential_provider = input
+        .credential_provider()
+        .ok_or_else(|| "REALTIME_CLOUD_PROVIDER_REQUIRED".to_owned())?;
+    let persona_response = call_core(
+        &state,
+        json!({
+            "jsonrpc": "2.0",
+            "id": "realtime-persona-snapshot",
+            "method": "realtime.persona.snapshot",
+            "params": {
+                "locale": input.locale.clone(),
+                "activity_profile": input.activity_profile,
+                "interaction_intensity": input.interaction_intensity
+            }
+        }),
+    )
+    .await;
+    let persona_snapshot = persona_response
+        .get("result")
+        .cloned()
+        .ok_or_else(|| "REALTIME_PERSONA_UNAVAILABLE".to_owned())?;
+    let persona_snapshot = serde_json::to_string(&persona_snapshot)
+        .map_err(|_| "REALTIME_PERSONA_UNAVAILABLE".to_owned())?;
     let credential = ProviderCredentialStore::new(&state.data_dir)
         .load(credential_provider)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "REALTIME_CREDENTIAL_MISSING".to_owned())?;
     state
         .realtime
-        .start(&app, input, zeroize::Zeroizing::new(credential))
+        .start(
+            &app,
+            input,
+            Some(zeroize::Zeroizing::new(credential)),
+            zeroize::Zeroizing::new(persona_snapshot),
+        )
         .map_err(|error| error.to_string())
 }
 
@@ -5151,6 +5198,59 @@ mod pet_input_presentation_tests {
             Err("PET_INPUT_PRESENTATION_STALE_REVISION")
         );
         assert!(fence.validate(session.session_id, 4).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod realtime_activation_tests {
+    use fairy_realtime_worker::{
+        RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
+        RealtimeInteractionIntensity, RealtimeVoiceOutput,
+    };
+
+    use super::{validate_realtime_activation, DesktopPreferences, RealtimeWorkerStartInput};
+
+    fn cloud_input() -> RealtimeWorkerStartInput {
+        RealtimeWorkerStartInput {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            locale: "en-AU".to_owned(),
+            backend: RealtimeBackendKind::CloudLive,
+            cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
+            activity_profile: RealtimeActivityProfile::Auto,
+            interaction_intensity: RealtimeInteractionIntensity::Standard,
+            voice_output: RealtimeVoiceOutput::FairyVoice,
+            source_id: Some(42),
+            microphone_enabled: true,
+            screen_enabled: true,
+            application_audio_enabled: false,
+            online_assistance_enabled: false,
+        }
+    }
+
+    #[test]
+    fn beta_gate_precedes_every_worker_start() {
+        assert_eq!(
+            validate_realtime_activation(&DesktopPreferences::default(), &cloud_input()),
+            Err("REALTIME_BETA_DISABLED")
+        );
+    }
+
+    #[test]
+    fn local_backend_remains_inactive_after_beta_is_enabled() {
+        let preferences = DesktopPreferences {
+            realtime_beta_enabled: true,
+            ..DesktopPreferences::default()
+        };
+        let mut input = cloud_input();
+        input.backend = RealtimeBackendKind::LocalMiniCpmO45;
+        input.cloud_provider = None;
+
+        assert_eq!(
+            validate_realtime_activation(&preferences, &input),
+            Err("LOCAL_BACKEND_NOT_IMPLEMENTED")
+        );
     }
 }
 

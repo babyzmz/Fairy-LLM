@@ -1,11 +1,20 @@
 use std::io::{stdin, stdout};
-
 use std::thread;
 
 use fairy_realtime_worker::{
-    read_frame, validate_start, write_frame, HostCommand, RealtimeRuntime, RuntimeCommand,
-    RuntimeLaunch, WorkerEvent,
+    read_frame, validate_backend_start, write_frame, BackendStartRequest, HostCommand,
+    RealtimeBackendKind, RealtimeRuntime, RuntimeCommand, RuntimeLaunch, WorkerEvent,
 };
+
+const WORKER_PROTOCOL: &str = "fairy-realtime-worker-v2";
+
+#[derive(Clone)]
+struct ActiveIdentity {
+    session_id: String,
+    segment_id: String,
+    context_epoch: u64,
+    backend: RealtimeBackendKind,
+}
 
 fn main() {
     let mut input = stdin().lock();
@@ -13,7 +22,7 @@ fn main() {
     if write_frame(
         &mut output,
         &WorkerEvent::Ready {
-            protocol: "fairy-realtime-worker-v1",
+            protocol: WORKER_PROTOCOL.to_owned(),
         },
     )
     .is_err()
@@ -22,7 +31,7 @@ fn main() {
     }
     drop(output);
     let mut runtime: Option<RealtimeRuntime> = None;
-    let mut active_session: Option<String> = None;
+    let mut active_identity: Option<ActiveIdentity> = None;
     let mut event_writer: Option<thread::JoinHandle<()>> = None;
     loop {
         let command = match read_frame::<HostCommand>(&mut input) {
@@ -32,43 +41,88 @@ fn main() {
         match command {
             HostCommand::Start {
                 session_id,
-                provider,
-                voice_mode,
+                segment_id,
+                context_epoch,
+                backend,
+                cloud_provider,
+                cloud_credential,
+                persona_snapshot,
+                activity_profile,
+                interaction_intensity,
+                voice_output,
                 source_id,
+                microphone_enabled,
                 screen_enabled,
-                game_audio_enabled,
-                credential,
+                application_audio_enabled,
+                online_assistance_enabled,
             } if runtime.is_none() => {
-                if validate_start(
-                    &session_id,
-                    &voice_mode,
+                let persona_is_json =
+                    serde_json::from_str::<serde_json::Value>(persona_snapshot.expose()).is_ok();
+                let validation = validate_backend_start(&BackendStartRequest {
+                    session_id: session_id.clone(),
+                    segment_id: segment_id.clone(),
+                    context_epoch,
+                    backend,
+                    cloud_provider,
+                    cloud_credential_present: cloud_credential
+                        .as_ref()
+                        .is_some_and(|credential| !credential.expose().trim().is_empty()),
+                    persona_snapshot_present: persona_is_json,
+                    activity_profile,
+                    interaction_intensity,
+                    voice_output,
                     source_id,
+                    microphone_enabled,
                     screen_enabled,
-                    game_audio_enabled,
-                    credential.expose(),
-                )
-                .is_err()
-                {
-                    let _ = write_frame(
-                        &mut stdout().lock(),
-                        &WorkerEvent::SessionState {
-                            session_id,
-                            status: "failed",
-                            provider: Some(provider),
-                            error_code: Some("REALTIME_INVALID_START"),
-                        },
+                    application_audio_enabled,
+                    online_assistance_enabled,
+                });
+                if validation.is_err() {
+                    emit_start_failure(
+                        &session_id,
+                        &segment_id,
+                        context_epoch,
+                        backend,
+                        cloud_provider,
+                        "REALTIME_INVALID_START",
                     );
                     continue;
                 }
+                if backend == RealtimeBackendKind::LocalMiniCpmO45 {
+                    emit_start_failure(
+                        &session_id,
+                        &segment_id,
+                        context_epoch,
+                        backend,
+                        None,
+                        "LOCAL_BACKEND_NOT_IMPLEMENTED",
+                    );
+                    continue;
+                }
+                let (Some(provider), Some(credential)) = (cloud_provider, cloud_credential) else {
+                    emit_start_failure(
+                        &session_id,
+                        &segment_id,
+                        context_epoch,
+                        backend,
+                        cloud_provider,
+                        "REALTIME_INVALID_START",
+                    );
+                    continue;
+                };
                 let mut started = RealtimeRuntime::spawn(RuntimeLaunch {
                     session_id: session_id.clone(),
-                    provider,
+                    segment_id: segment_id.clone(),
+                    context_epoch,
+                    backend,
+                    cloud_provider: provider,
                     credential: credential.into_zeroizing(),
-                    system_instruction: companion_instruction(),
+                    system_instruction: persona_snapshot.into_zeroizing().to_string(),
                     source_id,
+                    microphone_enabled,
                     screen_enabled,
-                    game_audio_enabled,
-                    voice_mode,
+                    application_audio_enabled,
+                    voice_output,
                 });
                 let Some(events) = started.take_events() else {
                     return;
@@ -80,11 +134,18 @@ fn main() {
                         }
                     }
                 }));
-                active_session = Some(session_id);
+                active_identity = Some(ActiveIdentity {
+                    session_id,
+                    segment_id,
+                    context_epoch,
+                    backend,
+                });
                 runtime = Some(started);
             }
             HostCommand::Stop { session_id }
-                if active_session.as_deref() == Some(session_id.as_str()) =>
+                if active_identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.session_id == session_id) =>
             {
                 if let Some(active) = runtime.take() {
                     active.command(RuntimeCommand::Stop);
@@ -99,7 +160,10 @@ fn main() {
                 call_id,
                 public_summary,
                 succeeded: _,
-            } if active_session.as_deref() == Some(session_id.as_str()) => {
+            } if active_identity
+                .as_ref()
+                .is_some_and(|identity| identity.session_id == session_id) =>
+            {
                 if let Some(active) = runtime.as_ref() {
                     active.command(RuntimeCommand::ToolResult {
                         call_id,
@@ -111,7 +175,10 @@ fn main() {
                 session_id,
                 microphone,
                 video,
-            } if active_session.as_deref() == Some(session_id.as_str()) => {
+            } if active_identity
+                .as_ref()
+                .is_some_and(|identity| identity.session_id == session_id) =>
+            {
                 if let Some(active) = runtime.as_ref() {
                     active.command(RuntimeCommand::SetInput { microphone, video });
                 }
@@ -123,21 +190,43 @@ fn main() {
             }
             HostCommand::UpdateUsage { .. } => {}
             _ => {
-                let event = WorkerEvent::SessionState {
-                    session_id: active_session.clone().unwrap_or_default(),
-                    status: "failed",
-                    provider: None,
-                    error_code: Some("REALTIME_PROTOCOL_ERROR"),
-                };
-                if write_frame(&mut stdout().lock(), &event).is_err() {
-                    return;
-                }
+                let identity = active_identity.clone().unwrap_or(ActiveIdentity {
+                    session_id: String::new(),
+                    segment_id: String::new(),
+                    context_epoch: 0,
+                    backend: RealtimeBackendKind::CloudLive,
+                });
+                emit_start_failure(
+                    &identity.session_id,
+                    &identity.segment_id,
+                    identity.context_epoch,
+                    identity.backend,
+                    None,
+                    "REALTIME_PROTOCOL_ERROR",
+                );
             }
         }
     }
 }
 
-fn companion_instruction() -> String {
-    "You are Fairy, a concise realtime game companion. React to the player's speech and the selected game window without pretending to control the game. Do not reveal hidden reasoning. Ask before any action outside observation. Keep spoken turns brief and avoid interrupting urgent gameplay audio."
-        .to_owned()
+fn emit_start_failure(
+    session_id: &str,
+    segment_id: &str,
+    context_epoch: u64,
+    backend: RealtimeBackendKind,
+    cloud_provider: Option<fairy_realtime_worker::RealtimeCloudProviderKind>,
+    error_code: &'static str,
+) {
+    let _ = write_frame(
+        &mut stdout().lock(),
+        &WorkerEvent::SessionState {
+            session_id: session_id.to_owned(),
+            segment_id: segment_id.to_owned(),
+            context_epoch,
+            status: "failed".to_owned(),
+            backend,
+            cloud_provider,
+            error_code: Some(error_code.to_owned()),
+        },
+    );
 }

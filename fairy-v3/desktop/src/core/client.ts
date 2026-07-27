@@ -144,11 +144,19 @@ export type RealtimeWorkerProvider = "gemini_live" | "glm_realtime_flash" | "glm
 
 export interface RealtimeWorkerStartInput {
   session_id: string;
-  provider: RealtimeWorkerProvider;
-  voice_mode: "native" | "fairy";
+  segment_id: string;
+  context_epoch: number;
+  locale: string;
+  backend: "local_mini_cpm_o45" | "cloud_live";
+  cloud_provider: RealtimeWorkerProvider | null;
+  activity_profile: "auto" | "game" | "focus";
+  interaction_intensity: "quiet" | "standard" | "active";
+  voice_output: "fairy_voice" | "provider_native_voice" | "text_only";
   source_id: number | null;
+  microphone_enabled: boolean;
   screen_enabled: boolean;
-  game_audio_enabled: boolean;
+  application_audio_enabled: boolean;
+  online_assistance_enabled: boolean;
 }
 
 export interface RealtimeWorkerStatus {

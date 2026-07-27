@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fairy_realtime_worker::{CaptionSpeaker, ProviderKind, ProviderOutput, ProviderSocket};
+use fairy_realtime_worker::{
+    CaptionSpeaker, ProviderOutput, ProviderSocket, RealtimeCloudProviderKind,
+};
 use zeroize::Zeroizing;
 
 #[test]
@@ -18,7 +20,7 @@ fn glm_realtime_flash_accepts_the_configured_credential() {
     assert!(!credential.is_empty(), "credential file must not be empty");
 
     let mut socket = ProviderSocket::connect(
-        ProviderKind::GlmRealtimeFlash,
+        RealtimeCloudProviderKind::GlmRealtimeFlash,
         credential,
         "You are a concise text assistant for a connection smoke test. Reply to the user's message in plain text."
             .to_owned(),
