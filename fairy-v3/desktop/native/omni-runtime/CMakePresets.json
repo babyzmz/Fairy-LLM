@@ -1,0 +1,40 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "contract",
+      "displayName": "Fairy Omni contract",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/contract",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON",
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "FAIRY_OMNI_BUILD_PROFILE": "contract",
+        "FAIRY_OMNI_UPSTREAM_SOURCE": "${sourceDir}/_deps/llama.cpp-omni-source"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "contract",
+      "configurePreset": "contract",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "contract",
+      "configurePreset": "contract",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
