@@ -535,6 +535,18 @@ try {
         )
     }
 
+    $omniStageRoot = Join-Path $repositoryRoot "desktop\src-tauri\runtime\omni"
+    $omniExecutable = Join-Path $omniStageRoot "fairy-omni-runtime.exe"
+    $omniProfile = Join-Path $omniStageRoot "build-profile.txt"
+    if ((Test-Path -LiteralPath $omniExecutable -PathType Leaf) -and
+        (Test-Path -LiteralPath $omniProfile -PathType Leaf)) {
+        $stagedOmniProfile = (Get-Content -LiteralPath $omniProfile -Raw -Encoding UTF8).Trim()
+        Write-Host "Fairy Omni staged profile: $stagedOmniProfile (on-demand only)"
+    }
+    else {
+        Write-Host "Fairy Omni is not staged; Local Beta remains unavailable."
+    }
+
     $pathAlias = New-DesktopPathAlias -Root $repositoryRoot
     if ($Toggle) {
         Write-FairyLauncherState `

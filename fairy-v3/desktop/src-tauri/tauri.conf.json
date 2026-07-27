@@ -46,6 +46,7 @@
     "resources": {
       "runtime/git": "runtime/git",
       "runtime/voice-worker": "runtime/voice-worker",
+      "runtime/omni": "runtime/omni",
       "resources/omni": "runtime/omni-manifests",
       "../../voice-worker/assets": "runtime/voice-assets"
     },
