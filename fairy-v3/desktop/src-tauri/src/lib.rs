@@ -93,6 +93,7 @@ pub mod provider_configuration;
 pub mod provider_credentials;
 pub mod realtime_backend_resolver;
 pub mod realtime_coordinator;
+pub mod realtime_dialogue;
 pub mod realtime_worker;
 pub mod voice_worker;
 

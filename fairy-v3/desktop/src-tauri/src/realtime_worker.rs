@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use fairy_realtime_worker::{
     read_frame, validate_backend_start, write_frame, BackendStartRequest, HostCommand,
     LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
-    RealtimeInteractionIntensity, RealtimeVoiceOutput, SecretString,
+    RealtimeInteractionIntensity, RealtimeVoiceOutput, SecretString, WorkerEvent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,6 +24,7 @@ use crate::realtime_coordinator::{
     ContextEpochIdentity, RealtimeCoordinatorEvent, RealtimeCoordinatorStart,
     RealtimeCoordinatorState,
 };
+use crate::realtime_dialogue::{RealtimeDialogueDecision, RealtimeDialogueDirector};
 
 pub const REALTIME_WORKER_EVENT: &str = "fairy-realtime-event";
 const REALTIME_PROTOCOL: &str = "fairy-realtime-worker-v2";
@@ -145,6 +146,7 @@ pub struct RealtimeWorkerManager {
     usage: Arc<Mutex<RealtimeWorkerUsage>>,
     active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
     coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
+    dialogue: Arc<Mutex<Option<RealtimeDialogueDirector>>>,
 }
 
 impl RealtimeWorkerManager {
@@ -155,6 +157,7 @@ impl RealtimeWorkerManager {
             usage: Arc::new(Mutex::new(RealtimeWorkerUsage::default())),
             active_identity: Arc::new(Mutex::new(None)),
             coordinator: Arc::new(Mutex::new(None)),
+            dialogue: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -272,9 +275,28 @@ impl RealtimeWorkerManager {
             .map_err(|_| RealtimeWorkerError::Protocol)?
         };
         let identity = coordinator.active_identity().clone();
+        let director = RealtimeDialogueDirector::new(
+            identity.session_id.clone(),
+            identity.segment_id.clone(),
+            identity.epoch,
+            coordinator.persona_digest().to_owned(),
+            input.voice_output,
+        )
+        .ok_or(RealtimeWorkerError::Protocol)?;
+        let previous_dialogue = self
+            .dialogue
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?
+            .clone();
+        if let Ok(mut dialogue) = self.dialogue.lock() {
+            *dialogue = Some(director);
+        } else {
+            return Err(RealtimeWorkerError::Protocol);
+        }
         if let Ok(mut active) = self.active_identity.lock() {
             *active = Some(identity.clone());
         } else {
+            self.restore_dialogue(previous_dialogue);
             return Err(RealtimeWorkerError::Protocol);
         }
         let mut process = match spawn_worker(
@@ -283,10 +305,12 @@ impl RealtimeWorkerManager {
             Arc::clone(&self.usage),
             Arc::clone(&self.active_identity),
             Arc::clone(&self.coordinator),
+            Arc::clone(&self.dialogue),
         ) {
             Ok(process) => process,
             Err(error) => {
                 self.restore_governance(previous_governance);
+                self.restore_dialogue(previous_dialogue);
                 return Err(error);
             }
         };
@@ -296,6 +320,7 @@ impl RealtimeWorkerManager {
             let _ = process.child.kill();
             let _ = process.child.wait();
             self.restore_governance(previous_governance);
+            self.restore_dialogue(previous_dialogue);
             return Err(RealtimeWorkerError::Protocol);
         }
         let command = HostCommand::Start {
@@ -322,6 +347,7 @@ impl RealtimeWorkerManager {
             let _ = process.child.kill();
             let _ = process.child.wait();
             self.restore_governance(previous_governance);
+            self.restore_dialogue(previous_dialogue);
             return Err(RealtimeWorkerError::Protocol);
         }
         process.session_id = Some(input.session_id);
@@ -459,6 +485,12 @@ impl RealtimeWorkerManager {
         if let Ok(mut active) = self.active_identity.lock() {
             *active = None;
         }
+        if let Ok(mut dialogue) = self.dialogue.lock() {
+            if let Some(director) = dialogue.as_mut() {
+                director.invalidate_speech();
+            }
+            *dialogue = None;
+        }
     }
 
     fn restore_governance(&self, coordinator: Option<RealtimeCoordinatorState>) {
@@ -470,6 +502,12 @@ impl RealtimeWorkerManager {
         }
         if let Ok(mut active) = self.active_identity.lock() {
             *active = identity;
+        }
+    }
+
+    fn restore_dialogue(&self, director: Option<RealtimeDialogueDirector>) {
+        if let Ok(mut dialogue) = self.dialogue.lock() {
+            *dialogue = director;
         }
     }
 
@@ -553,6 +591,7 @@ fn spawn_worker(
     usage: Arc<Mutex<RealtimeWorkerUsage>>,
     active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
     coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
+    dialogue: Arc<Mutex<Option<RealtimeDialogueDirector>>>,
 ) -> Result<WorkerProcess, RealtimeWorkerError> {
     if !launch.program.is_file() {
         return Err(RealtimeWorkerError::Unavailable);
@@ -603,6 +642,13 @@ fn spawn_worker(
                     if !worker_event_matches_active_identity(&value, &active_identity) {
                         continue;
                     }
+                    if value.get("type").and_then(Value::as_str) == Some("perception_candidate") {
+                        if let Some(projected) = govern_dialogue_candidate(&value, &dialogue) {
+                            let _ = app.emit(REALTIME_WORKER_EVENT, projected);
+                        }
+                        continue;
+                    }
+                    let value = govern_speech_state(value, &dialogue);
                     if is_terminal_worker_event(&value) {
                         reader_terminal.store(true, Ordering::Release);
                     }
@@ -656,6 +702,97 @@ fn spawn_worker(
             Err(RealtimeWorkerError::Protocol)
         }
     }
+}
+
+fn govern_dialogue_candidate(
+    value: &Value,
+    dialogue: &Mutex<Option<RealtimeDialogueDirector>>,
+) -> Option<Value> {
+    let event = serde_json::from_value::<WorkerEvent>(value.clone()).ok()?;
+    let WorkerEvent::PerceptionCandidate {
+        session_id,
+        segment_id,
+        context_epoch,
+        sequence,
+        candidate,
+    } = event
+    else {
+        return None;
+    };
+    let mut director = dialogue.lock().ok()?;
+    let decision =
+        director
+            .as_mut()?
+            .evaluate(&session_id, &segment_id, context_epoch, sequence, candidate);
+    match decision {
+        RealtimeDialogueDecision::Speak(projection) => Some(serde_json::json!({
+            "type": "public_caption",
+            "session_id": projection.session_id,
+            "segment_id": projection.segment_id,
+            "context_epoch": projection.context_epoch,
+            "sequence": projection.sequence,
+            "text": projection.text,
+            "stable": projection.stable,
+            "speaker": "assistant",
+            "activity": projection.activity,
+            "intent": projection.intent,
+            "response_to_user": projection.response_to_user,
+            "speech_output": projection.speech_output,
+            "speech_generation": projection.speech_generation,
+            "persona_digest": projection.persona_digest,
+        })),
+        RealtimeDialogueDecision::RequestAssistance(candidate) => Some(serde_json::json!({
+            "type": "assistance_request",
+            "session_id": candidate.session_id,
+            "segment_id": candidate.segment_id,
+            "context_epoch": candidate.context_epoch,
+            "request_id": format!(
+                "realtime-assistance-{}-{}",
+                candidate.segment_id,
+                candidate.sequence
+            ),
+            "public_intent": candidate.public_question,
+            "activity": candidate.activity,
+            "intent": candidate.intent,
+            "needs_online_assistance": candidate.needs_online_assistance,
+            "persona_digest": candidate.persona_digest,
+        })),
+        RealtimeDialogueDecision::Listen | RealtimeDialogueDecision::Suppress(_) => None,
+    }
+}
+
+fn govern_speech_state(
+    mut value: Value,
+    dialogue: &Mutex<Option<RealtimeDialogueDirector>>,
+) -> Value {
+    let event_type = value.get("type").and_then(Value::as_str);
+    let state = value.get("state").and_then(Value::as_str);
+    let Ok(mut director) = dialogue.lock() else {
+        return value;
+    };
+    let Some(director) = director.as_mut() else {
+        return value;
+    };
+    if event_type == Some("barge_in") {
+        let generation = director.barge_in();
+        if let Some(object) = value.as_object_mut() {
+            object.insert("speech_generation".to_owned(), generation.into());
+        }
+    } else if event_type == Some("presence") && state == Some("analyzing") {
+        director.user_speech_stopped();
+    } else if event_type == Some("presence") && state == Some("speaking") {
+        director.set_fairy_speaking(true);
+    } else if event_type == Some("session_state")
+        && value
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| {
+                matches!(status, "completed" | "failed" | "cancelled" | "interrupted")
+            })
+    {
+        director.invalidate_speech();
+    }
+    value
 }
 
 fn worker_event_matches_active_identity(
@@ -877,5 +1014,84 @@ mod tests {
             }),
             &identity,
         ));
+    }
+
+    fn dialogue() -> Mutex<Option<RealtimeDialogueDirector>> {
+        Mutex::new(RealtimeDialogueDirector::new(
+            "session-1".to_owned(),
+            "segment-1".to_owned(),
+            1,
+            "a".repeat(64),
+            RealtimeVoiceOutput::FairyVoice,
+        ))
+    }
+
+    fn candidate_event(grounding: serde_json::Value) -> Value {
+        serde_json::json!({
+            "type": "perception_candidate",
+            "session_id": "session-1",
+            "segment_id": "segment-1",
+            "context_epoch": 1,
+            "sequence": 1,
+            "decision": "speak",
+            "activity": "game",
+            "confidence": 0.9,
+            "intent": "answer",
+            "grounding": grounding,
+            "text": "Move back.",
+            "urgency": 0.4,
+            "needs_online_assistance": false,
+            "response_to_user": true,
+            "stable": true,
+            "persona_digest": "a".repeat(64)
+        })
+    }
+
+    #[test]
+    fn grounded_candidate_becomes_an_approved_assistant_caption() {
+        let projected = govern_dialogue_candidate(
+            &candidate_event(serde_json::json!(["current_user_utterance"])),
+            &dialogue(),
+        )
+        .expect("approved projection");
+        assert_eq!(projected["type"], "public_caption");
+        assert_eq!(projected["speaker"], "assistant");
+        assert_eq!(projected["speech_output"], "fairy_voice");
+        assert_eq!(projected["speech_generation"], 1);
+        assert_eq!(projected["persona_digest"], "a".repeat(64));
+    }
+
+    #[test]
+    fn ungrounded_candidate_is_suppressed_without_reemitting_its_body() {
+        let event = candidate_event(serde_json::json!([]));
+        assert!(govern_dialogue_candidate(&event, &dialogue()).is_none());
+    }
+
+    #[test]
+    fn barge_in_advances_the_native_speech_generation() {
+        let projected = govern_speech_state(
+            serde_json::json!({
+                "type": "barge_in",
+                "session_id": "session-1",
+                "segment_id": "segment-1",
+                "context_epoch": 1
+            }),
+            &dialogue(),
+        );
+        assert_eq!(projected["speech_generation"], 2);
+    }
+
+    #[test]
+    fn assistance_candidate_remains_a_request_and_never_executes_a_tool() {
+        let mut event = candidate_event(serde_json::json!(["current_user_utterance"]));
+        event["decision"] = serde_json::json!("request_assistance");
+        event["intent"] = serde_json::json!("assist");
+        event["needs_online_assistance"] = serde_json::json!(true);
+        let projected =
+            govern_dialogue_candidate(&event, &dialogue()).expect("assistance projection");
+        assert_eq!(projected["type"], "assistance_request");
+        assert_eq!(projected["needs_online_assistance"], true);
+        assert!(projected.get("tool_name").is_none());
+        assert!(projected.get("arguments").is_none());
     }
 }
