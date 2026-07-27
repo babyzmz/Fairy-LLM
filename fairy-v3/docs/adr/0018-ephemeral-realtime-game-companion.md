@@ -1,5 +1,12 @@
 # ADR 0018: Ephemeral Realtime Game Companion
 
+> **Superseded in part by ADR 0022.** The game-only product definition,
+> single-provider user-session model, and React-owned Companion lifecycle in this
+> ADR are historical. ADR 0022 defines the governed Realtime Companion,
+> Presence Session / Backend Segment / Context Epoch lifecycle, and Local/Cloud
+> backend boundary. This ADR's device-local stable-public-caption amendment
+> remains normative and is incorporated by ADR 0022.
+
 ## Status
 
 Accepted for Fairy V3 Windows-first development. Amended 2026-07-24 to persist
