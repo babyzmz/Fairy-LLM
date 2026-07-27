@@ -231,15 +231,23 @@ fn main() {
                     active.command(RuntimeCommand::Pause);
                 }
             }
-            HostCommand::Resume { session_id }
-                if active_identity.as_ref().is_some_and(|identity| {
-                    identity.session_id == session_id
-                        && identity.backend == RealtimeBackendKind::LocalMiniCpmO45
-                        && identity.context_epoch < u64::MAX
-                }) =>
+            HostCommand::Resume {
+                session_id,
+                carryover,
+            } if active_identity.as_ref().is_some_and(|identity| {
+                identity.session_id == session_id
+                    && identity.backend == RealtimeBackendKind::LocalMiniCpmO45
+                    && identity.context_epoch < u64::MAX
+                    && carryover.is_valid()
+                    && carryover.session_id == identity.session_id
+                    && carryover.current_segment_id == identity.segment_id
+                    && carryover.current_context_epoch == identity.context_epoch
+                    && carryover.target_segment_id == identity.segment_id
+                    && carryover.next_context_epoch == identity.context_epoch + 1
+            }) =>
             {
                 if let Some(active) = runtime.as_ref() {
-                    active.command(RuntimeCommand::Resume);
+                    active.command(RuntimeCommand::Resume { carryover });
                     if let Some(identity) = active_identity.as_mut() {
                         identity.context_epoch += 1;
                     }
@@ -250,6 +258,7 @@ fn main() {
                 current_segment_id,
                 current_context_epoch,
                 next_segment_id,
+                carryover,
             } if active_identity.as_ref().is_some_and(|identity| {
                 identity.session_id == session_id
                     && identity.backend == RealtimeBackendKind::CloudLive
@@ -257,11 +266,18 @@ fn main() {
                     && identity.context_epoch == current_context_epoch
                     && !next_segment_id.trim().is_empty()
                     && next_segment_id != current_segment_id
+                    && carryover.is_valid()
+                    && carryover.session_id == identity.session_id
+                    && carryover.current_segment_id == identity.segment_id
+                    && carryover.current_context_epoch == identity.context_epoch
+                    && carryover.target_segment_id == next_segment_id
+                    && carryover.next_context_epoch == 1
             }) =>
             {
                 if let Some(active) = runtime.as_ref() {
                     active.command(RuntimeCommand::WakeSegment {
                         next_segment_id: next_segment_id.clone(),
+                        carryover,
                     });
                     if let Some(identity) = active_identity.as_mut() {
                         identity.segment_id = next_segment_id;
@@ -275,7 +291,7 @@ fn main() {
                 current_context_epoch,
                 next_context_epoch,
                 reason,
-                public_summary,
+                carryover,
             } if active_identity.as_ref().is_some_and(|identity| {
                 identity.session_id == session_id
                     && identity.segment_id == segment_id
@@ -283,13 +299,19 @@ fn main() {
                     && current_context_epoch
                         .checked_add(1)
                         .is_some_and(|next| next == next_context_epoch)
+                    && carryover.is_valid()
+                    && carryover.session_id == identity.session_id
+                    && carryover.current_segment_id == identity.segment_id
+                    && carryover.current_context_epoch == identity.context_epoch
+                    && carryover.target_segment_id == identity.segment_id
+                    && carryover.next_context_epoch == next_context_epoch
             }) =>
             {
                 if let Some(active) = runtime.as_ref() {
                     active.command(RuntimeCommand::RotateContext {
                         next_context_epoch,
                         reason,
-                        public_summary,
+                        carryover,
                     });
                     if let Some(identity) = active_identity.as_mut() {
                         identity.context_epoch = next_context_epoch;

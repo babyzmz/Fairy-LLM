@@ -15,7 +15,7 @@ use crate::frame_gate::{FrameGate, FrameGateDecision};
 use crate::media::{
     resample_pcm16, AudioPlayback, MicrophoneCapture, ProcessLoopbackCapture, VideoCapture,
 };
-use crate::protocol::WorkerEvent;
+use crate::protocol::{RealtimeContextCarryover, WorkerEvent};
 use crate::ValidatedRealtimePersona;
 
 // Absolute worker-side ceiling as defense in depth above the Coordinator-owned
@@ -75,12 +75,15 @@ pub enum RuntimeCommand {
     RotateContext {
         next_context_epoch: u64,
         reason: String,
-        public_summary: String,
+        carryover: RealtimeContextCarryover,
     },
     Pause,
-    Resume,
+    Resume {
+        carryover: RealtimeContextCarryover,
+    },
     WakeSegment {
         next_segment_id: String,
+        carryover: RealtimeContextCarryover,
     },
 }
 
@@ -383,14 +386,22 @@ fn run_session(
             Ok(RuntimeCommand::RotateContext {
                 next_context_epoch,
                 reason,
-                public_summary,
+                carryover,
             }) => {
+                let public_summary = carryover.public_summary();
                 let valid = identity
                     .context_epoch
                     .checked_add(1)
                     .is_some_and(|next| next == next_context_epoch)
                     && valid_rotation_reason(&reason)
-                    && public_summary.chars().count() <= 2_000;
+                    && carryover.is_valid()
+                    && carryover.session_id == identity.session_id
+                    && carryover.current_segment_id == identity.segment_id
+                    && carryover.current_context_epoch == identity.context_epoch
+                    && carryover.target_segment_id == identity.segment_id
+                    && carryover.next_context_epoch == next_context_epoch
+                    && carryover.persona_digest == identity.persona_digest
+                    && carryover.activity_profile == identity.activity_profile;
                 if !valid
                     || active_backend
                         .rotate_context(next_context_epoch, &reason, &public_summary)
@@ -449,7 +460,7 @@ fn run_session(
                     error_code: None,
                 });
             }
-            Ok(RuntimeCommand::Resume) => {
+            Ok(RuntimeCommand::Resume { carryover }) => {
                 if !standby || identity.backend != RealtimeBackendKind::LocalMiniCpmO45 {
                     emit_failed(&events, &identity, "REALTIME_PROTOCOL_ERROR");
                     return;
@@ -458,9 +469,19 @@ fn run_session(
                     emit_failed(&events, &identity, "CONTEXT_ROTATION_FAILED");
                     return;
                 };
-                if active_backend.resume().is_err()
+                let valid_carryover = carryover.is_valid()
+                    && carryover.session_id == identity.session_id
+                    && carryover.current_segment_id == identity.segment_id
+                    && carryover.current_context_epoch == identity.context_epoch
+                    && carryover.target_segment_id == identity.segment_id
+                    && carryover.next_context_epoch == next_context_epoch
+                    && carryover.persona_digest == identity.persona_digest
+                    && carryover.activity_profile == identity.activity_profile;
+                let public_summary = carryover.public_summary();
+                if !valid_carryover
+                    || active_backend.resume().is_err()
                     || active_backend
-                        .rotate_context(next_context_epoch, "standby_wake", "")
+                        .rotate_context(next_context_epoch, "standby_wake", &public_summary)
                         .is_err()
                 {
                     identity.context_epoch = next_context_epoch;
@@ -485,16 +506,30 @@ fn run_session(
                     reason: "standby_wake".to_owned(),
                 });
             }
-            Ok(RuntimeCommand::WakeSegment { next_segment_id }) => {
+            Ok(RuntimeCommand::WakeSegment {
+                next_segment_id,
+                carryover,
+            }) => {
                 if !standby
                     || identity.backend != RealtimeBackendKind::CloudLive
                     || next_segment_id.trim().is_empty()
                     || next_segment_id.len() > 128
+                    || !carryover.is_valid()
+                    || carryover.session_id != identity.session_id
+                    || carryover.current_segment_id != identity.segment_id
+                    || carryover.current_context_epoch != identity.context_epoch
+                    || carryover.target_segment_id != next_segment_id
+                    || carryover.next_context_epoch != 1
+                    || carryover.persona_digest != identity.persona_digest
+                    || carryover.activity_profile != identity.activity_profile
                 {
                     emit_failed(&events, &identity, "REALTIME_PROTOCOL_ERROR");
                     return;
                 }
-                if let Err(error) = active_backend.resume() {
+                let public_summary = carryover.public_summary();
+                if let Err(error) =
+                    active_backend.rotate_context(1, "standby_wake", &public_summary)
+                {
                     emit_failed(&events, &identity, error.public_code());
                     return;
                 }
@@ -867,7 +902,7 @@ fn startup_cancel_requested(
             | Ok(RuntimeCommand::SetProfile { .. })
             | Ok(RuntimeCommand::RotateContext { .. })
             | Ok(RuntimeCommand::Pause)
-            | Ok(RuntimeCommand::Resume)
+            | Ok(RuntimeCommand::Resume { .. })
             | Ok(RuntimeCommand::WakeSegment { .. }) => {}
             Err(mpsc::TryRecvError::Empty) => return false,
         }

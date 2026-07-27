@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 use fairy_realtime_worker::{
     read_frame, validate_backend_start, write_frame, BackendStartRequest, HostCommand,
     LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
-    RealtimeInteractionIntensity, RealtimeVoiceOutput, SecretString, WorkerEvent,
+    RealtimeContextCarryover, RealtimeInteractionIntensity, RealtimeVoiceOutput, SecretString,
+    WorkerEvent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,6 +22,7 @@ use zeroize::Zeroizing;
 
 use crate::omni_model_manifest::OmniModelManifest;
 use crate::realtime_assistance::{RealtimeAssistancePublicState, RealtimeAssistanceRouter};
+use crate::realtime_context::RealtimeContextAuthority;
 use crate::realtime_coordinator::{
     ContextEpochIdentity, ContextRotationReason, PendingContextRotation, RealtimeCoordinatorAction,
     RealtimeCoordinatorEvent, RealtimeCoordinatorStart, RealtimeCoordinatorState,
@@ -171,6 +173,15 @@ struct WorkerProcess {
     terminal: Arc<AtomicBool>,
 }
 
+struct WorkerGovernanceHandles {
+    assistance: Arc<RealtimeAssistanceRouter>,
+    usage: Arc<Mutex<RealtimeWorkerUsage>>,
+    active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
+    coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
+    dialogue: Arc<Mutex<Option<RealtimeDialogueDirector>>>,
+    context: Arc<Mutex<RealtimeContextAuthority>>,
+}
+
 enum DialogueGovernance {
     Projection(Value),
     Rotate(PendingContextRotation),
@@ -185,6 +196,7 @@ pub struct RealtimeWorkerManager {
     active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
     coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
     dialogue: Arc<Mutex<Option<RealtimeDialogueDirector>>>,
+    context: Arc<Mutex<RealtimeContextAuthority>>,
 }
 
 impl RealtimeWorkerManager {
@@ -197,6 +209,7 @@ impl RealtimeWorkerManager {
             active_identity: Arc::new(Mutex::new(None)),
             coordinator: Arc::new(Mutex::new(None)),
             dialogue: Arc::new(Mutex::new(None)),
+            context: Arc::new(Mutex::new(RealtimeContextAuthority::default())),
         }
     }
 
@@ -210,6 +223,21 @@ impl RealtimeWorkerManager {
             *guard = None;
             if let Some(session_id) = finished_session {
                 self.assistance.end_session(&session_id);
+                let action_required = self
+                    .coordinator
+                    .lock()
+                    .ok()
+                    .and_then(|state| {
+                        state
+                            .as_ref()
+                            .map(RealtimeCoordinatorState::action_required)
+                    })
+                    .unwrap_or(false);
+                if !action_required {
+                    if let Ok(mut context) = self.context.lock() {
+                        context.end_session(&session_id);
+                    }
+                }
             }
             self.cleanup_finished_governance();
         }
@@ -355,30 +383,46 @@ impl RealtimeWorkerManager {
             .lock()
             .map_err(|_| RealtimeWorkerError::Protocol)?
             .clone();
+        let previous_context = self
+            .context
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?
+            .clone();
+        self.context
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?
+            .attach_session(&input.session_id, &persona)
+            .map_err(|_| RealtimeWorkerError::Protocol)?;
         if let Ok(mut dialogue) = self.dialogue.lock() {
             *dialogue = Some(director);
         } else {
+            self.restore_context(previous_context);
             return Err(RealtimeWorkerError::Protocol);
         }
         if let Ok(mut active) = self.active_identity.lock() {
             *active = Some(identity.clone());
         } else {
             self.restore_dialogue(previous_dialogue);
+            self.restore_context(previous_context);
             return Err(RealtimeWorkerError::Protocol);
         }
         let mut process = match spawn_worker(
             &self.launch,
             app.clone(),
-            Arc::clone(&self.assistance),
-            Arc::clone(&self.usage),
-            Arc::clone(&self.active_identity),
-            Arc::clone(&self.coordinator),
-            Arc::clone(&self.dialogue),
+            WorkerGovernanceHandles {
+                assistance: Arc::clone(&self.assistance),
+                usage: Arc::clone(&self.usage),
+                active_identity: Arc::clone(&self.active_identity),
+                coordinator: Arc::clone(&self.coordinator),
+                dialogue: Arc::clone(&self.dialogue),
+                context: Arc::clone(&self.context),
+            },
         ) {
             Ok(process) => process,
             Err(error) => {
                 self.restore_governance(previous_governance);
                 self.restore_dialogue(previous_dialogue);
+                self.restore_context(previous_context);
                 return Err(error);
             }
         };
@@ -389,6 +433,7 @@ impl RealtimeWorkerManager {
             let _ = process.child.wait();
             self.restore_governance(previous_governance);
             self.restore_dialogue(previous_dialogue);
+            self.restore_context(previous_context);
             return Err(RealtimeWorkerError::Protocol);
         }
         let command = HostCommand::Start {
@@ -423,6 +468,7 @@ impl RealtimeWorkerManager {
             let _ = process.child.wait();
             self.restore_governance(previous_governance);
             self.restore_dialogue(previous_dialogue);
+            self.restore_context(previous_context);
             return Err(RealtimeWorkerError::Protocol);
         }
         if let Some(projection) = self.current_presence_projection() {
@@ -459,6 +505,9 @@ impl RealtimeWorkerManager {
             .map_err(|_| RealtimeWorkerError::Protocol)?;
         let Some(mut process) = guard.take() else {
             self.assistance.end_session(session_id);
+            if let Ok(mut context) = self.context.lock() {
+                context.end_session(session_id);
+            }
             self.emit_terminal_presence(app);
             self.finish_governance();
             return Ok(RealtimeWorkerStatus {
@@ -489,6 +538,9 @@ impl RealtimeWorkerManager {
         while Instant::now() < deadline {
             if process.child.try_wait()?.is_some() {
                 self.assistance.end_session(session_id);
+                if let Ok(mut context) = self.context.lock() {
+                    context.end_session(session_id);
+                }
                 self.emit_terminal_presence(app);
                 self.finish_governance();
                 return Ok(RealtimeWorkerStatus {
@@ -509,6 +561,9 @@ impl RealtimeWorkerManager {
         let _ = process.child.kill();
         let _ = process.child.wait();
         self.assistance.end_session(session_id);
+        if let Ok(mut context) = self.context.lock() {
+            context.end_session(session_id);
+        }
         self.emit_terminal_presence(app);
         self.finish_governance();
         Ok(RealtimeWorkerStatus {
@@ -615,13 +670,26 @@ impl RealtimeWorkerManager {
             activity_profile: input.activity_profile,
             interaction_intensity: input.interaction_intensity,
         };
+        let carryover = match self.build_context_carryover(
+            &pending.current,
+            &pending.current.segment_id,
+            pending.next_epoch,
+        ) {
+            Ok(carryover) => carryover,
+            Err(error) => {
+                if let Some(projection) = fail_context_rotation(&self.coordinator) {
+                    let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                }
+                return Err(error);
+            }
+        };
         let rotate_command = HostCommand::RotateContext {
             session_id: pending.current.session_id.clone(),
             segment_id: pending.current.segment_id.clone(),
             current_context_epoch: pending.current.epoch,
             next_context_epoch: pending.next_epoch,
             reason: pending.reason.as_str().to_owned(),
-            public_summary: String::new(),
+            carryover,
         };
         let send_result = {
             let mut active = self
@@ -655,7 +723,7 @@ impl RealtimeWorkerManager {
 
     pub fn wake(
         &self,
-        _app: &AppHandle,
+        app: &AppHandle,
         input: RealtimeWorkerWakeInput,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
         let guard = self
@@ -681,29 +749,61 @@ impl RealtimeWorkerManager {
                 .map_err(|_| RealtimeWorkerError::Protocol)?
         };
         let (command, next_identity) = match transition {
-            RealtimeWakeTransition::Local(pending) => (
-                HostCommand::Resume {
-                    session_id: pending.current.session_id.clone(),
-                },
-                ContextEpochIdentity {
-                    session_id: pending.current.session_id,
-                    segment_id: pending.current.segment_id,
-                    epoch: pending.next_epoch,
-                },
-            ),
-            RealtimeWakeTransition::Cloud(pending) => (
-                HostCommand::WakeSegment {
-                    session_id: pending.current.session_id.clone(),
-                    current_segment_id: pending.current.segment_id.clone(),
-                    current_context_epoch: pending.current.epoch,
-                    next_segment_id: pending.next_segment_id.clone(),
-                },
-                ContextEpochIdentity {
-                    session_id: pending.current.session_id,
-                    segment_id: pending.next_segment_id,
-                    epoch: 1,
-                },
-            ),
+            RealtimeWakeTransition::Local(pending) => {
+                let carryover = match self.build_context_carryover(
+                    &pending.current,
+                    &pending.current.segment_id,
+                    pending.next_epoch,
+                ) {
+                    Ok(carryover) => carryover,
+                    Err(error) => {
+                        if let Some(projection) = fail_context_rotation(&self.coordinator) {
+                            let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                        }
+                        return Err(error);
+                    }
+                };
+                (
+                    HostCommand::Resume {
+                        session_id: pending.current.session_id.clone(),
+                        carryover,
+                    },
+                    ContextEpochIdentity {
+                        session_id: pending.current.session_id,
+                        segment_id: pending.current.segment_id,
+                        epoch: pending.next_epoch,
+                    },
+                )
+            }
+            RealtimeWakeTransition::Cloud(pending) => {
+                let carryover = match self.build_context_carryover(
+                    &pending.current,
+                    &pending.next_segment_id,
+                    1,
+                ) {
+                    Ok(carryover) => carryover,
+                    Err(error) => {
+                        if let Some(projection) = fail_context_rotation(&self.coordinator) {
+                            let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                        }
+                        return Err(error);
+                    }
+                };
+                (
+                    HostCommand::WakeSegment {
+                        session_id: pending.current.session_id.clone(),
+                        current_segment_id: pending.current.segment_id.clone(),
+                        current_context_epoch: pending.current.epoch,
+                        next_segment_id: pending.next_segment_id.clone(),
+                        carryover,
+                    },
+                    ContextEpochIdentity {
+                        session_id: pending.current.session_id,
+                        segment_id: pending.next_segment_id,
+                        epoch: 1,
+                    },
+                )
+            }
         };
         let previous_identity = {
             let mut active = self
@@ -785,7 +885,7 @@ impl RealtimeWorkerManager {
 
     pub fn resume_privacy(
         &self,
-        _app: &AppHandle,
+        app: &AppHandle,
         input: RealtimeWorkerWakeInput,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
         let guard = self
@@ -812,13 +912,26 @@ impl RealtimeWorkerManager {
                 .cloned()
                 .ok_or(RealtimeWorkerError::Protocol)?
         };
+        let carryover = match self.build_context_carryover(
+            &pending.current,
+            &pending.current.segment_id,
+            pending.next_epoch,
+        ) {
+            Ok(carryover) => carryover,
+            Err(error) => {
+                if let Some(projection) = fail_context_rotation(&self.coordinator) {
+                    let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                }
+                return Err(error);
+            }
+        };
         let command = HostCommand::RotateContext {
             session_id: pending.current.session_id.clone(),
             segment_id: pending.current.segment_id.clone(),
             current_context_epoch: pending.current.epoch,
             next_context_epoch: pending.next_epoch,
             reason: pending.reason.as_str().to_owned(),
-            public_summary: String::new(),
+            carryover,
         };
         let next_identity = ContextEpochIdentity {
             session_id: pending.current.session_id,
@@ -907,7 +1020,28 @@ impl RealtimeWorkerManager {
             .unwrap_or_default()
     }
 
+    fn build_context_carryover(
+        &self,
+        current: &ContextEpochIdentity,
+        target_segment_id: &str,
+        next_context_epoch: u64,
+    ) -> Result<RealtimeContextCarryover, RealtimeWorkerError> {
+        build_context_carryover_from_state(
+            &self.context,
+            &self.assistance,
+            &self.coordinator,
+            current,
+            target_segment_id,
+            next_context_epoch,
+        )
+    }
+
     fn finish_governance(&self) {
+        let ending_session = self.coordinator.lock().ok().and_then(|coordinator| {
+            coordinator
+                .as_ref()
+                .map(|state| state.active_identity().session_id.clone())
+        });
         if let Ok(mut coordinator) = self.coordinator.lock() {
             if let Some(state) = coordinator.as_mut() {
                 let _ = state.apply(RealtimeCoordinatorEvent::End);
@@ -922,6 +1056,11 @@ impl RealtimeWorkerManager {
                 director.invalidate_speech();
             }
             *dialogue = None;
+        }
+        if let Some(session_id) = ending_session {
+            if let Ok(mut context) = self.context.lock() {
+                context.end_session(&session_id);
+            }
         }
     }
 
@@ -967,6 +1106,12 @@ impl RealtimeWorkerManager {
         }
     }
 
+    fn restore_context(&self, authority: RealtimeContextAuthority) {
+        if let Ok(mut context) = self.context.lock() {
+            *context = authority;
+        }
+    }
+
     fn cleanup_finished_governance(&self) {
         let action_required = self
             .coordinator
@@ -1004,6 +1149,45 @@ impl RealtimeWorkerManager {
             })
         })
     }
+}
+
+fn build_context_carryover_from_state(
+    context: &Mutex<RealtimeContextAuthority>,
+    assistance: &RealtimeAssistanceRouter,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+    current: &ContextEpochIdentity,
+    target_segment_id: &str,
+    next_context_epoch: u64,
+) -> Result<RealtimeContextCarryover, RealtimeWorkerError> {
+    let activity_profile = coordinator
+        .lock()
+        .map_err(|_| RealtimeWorkerError::Protocol)?
+        .as_ref()
+        .ok_or(RealtimeWorkerError::Unavailable)?
+        .requested_activity_profile();
+    let assistance = assistance.snapshot(Some(&current.session_id));
+    let unfinished = assistance
+        .iter()
+        .find(|state| {
+            matches!(
+                state.status.as_str(),
+                "queued" | "running" | "awaiting_approval"
+            )
+        })
+        .map(|state| (state.request_id.as_str(), state.status.as_str()));
+    context
+        .lock()
+        .map_err(|_| RealtimeWorkerError::Protocol)?
+        .build(
+            &current.session_id,
+            &current.segment_id,
+            current.epoch,
+            target_segment_id,
+            next_context_epoch,
+            activity_profile,
+            unfinished,
+        )
+        .map_err(|_| RealtimeWorkerError::Protocol)
 }
 
 fn validate_capture_scope(input: &RealtimeWorkerStartInput) -> Result<(), RealtimeWorkerError> {
@@ -1045,12 +1229,16 @@ impl Drop for RealtimeWorkerManager {
 fn spawn_worker(
     launch: &RealtimeWorkerLaunch,
     app: AppHandle,
-    assistance: Arc<RealtimeAssistanceRouter>,
-    usage: Arc<Mutex<RealtimeWorkerUsage>>,
-    active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
-    coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
-    dialogue: Arc<Mutex<Option<RealtimeDialogueDirector>>>,
+    governance: WorkerGovernanceHandles,
 ) -> Result<WorkerProcess, RealtimeWorkerError> {
+    let WorkerGovernanceHandles {
+        assistance,
+        usage,
+        active_identity,
+        coordinator,
+        dialogue,
+        context,
+    } = governance;
     if !launch.program.is_file() {
         return Err(RealtimeWorkerError::Unavailable);
     }
@@ -1111,6 +1299,9 @@ fn spawn_worker(
                     if !coordinator_allows_worker_event(&value, &coordinator) {
                         continue;
                     }
+                    if let Ok(mut context) = context.lock() {
+                        context.observe_worker_event(&value);
+                    }
                     if is_meaningful_worker_activity(&value) {
                         if let Ok(mut coordinator) = coordinator.lock() {
                             if let Some(coordinator) = coordinator.as_mut() {
@@ -1127,6 +1318,13 @@ fn spawn_worker(
                             &dialogue,
                             elapsed_ms(reader_started_at),
                         ) {
+                            if let Some(session_id) =
+                                value.get("session_id").and_then(Value::as_str)
+                            {
+                                if let Ok(mut context) = context.lock() {
+                                    context.commit_rotation(session_id);
+                                }
+                            }
                             let _ = app.emit(REALTIME_WORKER_EVENT, projection);
                             let _ = app.emit(REALTIME_WORKER_EVENT, value);
                         } else if coordinator_has_pending_transition(&coordinator) {
@@ -1143,6 +1341,13 @@ fn spawn_worker(
                             &dialogue,
                             elapsed_ms(reader_started_at),
                         ) {
+                            if let Some(session_id) =
+                                value.get("session_id").and_then(Value::as_str)
+                            {
+                                if let Ok(mut context) = context.lock() {
+                                    context.commit_rotation(session_id);
+                                }
+                            }
                             let _ = app.emit(REALTIME_WORKER_EVENT, projection);
                             let _ = app.emit(REALTIME_WORKER_EVENT, value);
                         } else if coordinator_has_pending_transition(&coordinator) {
@@ -1166,13 +1371,31 @@ fn spawn_worker(
                                 }
                             }
                             DialogueGovernance::Rotate(pending) => {
+                                let carryover = match build_context_carryover_from_state(
+                                    &context,
+                                    &assistance,
+                                    &coordinator,
+                                    &pending.current,
+                                    &pending.current.segment_id,
+                                    pending.next_epoch,
+                                ) {
+                                    Ok(carryover) => carryover,
+                                    Err(_) => {
+                                        if let Some(projection) =
+                                            fail_context_rotation(&coordinator)
+                                        {
+                                            let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                                        }
+                                        continue;
+                                    }
+                                };
                                 let command = HostCommand::RotateContext {
                                     session_id: pending.current.session_id.clone(),
                                     segment_id: pending.current.segment_id.clone(),
                                     current_context_epoch: pending.current.epoch,
                                     next_context_epoch: pending.next_epoch,
                                     reason: pending.reason.as_str().to_owned(),
-                                    public_summary: String::new(),
+                                    carryover,
                                 };
                                 if send_command(&reader_input, &command).is_ok() {
                                     if let Ok(mut active) = active_identity.lock() {

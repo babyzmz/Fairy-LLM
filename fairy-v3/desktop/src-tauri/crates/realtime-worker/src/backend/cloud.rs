@@ -85,10 +85,12 @@ impl RealtimeBackend for CloudLiveBackend {
         if reason.is_empty() || reason.len() > 64 || public_summary.chars().count() > 2_000 {
             return Err(BackendError::DialogueProtocol);
         }
+        let system_instruction =
+            instruction_with_carryover(&self.system_instruction, public_summary);
         let replacement = ProviderSocket::connect(
             self.provider,
             self.credential.clone(),
-            self.system_instruction.clone(),
+            system_instruction,
             self.video_enabled,
             self.native_audio,
         )?;
@@ -179,6 +181,15 @@ fn distinct_application_audio_unavailable() -> Result<(), BackendError> {
     Err(BackendError::ApplicationAudioScopeUnavailable)
 }
 
+fn instruction_with_carryover(base: &str, public_summary: &str) -> String {
+    let summary = public_summary.trim();
+    if summary.is_empty() {
+        base.to_owned()
+    } else {
+        format!("{base}\n\nPublic continuity summary:\n{summary}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +203,19 @@ mod tests {
         assert_eq!(
             BackendError::ApplicationAudioScopeUnavailable.public_code(),
             "APPLICATION_AUDIO_SCOPE_UNAVAILABLE"
+        );
+    }
+
+    #[test]
+    fn reconnect_instruction_uses_public_carryover_without_accumulating_it() {
+        let instruction = instruction_with_carryover("Fairy Persona", "Current goal: test");
+        assert_eq!(
+            instruction,
+            "Fairy Persona\n\nPublic continuity summary:\nCurrent goal: test"
+        );
+        assert_eq!(
+            instruction_with_carryover("Fairy Persona", ""),
+            "Fairy Persona"
         );
     }
 }

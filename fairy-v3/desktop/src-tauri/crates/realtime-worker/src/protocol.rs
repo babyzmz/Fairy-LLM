@@ -11,6 +11,117 @@ use crate::backend::{
 };
 
 pub const MAX_CONTROL_FRAME_BYTES: usize = 256 * 1024;
+const MAX_CONTEXT_SUMMARY_CHARS: usize = 2_000;
+const MAX_CONTEXT_GOAL_CHARS: usize = 500;
+const MAX_CONTEXT_MEMORY_CHARS: usize = 300;
+const MAX_CONTEXT_MEMORIES: usize = 8;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RealtimeContextCarryover {
+    pub schema_version: u8,
+    pub session_id: String,
+    pub current_segment_id: String,
+    pub current_context_epoch: u64,
+    pub target_segment_id: String,
+    pub next_context_epoch: u64,
+    pub stable_caption_summary: String,
+    pub current_goal: Option<String>,
+    pub activity_profile: RealtimeActivityProfile,
+    pub verified_short_memories: Vec<String>,
+    pub unfinished_assistance_id: Option<String>,
+    pub unfinished_assistance_status: Option<String>,
+    pub persona_digest: String,
+}
+
+impl RealtimeContextCarryover {
+    pub fn is_valid(&self) -> bool {
+        let identity_valid = bounded_identifier(&self.session_id)
+            && bounded_identifier(&self.current_segment_id)
+            && bounded_identifier(&self.target_segment_id)
+            && self.current_context_epoch >= 1
+            && ((self.target_segment_id == self.current_segment_id
+                && self
+                    .current_context_epoch
+                    .checked_add(1)
+                    .is_some_and(|next| next == self.next_context_epoch))
+                || (self.target_segment_id != self.current_segment_id
+                    && self.next_context_epoch == 1));
+        let summary_valid =
+            self.stable_caption_summary.chars().count() <= MAX_CONTEXT_SUMMARY_CHARS;
+        let goal_valid = self
+            .current_goal
+            .as_ref()
+            .is_none_or(|goal| bounded_optional_text(goal, MAX_CONTEXT_GOAL_CHARS));
+        let memories_valid = self.verified_short_memories.len() <= MAX_CONTEXT_MEMORIES
+            && self
+                .verified_short_memories
+                .iter()
+                .all(|memory| bounded_optional_text(memory, MAX_CONTEXT_MEMORY_CHARS));
+        let assistance_valid = match (
+            self.unfinished_assistance_id.as_ref(),
+            self.unfinished_assistance_status.as_deref(),
+        ) {
+            (None, None) => true,
+            (Some(request_id), Some(status)) => {
+                bounded_identifier(request_id)
+                    && matches!(status, "queued" | "running" | "awaiting_approval")
+            }
+            _ => false,
+        };
+        self.schema_version == 1
+            && identity_valid
+            && summary_valid
+            && goal_valid
+            && memories_valid
+            && assistance_valid
+            && valid_sha256(&self.persona_digest)
+    }
+
+    pub fn public_summary(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.stable_caption_summary.trim().is_empty() {
+            parts.push(self.stable_caption_summary.trim().to_owned());
+        }
+        if let Some(goal) = self.current_goal.as_deref() {
+            parts.push(format!("Current goal: {}", goal.trim()));
+        }
+        if !self.verified_short_memories.is_empty() {
+            parts.push(format!(
+                "Verified memory: {}",
+                self.verified_short_memories.join("; ")
+            ));
+        }
+        if let (Some(request_id), Some(status)) = (
+            self.unfinished_assistance_id.as_deref(),
+            self.unfinished_assistance_status.as_deref(),
+        ) {
+            parts.push(format!("Assistance {request_id}: {status}"));
+        }
+        parts
+            .join("\n")
+            .chars()
+            .take(MAX_CONTEXT_SUMMARY_CHARS)
+            .collect()
+    }
+}
+
+fn bounded_identifier(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty() && value.chars().count() <= 128
+}
+
+fn bounded_optional_text(value: &str, maximum: usize) -> bool {
+    let value = value.trim();
+    !value.is_empty() && value.chars().count() <= maximum
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
 
 /// A credential carried over the worker's stdin control channel.
 ///
@@ -104,7 +215,7 @@ pub enum HostCommand {
         current_context_epoch: u64,
         next_context_epoch: u64,
         reason: String,
-        public_summary: String,
+        carryover: RealtimeContextCarryover,
     },
     AssistanceResult {
         session_id: String,
@@ -117,12 +228,14 @@ pub enum HostCommand {
     },
     Resume {
         session_id: String,
+        carryover: RealtimeContextCarryover,
     },
     WakeSegment {
         session_id: String,
         current_segment_id: String,
         current_context_epoch: u64,
         next_segment_id: String,
+        carryover: RealtimeContextCarryover,
     },
     UpdateUsage {
         session_id: String,
@@ -311,6 +424,29 @@ mod tests {
         RealtimeInteractionIntensity, RealtimeVoiceOutput,
     };
 
+    fn carryover(
+        current_segment_id: &str,
+        current_context_epoch: u64,
+        target_segment_id: &str,
+        next_context_epoch: u64,
+    ) -> RealtimeContextCarryover {
+        RealtimeContextCarryover {
+            schema_version: 1,
+            session_id: "session-1".to_owned(),
+            current_segment_id: current_segment_id.to_owned(),
+            current_context_epoch,
+            target_segment_id: target_segment_id.to_owned(),
+            next_context_epoch,
+            stable_caption_summary: "Finished the tutorial.".to_owned(),
+            current_goal: Some("Open chapter one.".to_owned()),
+            activity_profile: RealtimeActivityProfile::Game,
+            verified_short_memories: vec!["Prefers concise guidance.".to_owned()],
+            unfinished_assistance_id: Some("request-1".to_owned()),
+            unfinished_assistance_status: Some("running".to_owned()),
+            persona_digest: "a".repeat(64),
+        }
+    }
+
     #[test]
     fn length_prefixed_frames_round_trip_without_line_parsing() {
         let mut bytes = Vec::new();
@@ -384,7 +520,7 @@ mod tests {
             current_context_epoch: 1,
             next_context_epoch: 2,
             reason: "profile_changed".to_owned(),
-            public_summary: "Current public goal.".to_owned(),
+            carryover: carryover("segment-1", 1, "segment-1", 2),
         };
         let mut bytes = Vec::new();
         write_frame(&mut bytes, &command).expect("write rotation");
@@ -397,9 +533,11 @@ mod tests {
                 current_context_epoch: 1,
                 next_context_epoch: 2,
                 reason,
-                public_summary,
+                carryover,
                 ..
-            } if reason == "profile_changed" && public_summary == "Current public goal."
+            } if reason == "profile_changed"
+                && carryover.is_valid()
+                && carryover.public_summary().contains("Open chapter one.")
         ));
     }
 
@@ -410,6 +548,7 @@ mod tests {
             current_segment_id: "segment-1".to_owned(),
             current_context_epoch: 1,
             next_segment_id: "segment-2".to_owned(),
+            carryover: carryover("segment-1", 1, "segment-2", 1),
         };
         let mut bytes = Vec::new();
         write_frame(&mut bytes, &command).expect("write wake");
@@ -425,6 +564,18 @@ mod tests {
                 ..
             } if current_segment_id == "segment-1" && next_segment_id == "segment-2"
         ));
+    }
+
+    #[test]
+    fn context_carryover_rejects_unknown_raw_or_hidden_fields() {
+        let mut value =
+            serde_json::to_value(carryover("segment-1", 1, "segment-1", 2)).expect("serialize");
+        value["raw_audio"] = serde_json::json!("forbidden");
+        assert!(serde_json::from_value::<RealtimeContextCarryover>(value).is_err());
+
+        let mut invalid = carryover("segment-1", 1, "segment-1", 2);
+        invalid.verified_short_memories = vec!["memory".to_owned(); 9];
+        assert!(!invalid.is_valid());
     }
 
     #[test]
