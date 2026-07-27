@@ -997,6 +997,7 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "realtime.memories.delete",
         "realtime.memories.list",
         "realtime.memories.save",
+        "realtime.persona.snapshot",
         "realtime.sessions.get",
         "realtime.sessions.list",
         "realtime.sessions.report",

@@ -13,6 +13,27 @@ from fairy_core.transports.stdio import build_local_service
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 
 
+def test_realtime_persona_snapshot_uses_the_canonical_core_authority(tmp_path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        snapshot = service.invoke(
+            "realtime.persona.snapshot",
+            {
+                "locale": "zh-CN",
+                "activity_profile": "game",
+                "interaction_intensity": "standard",
+                "current_goal": "Finish the contract freeze",
+            },
+        )
+        assert snapshot["schema_version"] == 1
+        assert snapshot["identity"]["name"] == "Fairy"
+        assert len(snapshot["persona_digest"]) == 64
+        assert snapshot["short_memory"]["current_goal"] == ("Finish the contract freeze")
+        assert "system_prompt" not in snapshot
+    finally:
+        service.close()
+
+
 def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
     service = build_local_service(tmp_path)
     try:
@@ -265,18 +286,14 @@ def test_voice_transcript_append_and_list(tmp_path) -> None:
         assert (first["sequence"], second["sequence"]) == (1, 2)
         assert first["conversation_id"] == conversation_id
 
-        page = service.invoke(
-            "realtime.transcript.list", {"conversation_id": conversation_id}
-        )
+        page = service.invoke("realtime.transcript.list", {"conversation_id": conversation_id})
         assert [(e["speaker"], e["text"]) for e in page["items"]] == [
             ("user", "Where is the boss?"),
             ("assistant", "Behind the door."),
         ]
         transcript_events = [
             event
-            for event in service.invoke(
-                "events.list", {"cursor": 0, "limit": 100}
-            )["items"]
+            for event in service.invoke("events.list", {"cursor": 0, "limit": 100})["items"]
             if event["event_type"] == "realtime.transcript.appended"
         ]
         assert [event["conversation_id"] for event in transcript_events] == [
@@ -417,9 +434,7 @@ def _assert_no_scratch_artifacts(data_dir: Path) -> None:
                 "core_versions",
                 "core_realtime_sessions",
             ):
-                count = connection.exec_driver_sql(
-                    f"SELECT COUNT(*) FROM {table}"
-                ).scalar_one()
+                count = connection.exec_driver_sql(f"SELECT COUNT(*) FROM {table}").scalar_one()
                 assert count == 0, table
     finally:
         engine.dispose()

@@ -134,6 +134,7 @@ export const CORE_METHOD_TRANSPORT = {
   "realtime.memories.delete": "local_and_cloud",
   "realtime.memories.list": "local_and_cloud",
   "realtime.memories.save": "local_and_cloud",
+  "realtime.persona.snapshot": "local_only",
   "realtime.sessions.get": "local_and_cloud",
   "realtime.sessions.list": "local_and_cloud",
   "realtime.sessions.report": "local_and_cloud",
@@ -207,6 +208,7 @@ export const LOCAL_ONLY_CORE_METHODS = [
   "obsidian.sources.items.read",
   "obsidian.sources.list",
   "obsidian.sync.start",
+  "realtime.persona.snapshot",
   "realtime.transcript.append",
   "realtime.transcript.list",
 ] as const;

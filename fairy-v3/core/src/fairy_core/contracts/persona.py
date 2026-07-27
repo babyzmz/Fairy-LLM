@@ -4,7 +4,13 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fairy_core.persona import AmbientSurface, DialogueSource, DialogueTrigger
+from fairy_core.persona import (
+    AmbientSurface,
+    DialogueSource,
+    DialogueTrigger,
+    RealtimeActivityProfile,
+    RealtimeInteractionIntensity,
+)
 
 
 class AmbientContextSnapshotModel(BaseModel):
@@ -105,6 +111,74 @@ class AmbientDialogueDecisionModel(BaseModel):
     reason: str
 
 
+class RealtimePersonaSnapshotInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    locale: str = Field(default="zh-CN", min_length=2, max_length=16)
+    activity_profile: RealtimeActivityProfile = RealtimeActivityProfile.AUTO
+    interaction_intensity: RealtimeInteractionIntensity = RealtimeInteractionIntensity.STANDARD
+    current_goal: str | None = Field(default=None, min_length=1, max_length=500)
+    subject_title: str | None = Field(default=None, min_length=1, max_length=160)
+    recent_progress: str | None = Field(default=None, min_length=1, max_length=800)
+
+
+class RealtimeIdentitySnapshotModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    role: str
+
+
+class RealtimeRelationshipSnapshotModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    user_has_final_authority: bool
+    protect_privacy_time_and_work: bool
+
+
+class RealtimeSpeechSnapshotModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    lead_with_conclusion: bool
+    dry_humour: str
+    use_master: str
+    no_customer_service_filler: bool
+    no_empty_praise: bool
+
+
+class RealtimePolicySnapshotModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    proactive_allowed: bool
+    max_spoken_sentences: int = Field(ge=1, le=4)
+    grounding_required: bool
+    never_claim_unobserved_action: bool
+
+
+class RealtimeShortMemorySnapshotModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    current_goal: str | None
+    subject_title: str | None
+    recent_progress: str | None
+
+
+class RealtimePersonaSnapshotModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: int = Field(ge=1)
+    persona_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    authority_version: str
+    locale: str
+    activity_profile: RealtimeActivityProfile
+    interaction_intensity: RealtimeInteractionIntensity
+    identity: RealtimeIdentitySnapshotModel
+    relationship: RealtimeRelationshipSnapshotModel
+    speech: RealtimeSpeechSnapshotModel
+    realtime_policy: RealtimePolicySnapshotModel
+    short_memory: RealtimeShortMemorySnapshotModel
+
+
 __all__ = [
     "AmbientContextSnapshotModel",
     "AmbientDialogueDecisionModel",
@@ -114,4 +188,11 @@ __all__ = [
     "AmbientDialogueStateModel",
     "GeneratedDialogueCandidateModel",
     "GeneratedDialogueRequestModel",
+    "RealtimeIdentitySnapshotModel",
+    "RealtimePersonaSnapshotInput",
+    "RealtimePersonaSnapshotModel",
+    "RealtimePolicySnapshotModel",
+    "RealtimeRelationshipSnapshotModel",
+    "RealtimeShortMemorySnapshotModel",
+    "RealtimeSpeechSnapshotModel",
 ]

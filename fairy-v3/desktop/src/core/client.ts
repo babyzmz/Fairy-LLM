@@ -66,6 +66,7 @@ import type {
   RealtimeSessionReportInput,
   RealtimeSessionStartInput,
   RealtimeSessionStopInput,
+  RealtimePersonaSnapshotInput,
   RealtimeTranscriptAppendInput,
   RealtimeTranscriptListInput,
   SystemActionRequest,
@@ -613,6 +614,10 @@ export class CoreClient {
   };
 
   readonly realtime = {
+    persona: {
+      snapshot: (input: RealtimePersonaSnapshotInput) =>
+        this.transport.call("realtime.persona.snapshot", input),
+    },
     sessions: {
       start: (input: RealtimeSessionStartInput) =>
         this.transport.call("realtime.sessions.start", input),

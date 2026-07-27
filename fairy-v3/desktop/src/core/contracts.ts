@@ -237,6 +237,50 @@ export type RealtimeSessionReportInput = Schemas["RealtimeSessionReportInput"];
 export type RealtimeSessionStopInput = Schemas["RealtimeSessionStopInput"];
 export type RealtimeSessionPage = Schemas["RealtimeSessionPageModel"];
 export type RealtimeSessionStatus = Schemas["RealtimeSessionStatus"];
+export type RealtimeActivityProfile = "auto" | "game" | "focus";
+export type RealtimeInteractionIntensity = "quiet" | "standard" | "active";
+export interface RealtimePersonaSnapshotInput {
+  locale?: string;
+  activity_profile?: RealtimeActivityProfile;
+  interaction_intensity?: RealtimeInteractionIntensity;
+  current_goal?: string | null;
+  subject_title?: string | null;
+  recent_progress?: string | null;
+}
+export interface RealtimePersonaSnapshot {
+  schema_version: number;
+  persona_digest: string;
+  authority_version: string;
+  locale: string;
+  activity_profile: RealtimeActivityProfile;
+  interaction_intensity: RealtimeInteractionIntensity;
+  identity: {
+    name: string;
+    role: string;
+  };
+  relationship: {
+    user_has_final_authority: boolean;
+    protect_privacy_time_and_work: boolean;
+  };
+  speech: {
+    lead_with_conclusion: boolean;
+    dry_humour: string;
+    use_master: string;
+    no_customer_service_filler: boolean;
+    no_empty_praise: boolean;
+  };
+  realtime_policy: {
+    proactive_allowed: boolean;
+    max_spoken_sentences: number;
+    grounding_required: boolean;
+    never_claim_unobserved_action: boolean;
+  };
+  short_memory: {
+    current_goal: string | null;
+    subject_title: string | null;
+    recent_progress: string | null;
+  };
+}
 export type GameMemoryDigest = Schemas["GameMemoryDigestModel"];
 export type GameMemorySaveInput = Schemas["GameMemorySaveInput"];
 export type GameMemoryPage = Schemas["GameMemoryPageModel"];
@@ -610,6 +654,10 @@ export interface CoreMethodMap {
   "realtime.memories.delete": {
     params: { memory_id: string };
     result: GameMemoryDeleteResult;
+  };
+  "realtime.persona.snapshot": {
+    params: RealtimePersonaSnapshotInput;
+    result: RealtimePersonaSnapshot;
   };
   "realtime.transcript.append": {
     params: RealtimeTranscriptAppendInput;

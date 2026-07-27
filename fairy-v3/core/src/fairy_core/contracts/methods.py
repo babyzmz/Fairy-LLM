@@ -241,6 +241,8 @@ from fairy_core.contracts.obsidian import (
 from fairy_core.contracts.persona import (
     AmbientDialogueDecisionModel,
     AmbientDialogueEvaluateInput,
+    RealtimePersonaSnapshotInput,
+    RealtimePersonaSnapshotModel,
 )
 from fairy_core.contracts.planning import (
     ExecutionPlanContextModel,
@@ -1093,6 +1095,12 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
         ),
         "realtime.memories.save": CoreMethod(
             "realtime.memories.save", GameMemorySaveInput, GameMemoryDigestModel
+        ),
+        "realtime.persona.snapshot": CoreMethod(
+            "realtime.persona.snapshot",
+            RealtimePersonaSnapshotInput,
+            RealtimePersonaSnapshotModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "realtime.sessions.get": CoreMethod(
             "realtime.sessions.get", RealtimeSessionIdInput, RealtimeSessionModel

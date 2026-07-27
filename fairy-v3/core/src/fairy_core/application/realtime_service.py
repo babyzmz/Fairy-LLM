@@ -6,6 +6,10 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from fairy_core.contracts.persona import (
+    RealtimePersonaSnapshotInput,
+    RealtimePersonaSnapshotModel,
+)
 from fairy_core.contracts.realtime import (
     GameMemoryIdInput,
     GameMemoryListInput,
@@ -19,6 +23,11 @@ from fairy_core.contracts.realtime import (
     RealtimeTranscriptListInput,
 )
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
+from fairy_core.persona import (
+    PersonaAuthority,
+    load_default_persona_authority,
+    project_realtime_persona_snapshot,
+)
 from fairy_core.realtime.application import RealtimeApplication
 
 Handler = Callable[[BaseModel], Any]
@@ -29,17 +38,15 @@ class RealtimeService:
         self,
         unit_of_work_factory: CoreUnitOfWorkFactory,
         *,
+        persona_authority: PersonaAuthority | None = None,
         scratch_conversation_factory: Callable[[CoreUnitOfWork], Any] | None = None,
         scratch_conversation_cleanup: Callable[[Any], None] | None = None,
     ) -> None:
-        if (scratch_conversation_factory is None) != (
-            scratch_conversation_cleanup is None
-        ):
-            raise ValueError(
-                "scratch conversation factory and cleanup must be configured together"
-            )
+        if (scratch_conversation_factory is None) != (scratch_conversation_cleanup is None):
+            raise ValueError("scratch conversation factory and cleanup must be configured together")
         self._unit_of_work_factory = unit_of_work_factory
         self._application = RealtimeApplication(unit_of_work_factory)
+        self._persona_authority = persona_authority or load_default_persona_authority()
         self._scratch_conversation_factory = scratch_conversation_factory
         self._scratch_conversation_cleanup = scratch_conversation_cleanup
         self.handlers: Mapping[str, Handler] = MappingProxyType(
@@ -54,15 +61,13 @@ class RealtimeService:
                 "realtime.memories.delete": self.delete_memory,
                 "realtime.transcript.append": self.append_transcript,
                 "realtime.transcript.list": self.list_transcript,
+                "realtime.persona.snapshot": self.persona_snapshot,
             }
         )
 
     def start(self, request: BaseModel):
         validated = cast(RealtimeSessionStartInput, request)
-        if (
-            validated.conversation_id is None
-            and self._scratch_conversation_factory is not None
-        ):
+        if validated.conversation_id is None and self._scratch_conversation_factory is not None:
             # Link the voice session to a fresh scratch conversation so it appears
             # in history. Conversation, Workspace, Version, and Session share one
             # transaction; the new filesystem workspace is compensated on failure.
@@ -75,9 +80,7 @@ class RealtimeService:
                     if existing is not None:
                         return existing
                     conversation = self._scratch_conversation_factory(unit_of_work)
-                    linked = validated.model_copy(
-                        update={"conversation_id": conversation.id}
-                    )
+                    linked = validated.model_copy(update={"conversation_id": conversation.id})
                     started = self._application.start_in_unit_of_work(
                         linked,
                         unit_of_work,
@@ -85,10 +88,7 @@ class RealtimeService:
                     unit_of_work.commit()
                     return started
             except BaseException:
-                if (
-                    conversation is not None
-                    and self._scratch_conversation_cleanup is not None
-                ):
+                if conversation is not None and self._scratch_conversation_cleanup is not None:
                     self._scratch_conversation_cleanup(conversation)
                 raise
         return self._application.start(validated)
@@ -124,9 +124,7 @@ class RealtimeService:
         }
 
     def append_transcript(self, request: BaseModel):
-        return self._application.append_transcript(
-            cast(RealtimeTranscriptAppendInput, request)
-        )
+        return self._application.append_transcript(cast(RealtimeTranscriptAppendInput, request))
 
     def list_transcript(self, request: BaseModel):
         validated = cast(RealtimeTranscriptListInput, request)
@@ -135,6 +133,19 @@ class RealtimeService:
                 validated.conversation_id, limit=validated.limit
             )
         }
+
+    def persona_snapshot(self, request: BaseModel) -> RealtimePersonaSnapshotModel:
+        validated = cast(RealtimePersonaSnapshotInput, request)
+        snapshot = project_realtime_persona_snapshot(
+            authority=self._persona_authority,
+            locale=validated.locale,
+            activity_profile=validated.activity_profile,
+            interaction_intensity=validated.interaction_intensity,
+            current_goal=validated.current_goal,
+            subject_title=validated.subject_title,
+            recent_progress=validated.recent_progress,
+        )
+        return RealtimePersonaSnapshotModel.model_validate(snapshot, from_attributes=True)
 
 
 __all__ = ["RealtimeService"]

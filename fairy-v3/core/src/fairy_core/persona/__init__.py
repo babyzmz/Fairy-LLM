@@ -23,6 +23,17 @@ from fairy_core.persona.director import (
     GeneratedDialogueRequest,
 )
 from fairy_core.persona.generation import AmbientDialogueGenerator, AmbientGenerationResult
+from fairy_core.persona.realtime import (
+    RealtimeActivityProfile,
+    RealtimeIdentitySnapshot,
+    RealtimeInteractionIntensity,
+    RealtimePersonaSnapshot,
+    RealtimePolicySnapshot,
+    RealtimeRelationshipSnapshot,
+    RealtimeShortMemorySnapshot,
+    RealtimeSpeechSnapshot,
+    project_realtime_persona_snapshot,
+)
 from fairy_core.persona.safety import GeneratedDialogueCandidate, TruthSafetyGate
 
 __all__ = [
@@ -44,8 +55,17 @@ __all__ = [
     "GeneratedDialogueRequest",
     "PersonaAuthority",
     "ProhibitedDrift",
+    "RealtimeActivityProfile",
+    "RealtimeIdentitySnapshot",
+    "RealtimeInteractionIntensity",
+    "RealtimePersonaSnapshot",
+    "RealtimePolicySnapshot",
+    "RealtimeRelationshipSnapshot",
+    "RealtimeShortMemorySnapshot",
+    "RealtimeSpeechSnapshot",
     "RelationshipContract",
     "TruthSafetyGate",
     "load_default_dialogue_catalog",
     "load_default_persona_authority",
+    "project_realtime_persona_snapshot",
 ]

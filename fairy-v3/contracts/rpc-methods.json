@@ -805,6 +805,12 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "realtime.persona.snapshot",
+      "request_model": "RealtimePersonaSnapshotInput",
+      "response_model": "RealtimePersonaSnapshotModel",
+      "transport": "local_only"
+    },
+    {
       "name": "realtime.sessions.get",
       "request_model": "RealtimeSessionIdInput",
       "response_model": "RealtimeSessionModel",
