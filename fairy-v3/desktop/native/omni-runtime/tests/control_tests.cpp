@@ -133,6 +133,7 @@ void test_lifecycle() {
     auto load = base_command("load", 2);
     load["manifest_digest"] = std::string(64, 'a');
     load["model_version"] = "fixture";
+    load["system_instruction"] = "You are Fairy.";
     const auto load_events = runtime.handle(load);
     require(
         load_events.size() == 2 && load_events[1].at("type") == "model_ready",
@@ -275,6 +276,20 @@ void test_self_test_identity() {
     );
 }
 
+void test_persona_instruction_is_required() {
+    require_protocol_error(
+        [] {
+            ControlRuntime runtime;
+            static_cast<void>(runtime.handle(hello()));
+            auto load = base_command("load", 2);
+            load["manifest_digest"] = std::string(64, 'a');
+            load["model_version"] = "fixture";
+            static_cast<void>(runtime.handle(load));
+        },
+        "missing Persona instruction"
+    );
+}
+
 } // namespace
 
 int main() {
@@ -282,6 +297,7 @@ int main() {
         test_frames();
         test_lifecycle();
         test_fail_closed_state();
+        test_persona_instruction_is_required();
         test_self_test_identity();
         std::cout << "control tests passed\n";
         return EXIT_SUCCESS;

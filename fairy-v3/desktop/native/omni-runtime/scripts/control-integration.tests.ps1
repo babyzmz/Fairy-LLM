@@ -169,6 +169,7 @@ try {
         sequence = 2
         manifest_digest = $runtime.ManifestDigest
         model_version = $runtime.ModelVersion
+        system_instruction = "You are Fairy."
     }
     Assert-Equal (Read-Frame -Stream $output).type "load_progress" "Load progress missing."
     Assert-Equal (Read-Frame -Stream $output).type "model_ready" "Model state missing."

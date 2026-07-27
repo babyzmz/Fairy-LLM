@@ -2,8 +2,9 @@ use std::io::{stdin, stdout};
 use std::thread;
 
 use fairy_realtime_worker::{
-    read_frame, validate_backend_start, write_frame, BackendStartRequest, HostCommand,
-    RealtimeBackendKind, RealtimeRuntime, RuntimeCommand, RuntimeLaunch, WorkerEvent,
+    read_frame, validate_backend_start, validate_persona_snapshot, write_frame,
+    BackendStartRequest, HostCommand, RealtimeBackendKind, RealtimeRuntime, RuntimeCommand,
+    RuntimeLaunch, WorkerEvent,
 };
 
 const WORKER_PROTOCOL: &str = "fairy-realtime-worker-v2";
@@ -48,6 +49,7 @@ fn main() {
                 cloud_credential,
                 local_omni,
                 persona_snapshot,
+                locale,
                 activity_profile,
                 interaction_intensity,
                 voice_output,
@@ -57,8 +59,12 @@ fn main() {
                 application_audio_enabled,
                 online_assistance_enabled,
             } if runtime.is_none() => {
-                let persona_is_json =
-                    serde_json::from_str::<serde_json::Value>(persona_snapshot.expose()).is_ok();
+                let persona = validate_persona_snapshot(
+                    persona_snapshot.expose(),
+                    &locale,
+                    activity_profile,
+                    interaction_intensity,
+                );
                 let validation = validate_backend_start(&BackendStartRequest {
                     session_id: session_id.clone(),
                     segment_id: segment_id.clone(),
@@ -68,7 +74,7 @@ fn main() {
                     cloud_credential_present: cloud_credential
                         .as_ref()
                         .is_some_and(|credential| !credential.expose().trim().is_empty()),
-                    persona_snapshot_present: persona_is_json,
+                    persona_snapshot_present: persona.is_ok(),
                     activity_profile,
                     interaction_intensity,
                     voice_output,
@@ -78,7 +84,7 @@ fn main() {
                     application_audio_enabled,
                     online_assistance_enabled,
                 });
-                if validation.is_err() {
+                if validation.is_err() || persona.is_err() {
                     emit_start_failure(
                         &session_id,
                         &segment_id,
@@ -119,8 +125,8 @@ fn main() {
                     backend,
                     cloud_provider,
                     credential: cloud_credential.map(|value| value.into_zeroizing()),
-                    local_omni,
-                    system_instruction: persona_snapshot.into_zeroizing().to_string(),
+                    local_omni: local_omni.map(|launch| *launch),
+                    persona: persona.expect("validated Persona"),
                     source_id,
                     microphone_enabled,
                     screen_enabled,

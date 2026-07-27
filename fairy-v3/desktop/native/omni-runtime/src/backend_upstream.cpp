@@ -71,10 +71,13 @@ class UpstreamBackend final : public Backend {
 #endif
     }
 
-    BackendStatus load(const BackendModelPaths &paths) override {
+    BackendStatus load(
+        const BackendModelPaths &paths,
+        const std::string &system_instruction
+    ) override {
         stop();
         if (!regular_model_file(paths.llm) || !regular_model_file(paths.vision) ||
-            !regular_model_file(paths.audio)) {
+            !regular_model_file(paths.audio) || system_instruction.empty()) {
             return {true, cuda_compiled(), false, "model_files_invalid"};
         }
 
@@ -114,6 +117,9 @@ class UpstreamBackend final : public Backend {
             stop();
             return {true, cuda_compiled(), false, "memory_policy_rejected"};
         }
+        context_->omni_voice_clone_prompt =
+            "<|im_start|>system\n" + system_instruction + "\n";
+        context_->omni_assistant_prompt = "<|im_end|>\n";
         return status();
     }
 

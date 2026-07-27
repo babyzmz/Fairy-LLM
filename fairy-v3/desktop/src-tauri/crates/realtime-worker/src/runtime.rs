@@ -14,6 +14,7 @@ use crate::media::{
     resample_pcm16, AudioPlayback, MicrophoneCapture, ProcessLoopbackCapture, VideoCapture,
 };
 use crate::protocol::WorkerEvent;
+use crate::ValidatedRealtimePersona;
 
 // Absolute worker-side ceiling as defense in depth: the renderer enforces the
 // user's configurable maximum, and this backstop stops a runaway session if the
@@ -35,7 +36,7 @@ pub struct RuntimeLaunch {
     pub cloud_provider: Option<RealtimeCloudProviderKind>,
     pub credential: Option<Zeroizing<String>>,
     pub local_omni: Option<LocalOmniLaunch>,
-    pub system_instruction: String,
+    pub persona: ValidatedRealtimePersona,
     pub source_id: Option<u64>,
     pub microphone_enabled: bool,
     pub screen_enabled: bool,
@@ -128,7 +129,7 @@ fn run_session(
         cloud_provider,
         credential,
         local_omni,
-        system_instruction,
+        persona,
         source_id,
         microphone_enabled: initial_microphone_enabled,
         screen_enabled,
@@ -159,7 +160,7 @@ fn run_session(
                         CloudLiveBackend::connect(CloudBackendLaunch {
                             provider,
                             credential,
-                            system_instruction,
+                            system_instruction: persona.instruction().to_owned(),
                             video_enabled: screen_enabled,
                             native_audio,
                         })
@@ -173,6 +174,7 @@ fn run_session(
                         connect_session_id,
                         connect_segment_id,
                         context_epoch,
+                        persona.instruction(),
                     )
                     .map(|backend| Box::new(backend) as Box<dyn RealtimeBackend>),
                     None => Err(crate::backend::BackendError::LocalUnavailable),

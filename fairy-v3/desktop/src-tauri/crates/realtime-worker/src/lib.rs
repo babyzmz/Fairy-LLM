@@ -1,5 +1,6 @@
 mod backend;
 mod media;
+mod persona;
 mod protocol;
 mod provider;
 mod runtime;
@@ -14,6 +15,7 @@ pub use backend::{
 pub use media::{
     resample_pcm16, AudioPacket, AudioPlayback, MicrophoneCapture, VideoCapture, VideoFrame,
 };
+pub use persona::{validate_persona_snapshot, PersonaSnapshotError, ValidatedRealtimePersona};
 pub use protocol::{
     read_frame, write_frame, HostCommand, SecretString, WorkerEvent, MAX_CONTROL_FRAME_BYTES,
 };

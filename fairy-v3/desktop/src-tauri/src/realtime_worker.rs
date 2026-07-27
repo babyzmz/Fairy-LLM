@@ -306,8 +306,9 @@ impl RealtimeWorkerManager {
             cloud_provider: input.cloud_provider,
             cloud_credential: credential.map(SecretString::from),
             local_omni: (input.backend == RealtimeBackendKind::LocalMiniCpmO45)
-                .then(|| self.launch.local_omni.clone()),
+                .then(|| Box::new(self.launch.local_omni.clone())),
             persona_snapshot: SecretString::from(persona_snapshot),
+            locale: input.locale.clone(),
             activity_profile: input.activity_profile,
             interaction_intensity: input.interaction_intensity,
             voice_output: input.voice_output,

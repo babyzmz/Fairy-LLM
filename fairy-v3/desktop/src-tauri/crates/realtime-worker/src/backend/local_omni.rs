@@ -41,6 +41,7 @@ enum CommandFrame<'a> {
         identity: Identity,
         manifest_digest: &'a str,
         model_version: &'a str,
+        system_instruction: &'a str,
     },
     ContextBegin {
         #[serde(flatten)]
@@ -211,6 +212,7 @@ impl LocalOmniBackend {
         session_id: String,
         segment_id: String,
         context_epoch: u64,
+        system_instruction: &str,
     ) -> Result<Self, BackendError> {
         validate_launch(&launch)?;
         let pipe_name = format!("fairy-omni-{}-{}", std::process::id(), monotonic_token());
@@ -285,7 +287,11 @@ impl LocalOmniBackend {
                 && !backend_ready => {}
             _ => return backend.fail(BackendError::LocalUnavailable),
         }
-        backend.send_load(&launch.manifest_digest, &launch.model_version)?;
+        backend.send_load(
+            &launch.manifest_digest,
+            &launch.model_version,
+            system_instruction,
+        )?;
         let model = backend.recv_until(Instant::now() + LOAD_DEADLINE, |event| {
             matches!(event, RuntimeEvent::ModelReady { .. })
         })?;
@@ -327,7 +333,12 @@ impl LocalOmniBackend {
         )
     }
 
-    fn send_load(&mut self, digest: &str, version: &str) -> Result<(), BackendError> {
+    fn send_load(
+        &mut self,
+        digest: &str,
+        version: &str,
+        system_instruction: &str,
+    ) -> Result<(), BackendError> {
         let identity = self.identity();
         write_control(
             &mut self.input,
@@ -335,6 +346,7 @@ impl LocalOmniBackend {
                 identity,
                 manifest_digest: digest,
                 model_version: version,
+                system_instruction,
             },
         )
     }

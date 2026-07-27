@@ -306,7 +306,8 @@ std::vector<json> ControlRuntime::handle(const json &command) {
     if (type == "hello") {
         expected_keys = keys_with({"protocol_version"});
     } else if (type == "load") {
-        expected_keys = keys_with({"manifest_digest", "model_version"});
+        expected_keys =
+            keys_with({"manifest_digest", "model_version", "system_instruction"});
     } else if (type == "context_begin") {
         expected_keys = keys_with(
             {"context_kind",
@@ -378,6 +379,8 @@ std::vector<json> ControlRuntime::handle(const json &command) {
         }
         const auto manifest_digest = require_string(command, "manifest_digest", 64);
         const auto model_version = require_string(command, "model_version", 128);
+        const auto system_instruction =
+            require_string(command, "system_instruction", 8192);
         require_sha256_hex(manifest_digest, "manifest_digest");
         auto backend_status = backend_->status();
         if (!manifest_path_.empty() || !model_root_.empty()) {
@@ -389,7 +392,7 @@ std::vector<json> ControlRuntime::handle(const json &command) {
                 model.model_version != model_version) {
                 throw ProtocolError("load identity does not match the managed model");
             }
-            backend_status = backend_->load(model.paths);
+            backend_status = backend_->load(model.paths, system_instruction);
         }
         loaded_ = true;
 

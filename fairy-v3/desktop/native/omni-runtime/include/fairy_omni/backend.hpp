@@ -33,7 +33,10 @@ class Backend {
   public:
     virtual ~Backend() = default;
     [[nodiscard]] virtual BackendStatus status() const = 0;
-    virtual BackendStatus load(const BackendModelPaths &paths) = 0;
+    virtual BackendStatus load(
+        const BackendModelPaths &paths,
+        const std::string &system_instruction
+    ) = 0;
     virtual bool begin() = 0;
     virtual bool submit(MediaBatch batch) = 0;
     virtual std::optional<BackendDecision> poll(int timeout_ms) = 0;

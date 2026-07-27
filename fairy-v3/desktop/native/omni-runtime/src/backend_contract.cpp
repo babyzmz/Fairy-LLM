@@ -9,7 +9,7 @@ class ContractBackend final : public Backend {
         return {false, false, false, "contract_backend"};
     }
 
-    BackendStatus load(const BackendModelPaths &) override {
+    BackendStatus load(const BackendModelPaths &, const std::string &) override {
         return status();
     }
 

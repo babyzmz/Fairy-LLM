@@ -194,7 +194,10 @@ json build_self_test_report(
     auto backend = make_backend();
     auto backend_status = backend->status();
     if (kBuildProfile == "production-cuda") {
-        backend_status = backend->load(model.paths);
+        backend_status = backend->load(
+            model.paths,
+            "You are Fairy. Listen when current evidence is insufficient."
+        );
     }
     const auto model_probe = kBuildProfile == "contract"
         ? std::string("not_run_contract")
