@@ -137,6 +137,10 @@ try {
         Remove-Item -LiteralPath $destination -Recurse -Force
     }
     Copy-Item -LiteralPath $built -Destination $destination -Recurse
+    . (Join-Path $root "scripts\voice-release-licenses.ps1")
+    [void](Copy-VoiceReleaseLicenses `
+        -CosyVoiceRoot $cosyvoiceRoot `
+        -Destination $destination)
     $executable = Join-Path $destination "fairy-voice-worker.exe"
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $executable).Hash.ToLowerInvariant()
     Write-Host "Built $destination"

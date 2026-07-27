@@ -54,6 +54,19 @@ class ReleaseBundlePolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "missing release resources"):
                 validate_bundle_root(root)
 
+    def test_voice_runtime_requires_upstream_license_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for relative in REQUIRED_BUNDLE_FILES:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("reviewed release resource", encoding="utf-8")
+            voice = root / "runtime/voice-worker/fairy-voice-worker.exe"
+            voice.parent.mkdir(parents=True, exist_ok=True)
+            voice.write_bytes(b"MZ")
+            with self.assertRaisesRegex(AssertionError, "Voice runtime is missing"):
+                validate_bundle_root(root)
+
 
 if __name__ == "__main__":
     unittest.main()

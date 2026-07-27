@@ -21,6 +21,10 @@ REQUIRED_BUNDLE_FILES = {
     "docs/release/realtime-companion-beta-privacy.md",
     "docs/release/realtime-companion-beta-troubleshooting.md",
 }
+REQUIRED_VOICE_LICENSES = {
+    "runtime/voice-worker/THIRD_PARTY_LICENSES/CosyVoice-LICENSE.txt",
+    "runtime/voice-worker/THIRD_PARTY_LICENSES/Matcha-TTS-LICENSE.txt",
+}
 FORBIDDEN_SUFFIXES = {
     ".db",
     ".db-shm",
@@ -92,6 +96,12 @@ def validate_bundle_root(bundle_root: Path) -> None:
     missing = sorted(REQUIRED_BUNDLE_FILES - files)
     if missing:
         raise AssertionError(f"bundle is missing release resources: {', '.join(missing)}")
+    if any(path.startswith("runtime/voice-worker/") for path in files):
+        missing_voice = sorted(REQUIRED_VOICE_LICENSES - files)
+        if missing_voice:
+            raise AssertionError(
+                f"Voice runtime is missing upstream licenses: {', '.join(missing_voice)}"
+            )
 
 
 def parse_args() -> argparse.Namespace:
