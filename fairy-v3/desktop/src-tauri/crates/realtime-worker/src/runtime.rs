@@ -60,6 +60,11 @@ pub enum RuntimeCommand {
         call_id: String,
         public_summary: String,
     },
+    AssistanceResult {
+        request_id: String,
+        public_summary: String,
+        succeeded: bool,
+    },
     SetInput {
         microphone: bool,
         video: bool,
@@ -347,6 +352,33 @@ fn run_session(
                     emit_failed(&events, &identity, error.public_code());
                     return;
                 }
+            }
+            Ok(RuntimeCommand::AssistanceResult {
+                request_id,
+                public_summary,
+                succeeded,
+            }) => {
+                if let Err(error) =
+                    active_backend.push_assistance_result(&request_id, &public_summary)
+                {
+                    let _ = events.send(WorkerEvent::AssistanceState {
+                        session_id: identity.session_id.clone(),
+                        segment_id: identity.segment_id.clone(),
+                        context_epoch: identity.context_epoch,
+                        request_id,
+                        status: "failed".to_owned(),
+                        error_code: Some(error.public_code().to_owned()),
+                    });
+                    continue;
+                }
+                let _ = events.send(WorkerEvent::AssistanceState {
+                    session_id: identity.session_id.clone(),
+                    segment_id: identity.segment_id.clone(),
+                    context_epoch: identity.context_epoch,
+                    request_id,
+                    status: if succeeded { "completed" } else { "failed" }.to_owned(),
+                    error_code: (!succeeded).then(|| "ASSISTANCE_FAILED".to_owned()),
+                });
             }
             Ok(RuntimeCommand::RotateContext {
                 next_context_epoch,
@@ -830,6 +862,7 @@ fn startup_cancel_requested(
             }
             Ok(RuntimeCommand::Text { .. })
             | Ok(RuntimeCommand::ToolResult { .. })
+            | Ok(RuntimeCommand::AssistanceResult { .. })
             | Ok(RuntimeCommand::SetInput { .. })
             | Ok(RuntimeCommand::SetProfile { .. })
             | Ok(RuntimeCommand::RotateContext { .. })

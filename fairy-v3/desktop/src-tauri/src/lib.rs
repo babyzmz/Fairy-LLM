@@ -93,6 +93,7 @@ mod process_lifetime;
 pub mod provider_configuration;
 pub mod provider_credentials;
 pub mod realtime_activity;
+pub mod realtime_assistance;
 pub mod realtime_backend_resolver;
 pub mod realtime_coordinator;
 pub mod realtime_dialogue;
@@ -5254,7 +5255,14 @@ pub fn run() {
             } else {
                 bundled_realtime_launch(&data_dir, &resource_dir, &omni_manifest)
             };
-            let realtime = Arc::new(RealtimeWorkerManager::new(realtime_launch));
+            let core = Arc::new(Mutex::new(None));
+            let realtime_assistance = Arc::new(realtime_assistance::RealtimeAssistanceRouter::new(
+                Arc::clone(&core),
+            ));
+            let realtime = Arc::new(RealtimeWorkerManager::new(
+                realtime_launch,
+                realtime_assistance,
+            ));
             let local_model = Arc::new(
                 LocalModelControl::new(
                     &data_dir.join("models"),
@@ -5271,7 +5279,7 @@ pub fn run() {
             let migrated_preferences = preferences.clone();
             let presence = PresenceCoordinatorHandle::new(coordinator_config(&preferences));
             app.manage(DesktopState {
-                core: Arc::new(Mutex::new(None)),
+                core,
                 voice,
                 realtime,
                 local_model,

@@ -181,6 +181,23 @@ fn main() {
                     });
                 }
             }
+            HostCommand::AssistanceResult {
+                session_id,
+                request_id,
+                public_summary,
+                succeeded,
+            } if active_identity
+                .as_ref()
+                .is_some_and(|identity| identity.session_id == session_id) =>
+            {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::AssistanceResult {
+                        request_id,
+                        public_summary,
+                        succeeded,
+                    });
+                }
+            }
             HostCommand::SetInput {
                 session_id,
                 microphone,

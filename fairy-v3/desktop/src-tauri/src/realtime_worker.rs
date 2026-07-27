@@ -20,6 +20,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::omni_model_manifest::OmniModelManifest;
+use crate::realtime_assistance::RealtimeAssistanceRouter;
 use crate::realtime_coordinator::{
     ContextEpochIdentity, ContextRotationReason, PendingContextRotation, RealtimeCoordinatorAction,
     RealtimeCoordinatorEvent, RealtimeCoordinatorStart, RealtimeCoordinatorState,
@@ -177,6 +178,7 @@ enum DialogueGovernance {
 
 pub struct RealtimeWorkerManager {
     launch: RealtimeWorkerLaunch,
+    assistance: Arc<RealtimeAssistanceRouter>,
     process: Mutex<Option<WorkerProcess>>,
     usage: Arc<Mutex<RealtimeWorkerUsage>>,
     active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
@@ -185,9 +187,10 @@ pub struct RealtimeWorkerManager {
 }
 
 impl RealtimeWorkerManager {
-    pub fn new(launch: RealtimeWorkerLaunch) -> Self {
+    pub fn new(launch: RealtimeWorkerLaunch, assistance: Arc<RealtimeAssistanceRouter>) -> Self {
         Self {
             launch,
+            assistance,
             process: Mutex::new(None),
             usage: Arc::new(Mutex::new(RealtimeWorkerUsage::default())),
             active_identity: Arc::new(Mutex::new(None)),
@@ -199,7 +202,14 @@ impl RealtimeWorkerManager {
     pub fn status(&self) -> RealtimeWorkerStatus {
         let mut guard = self.process.lock().expect("realtime worker lock poisoned");
         if guard.as_mut().is_some_and(reap_finished_process) {
+            let finished_session = guard
+                .as_ref()
+                .and_then(|process| process.session_id.as_deref())
+                .map(str::to_owned);
             *guard = None;
+            if let Some(session_id) = finished_session {
+                self.assistance.end_session(&session_id);
+            }
             self.cleanup_finished_governance();
         }
         let projection = self.governance_projection();
@@ -356,6 +366,7 @@ impl RealtimeWorkerManager {
         let mut process = match spawn_worker(
             &self.launch,
             app.clone(),
+            Arc::clone(&self.assistance),
             Arc::clone(&self.usage),
             Arc::clone(&self.active_identity),
             Arc::clone(&self.coordinator),
@@ -397,7 +408,14 @@ impl RealtimeWorkerManager {
             application_audio_enabled: input.application_audio_enabled,
             online_assistance_enabled: input.online_assistance_enabled,
         };
+        self.assistance.attach_session(
+            &input.session_id,
+            &input.locale,
+            input.online_assistance_enabled,
+            Arc::clone(&process.input),
+        );
         if send_command(&process.input, &command).is_err() {
+            self.assistance.end_session(&input.session_id);
             let _ = process.child.kill();
             let _ = process.child.wait();
             self.restore_governance(previous_governance);
@@ -436,6 +454,7 @@ impl RealtimeWorkerManager {
             .lock()
             .map_err(|_| RealtimeWorkerError::Protocol)?;
         let Some(mut process) = guard.take() else {
+            self.assistance.end_session(session_id);
             self.emit_terminal_presence(app);
             self.finish_governance();
             return Ok(RealtimeWorkerStatus {
@@ -464,6 +483,7 @@ impl RealtimeWorkerManager {
         let deadline = Instant::now() + WORKER_STOP_GRACE;
         while Instant::now() < deadline {
             if process.child.try_wait()?.is_some() {
+                self.assistance.end_session(session_id);
                 self.emit_terminal_presence(app);
                 self.finish_governance();
                 return Ok(RealtimeWorkerStatus {
@@ -482,6 +502,7 @@ impl RealtimeWorkerManager {
         }
         let _ = process.child.kill();
         let _ = process.child.wait();
+        self.assistance.end_session(session_id);
         self.emit_terminal_presence(app);
         self.finish_governance();
         Ok(RealtimeWorkerStatus {
@@ -1001,6 +1022,7 @@ fn validate_capture_scope(input: &RealtimeWorkerStartInput) -> Result<(), Realti
 
 impl Drop for RealtimeWorkerManager {
     fn drop(&mut self) {
+        self.assistance.shutdown();
         if let Ok(mut guard) = self.process.lock() {
             if let Some(process) = guard.as_mut() {
                 process.expected_shutdown.store(true, Ordering::Release);
@@ -1016,6 +1038,7 @@ impl Drop for RealtimeWorkerManager {
 fn spawn_worker(
     launch: &RealtimeWorkerLaunch,
     app: AppHandle,
+    assistance: Arc<RealtimeAssistanceRouter>,
     usage: Arc<Mutex<RealtimeWorkerUsage>>,
     active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
     coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
@@ -1128,7 +1151,12 @@ fn spawn_worker(
                     if value.get("type").and_then(Value::as_str) == Some("perception_candidate") {
                         match govern_dialogue_candidate(&value, &coordinator, &dialogue) {
                             DialogueGovernance::Projection(projected) => {
-                                let _ = app.emit(REALTIME_WORKER_EVENT, projected);
+                                let _ = app.emit(REALTIME_WORKER_EVENT, projected.clone());
+                                if projected.get("type").and_then(Value::as_str)
+                                    == Some("assistance_request")
+                                {
+                                    assistance.route(app.clone(), projected);
+                                }
                             }
                             DialogueGovernance::Rotate(pending) => {
                                 let command = HostCommand::RotateContext {
