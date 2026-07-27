@@ -23,6 +23,7 @@ const HASH_BUFFER_SIZE: usize = 1024 * 1024;
 enum ActiveOperation {
     Install,
     Verify,
+    RuntimeSelfTest,
 }
 
 #[derive(Clone, Debug)]
@@ -199,6 +200,17 @@ impl OmniModelManager {
         if self.active != Some(ActiveOperation::Install) {
             return Err(OmniModelManagerError::NotActive);
         }
+        let result = self.download_and_install_active(transfer);
+        if let Err(error) = &result {
+            self.settle_operation_error(error)?;
+        }
+        result
+    }
+
+    fn download_and_install_active<T: OmniArtifactTransfer>(
+        &mut self,
+        transfer: &T,
+    ) -> Result<(), OmniModelManagerError> {
         let mut completed = 0_u64;
         for file in self.manifest.files.clone() {
             if self.cancellation.is_cancelled() {
@@ -254,6 +266,44 @@ impl OmniModelManager {
             self.update_download_progress(&file, completed)?;
         }
         self.verify_staging_and_promote()
+    }
+
+    pub(crate) fn settle_operation_error(
+        &mut self,
+        error: &OmniModelManagerError,
+    ) -> Result<(), OmniModelManagerError> {
+        if self.active.is_none() {
+            return Ok(());
+        }
+        self.active = None;
+        let phase = match error {
+            OmniModelManagerError::Cancelled
+            | OmniModelManagerError::InsufficientDisk { .. }
+            | OmniModelManagerError::Io(_)
+            | OmniModelManagerError::Download(
+                OmniModelDownloadError::Client(_)
+                | OmniModelDownloadError::Cancelled
+                | OmniModelDownloadError::ProgressState
+                | OmniModelDownloadError::Io(_),
+            ) => OmniModelInstallPhase::Partial,
+            _ => OmniModelInstallPhase::Corrupt,
+        };
+        let partial = self.store.partial_bytes(&self.manifest)?;
+        self.transition(phase, None, Some(verification_error_code(error)), partial)
+    }
+
+    pub(crate) fn settle_operation_panic(&mut self) -> Result<(), OmniModelManagerError> {
+        if self.active.is_none() {
+            return Ok(());
+        }
+        self.active = None;
+        let partial = self.store.partial_bytes(&self.manifest)?;
+        self.transition(
+            OmniModelInstallPhase::Corrupt,
+            None,
+            Some("OMNI_MODEL_OPERATION_PANICKED"),
+            partial,
+        )
     }
 
     pub fn request_cancel(&mut self) -> Result<(), OmniModelManagerError> {
@@ -373,6 +423,50 @@ impl OmniModelManager {
                 )?;
                 Err(error)
             }
+        }
+    }
+
+    pub fn begin_runtime_self_test(&mut self) -> Result<(), OmniModelManagerError> {
+        self.require_idle()?;
+        if !matches!(
+            self.state.phase,
+            OmniModelInstallPhase::RuntimeMissing | OmniModelInstallPhase::SelfTestFailed
+        ) {
+            return Err(OmniModelManagerError::Verification(
+                "OMNI_MODEL_NOT_VERIFIED",
+            ));
+        }
+        self.cancellation = OmniCancellationToken::new();
+        self.active = Some(ActiveOperation::RuntimeSelfTest);
+        self.transition(
+            OmniModelInstallPhase::RuntimeSelfTest,
+            None,
+            None,
+            self.manifest.total_size(),
+        )
+    }
+
+    pub fn finish_runtime_self_test(
+        &mut self,
+        error_code: Option<&str>,
+    ) -> Result<(), OmniModelManagerError> {
+        if self.active != Some(ActiveOperation::RuntimeSelfTest) {
+            return Err(OmniModelManagerError::NotActive);
+        }
+        self.active = None;
+        match error_code {
+            None => self.transition(
+                OmniModelInstallPhase::Ready,
+                None,
+                None,
+                self.manifest.total_size(),
+            ),
+            Some(code) => self.transition(
+                OmniModelInstallPhase::SelfTestFailed,
+                None,
+                Some(code),
+                self.manifest.total_size(),
+            ),
         }
     }
 
@@ -929,5 +1023,49 @@ mod tests {
             .version_dir(&manager.manifest)
             .expect("version")
             .exists());
+    }
+
+    #[test]
+    fn runtime_ready_requires_an_explicit_self_test_transition() {
+        let contents: [&[u8]; 3] = [b"llm", b"vision", b"audio"];
+        let directory = tempfile::tempdir().expect("models root");
+        let mut manager =
+            OmniModelManager::new(directory.path(), fixture_manifest(&contents)).expect("manager");
+        manager.begin_install(8 * GIB).expect("begin install");
+        write_staging(&manager, &contents).expect("staging files");
+        manager
+            .verify_staging_and_promote()
+            .expect("verify and promote");
+        assert_eq!(
+            manager.status().phase,
+            OmniModelInstallPhase::RuntimeMissing
+        );
+
+        manager
+            .begin_runtime_self_test()
+            .expect("begin runtime self-test");
+        assert_eq!(
+            manager.status().phase,
+            OmniModelInstallPhase::RuntimeSelfTest
+        );
+        manager
+            .finish_runtime_self_test(Some("OMNI_SELF_TEST_CRASHED"))
+            .expect("failed runtime self-test");
+        assert_eq!(
+            manager.status().phase,
+            OmniModelInstallPhase::SelfTestFailed
+        );
+        assert_eq!(
+            manager.status().error_code.as_deref(),
+            Some("OMNI_SELF_TEST_CRASHED")
+        );
+
+        manager
+            .begin_runtime_self_test()
+            .expect("retry runtime self-test");
+        manager
+            .finish_runtime_self_test(None)
+            .expect("passed runtime self-test");
+        assert_eq!(manager.status().phase, OmniModelInstallPhase::Ready);
     }
 }

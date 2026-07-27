@@ -325,7 +325,7 @@ fn installed_phase(phase: OmniModelInstallPhase) -> bool {
     )
 }
 
-fn runtime_error_code(error: &OmniRuntimeSelfTestError) -> &'static str {
+pub fn runtime_error_code(error: &OmniRuntimeSelfTestError) -> &'static str {
     match error {
         OmniRuntimeSelfTestError::RuntimeMissing => "OMNI_RUNTIME_MISSING",
         OmniRuntimeSelfTestError::RuntimeUnsafe => "OMNI_RUNTIME_UNSAFE",

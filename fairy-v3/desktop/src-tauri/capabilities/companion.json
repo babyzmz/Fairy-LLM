@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "companion-window",
-  "description": "Realtime-only secondary window; Rust enforces dedicated RPC, capture-list, provider-status, worker, and voice scopes",
+  "description": "Realtime-only secondary window; Rust permits read-only local readiness and enforces dedicated RPC, capture-list, provider-status, worker, and voice scopes",
   "windows": ["companion"],
   "permissions": [
     "core:event:allow-listen",

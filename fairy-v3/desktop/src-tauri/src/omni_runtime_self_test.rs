@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::omni_model_manifest::OmniModelManifest;
+use crate::process_lifetime::configure_managed_child;
 
 const SELF_TEST_TIMEOUT: Duration = Duration::from_secs(30);
 const SELF_TEST_OUTPUT_LIMIT: usize = 64 * 1024;
@@ -94,7 +95,7 @@ impl OmniRuntimeSelfTestRunner for ProcessOmniRuntimeSelfTestRunner {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        configure_hidden_process(&mut command);
+        configure_managed_child(&mut command);
 
         let mut child = command.spawn()?;
         let stdout = child
@@ -219,17 +220,6 @@ fn join_bounded_reader(
         .map_err(|_| OmniRuntimeSelfTestError::InvalidResponse)?
         .map_err(OmniRuntimeSelfTestError::Io)
 }
-
-#[cfg(target_os = "windows")]
-fn configure_hidden_process(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
-}
-
-#[cfg(not(target_os = "windows"))]
-fn configure_hidden_process(_command: &mut Command) {}
 
 pub fn runtime_request(
     runtime_path: PathBuf,

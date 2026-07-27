@@ -2,6 +2,7 @@
 mod platform {
     use std::ffi::c_void;
     use std::mem::size_of;
+    use std::process::Command;
     use std::ptr;
     use std::sync::OnceLock;
 
@@ -59,6 +60,15 @@ mod platform {
             .map_err(|_| "PRESENCE_PROCESS_JOB_ALREADY_INITIALIZED".to_owned())
     }
 
+    pub fn configure_managed_child(command: &mut Command) {
+        use std::os::windows::process::CommandExt;
+
+        // CREATE_NO_WINDOW changes presentation only. Deliberately omit every breakaway flag so
+        // the child inherits Fairy's kill-on-close job and cannot outlive the desktop process.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
     fn last_error(code: &str) -> String {
         format!("{code}:{}", unsafe { GetLastError() })
     }
@@ -81,9 +91,13 @@ mod platform {
 
 #[cfg(not(target_os = "windows"))]
 mod platform {
+    use std::process::Command;
+
     pub fn protect_process_tree() -> Result<(), String> {
         Ok(())
     }
+
+    pub fn configure_managed_child(_command: &mut Command) {}
 }
 
-pub use platform::protect_process_tree;
+pub use platform::{configure_managed_child, protect_process_tree};

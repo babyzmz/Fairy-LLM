@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "pet-render-window",
-  "description": "Render-only companion surface; native optics commands are label-guarded and it has no Core, project, file, or general capture API",
+  "description": "Render-only companion surface; native optics commands are label-guarded and it has no Core, project, file, local model, or general capture API",
   "windows": ["pet-render"],
   "permissions": [
     "core:event:allow-listen",

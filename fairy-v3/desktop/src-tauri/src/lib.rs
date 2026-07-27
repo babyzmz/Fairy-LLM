@@ -21,7 +21,11 @@ use desktop_preferences::{
     DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore, DesktopPreferencesUpdate,
     LegacyMemorySettings, PetPreferencesUpdate,
 };
+use local_model_control::LocalModelControl;
+use local_readiness::LocalReadinessReport;
 use obsidian_path_registry::{ObsidianPathRegistry, ObsidianVaultSelection};
+use omni_model_catalog::bundled_minicpm_o45_manifest;
+use omni_model_store::OmniModelInstallState;
 use presence_coordinator::{
     anchor_from_ratios, anchor_ratios, global_cursor_position,
     resolve_drag_presence_placement_for_anchor, resolve_presence_placement,
@@ -60,6 +64,7 @@ pub mod capture;
 pub mod desktop_preferences;
 pub mod hardware_capabilities;
 pub mod hardware_probe;
+pub mod local_model_control;
 pub mod local_readiness;
 pub mod obsidian_path_registry;
 pub mod omni_model_catalog;
@@ -301,6 +306,18 @@ pub fn authorize_realtime_window(label: &str) -> Result<(), WindowScopeError> {
     }
 }
 
+pub fn authorize_local_readiness_reader(label: &str) -> Result<(), WindowScopeError> {
+    if ["main", COMPANION_LABEL].contains(&label) {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
+}
+
+pub fn authorize_local_model_mutation(label: &str) -> Result<(), WindowScopeError> {
+    authorize_settings_window(label)
+}
+
 pub fn authorize_preferences_reader(label: &str) -> Result<(), WindowScopeError> {
     if ["main", PET_INPUT_LABEL, COMPANION_LABEL].contains(&label) {
         Ok(())
@@ -506,6 +523,7 @@ struct DesktopState {
     core: Arc<Mutex<Option<CoreBridge>>>,
     voice: Arc<VoiceWorkerManager>,
     realtime: Arc<RealtimeWorkerManager>,
+    local_model: Arc<LocalModelControl>,
     preferences: Mutex<()>,
     ambient_dialogue: Mutex<()>,
     provider_update_in_progress: AtomicBool,
@@ -576,15 +594,98 @@ async fn realtime_worker_status(
     Ok(state.realtime.status())
 }
 
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+struct LocalReadinessInput {
+    profile: fairy_realtime_worker::RealtimeActivityProfile,
+    #[serde(default)]
+    refresh_hardware: bool,
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+struct OmniModelInstallStartInput {
+    profile: fairy_realtime_worker::RealtimeActivityProfile,
+}
+
+#[tauri::command]
+async fn realtime_local_readiness_get(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: LocalReadinessInput,
+) -> Result<LocalReadinessReport, String> {
+    authorize_local_readiness_reader(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .local_model
+        .readiness(input.profile, input.refresh_hardware)
+}
+
+#[tauri::command]
+async fn omni_model_status(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<OmniModelInstallState, String> {
+    authorize_local_readiness_reader(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    state.local_model.status()
+}
+
+#[tauri::command]
+async fn omni_model_install_start(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: OmniModelInstallStartInput,
+) -> Result<OmniModelInstallState, String> {
+    authorize_local_model_mutation(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .local_model
+        .start_install(window.app_handle(), input.profile)
+}
+
+#[tauri::command]
+async fn omni_model_install_cancel(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<OmniModelInstallState, String> {
+    authorize_local_model_mutation(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    state.local_model.cancel(window.app_handle())
+}
+
+#[tauri::command]
+async fn omni_model_verify(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<OmniModelInstallState, String> {
+    authorize_local_model_mutation(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    state.local_model.start_verify(window.app_handle())
+}
+
+#[tauri::command]
+async fn omni_model_remove(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<OmniModelInstallState, String> {
+    authorize_local_model_mutation(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    state.local_model.remove(state.realtime.status().running)
+}
+
 fn validate_realtime_activation(
     preferences: &DesktopPreferences,
     input: &RealtimeWorkerStartInput,
+    local_ready: bool,
 ) -> Result<(), &'static str> {
     if !preferences.realtime_beta_enabled {
         return Err("REALTIME_BETA_DISABLED");
     }
     if input.backend == fairy_realtime_worker::RealtimeBackendKind::LocalMiniCpmO45 {
-        return Err("LOCAL_BACKEND_NOT_IMPLEMENTED");
+        return if local_ready {
+            Ok(())
+        } else {
+            Err("LOCAL_BACKEND_NOT_READY")
+        };
     }
     if input.cloud_provider.is_none() {
         return Err("REALTIME_CLOUD_PROVIDER_REQUIRED");
@@ -603,10 +704,17 @@ async fn realtime_worker_start(
     let preferences = DesktopPreferencesStore::new(&state.data_dir)
         .load()
         .map_err(|error| error.to_string())?;
-    validate_realtime_activation(&preferences, &input).map_err(str::to_owned)?;
-    let credential_provider = input
-        .credential_provider()
-        .ok_or_else(|| "REALTIME_CLOUD_PROVIDER_REQUIRED".to_owned())?;
+    let local_ready =
+        if input.backend == fairy_realtime_worker::RealtimeBackendKind::LocalMiniCpmO45 {
+            state
+                .local_model
+                .readiness(input.activity_profile, false)?
+                .capability
+                .local_beta_eligible
+        } else {
+            false
+        };
+    validate_realtime_activation(&preferences, &input, local_ready).map_err(str::to_owned)?;
     let persona_response = call_core(
         &state,
         json!({
@@ -627,16 +735,21 @@ async fn realtime_worker_start(
         .ok_or_else(|| "REALTIME_PERSONA_UNAVAILABLE".to_owned())?;
     let persona_snapshot = serde_json::to_string(&persona_snapshot)
         .map_err(|_| "REALTIME_PERSONA_UNAVAILABLE".to_owned())?;
-    let credential = ProviderCredentialStore::new(&state.data_dir)
-        .load(credential_provider)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "REALTIME_CREDENTIAL_MISSING".to_owned())?;
+    let credential = match input.credential_provider() {
+        Some(provider) => Some(
+            ProviderCredentialStore::new(&state.data_dir)
+                .load(provider)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "REALTIME_CREDENTIAL_MISSING".to_owned())?,
+        ),
+        None => None,
+    };
     state
         .realtime
         .start(
             &app,
             input,
-            Some(zeroize::Zeroizing::new(credential)),
+            credential.map(zeroize::Zeroizing::new),
             zeroize::Zeroizing::new(persona_snapshot),
         )
         .map_err(|error| error.to_string())
@@ -4939,6 +5052,16 @@ pub fn run() {
                 bundled_realtime_launch(&data_dir, &resource_dir)
             };
             let realtime = Arc::new(RealtimeWorkerManager::new(realtime_launch));
+            let omni_manifest = bundled_minicpm_o45_manifest()
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let local_model = Arc::new(
+                LocalModelControl::new(
+                    &data_dir.join("models"),
+                    &resource_dir.join("runtime"),
+                    omni_manifest,
+                )
+                .map_err(std::io::Error::other)?,
+            );
             let preferences_store = DesktopPreferencesStore::new(&data_dir);
             let startup_preferences = preferences_store.load_for_startup()?;
             let preferences = startup_preferences.preferences;
@@ -4950,6 +5073,7 @@ pub fn run() {
                 core: Arc::new(Mutex::new(None)),
                 voice,
                 realtime,
+                local_model,
                 preferences: Mutex::new(()),
                 ambient_dialogue: Mutex::new(()),
                 provider_update_in_progress: AtomicBool::new(false),
@@ -5023,6 +5147,12 @@ pub fn run() {
             provider_realtime_status,
             provider_realtime_configure,
             provider_realtime_delete,
+            realtime_local_readiness_get,
+            omni_model_status,
+            omni_model_install_start,
+            omni_model_install_cancel,
+            omni_model_verify,
+            omni_model_remove,
             realtime_worker_status,
             realtime_worker_start,
             realtime_worker_stop,
@@ -5239,7 +5369,7 @@ mod realtime_activation_tests {
     #[test]
     fn beta_gate_precedes_every_worker_start() {
         assert_eq!(
-            validate_realtime_activation(&DesktopPreferences::default(), &cloud_input()),
+            validate_realtime_activation(&DesktopPreferences::default(), &cloud_input(), false),
             Err("REALTIME_BETA_DISABLED")
         );
     }
@@ -5255,9 +5385,37 @@ mod realtime_activation_tests {
         input.cloud_provider = None;
 
         assert_eq!(
-            validate_realtime_activation(&preferences, &input),
-            Err("LOCAL_BACKEND_NOT_IMPLEMENTED")
+            validate_realtime_activation(&preferences, &input, false),
+            Err("LOCAL_BACKEND_NOT_READY")
         );
+        assert_eq!(
+            validate_realtime_activation(&preferences, &input, true),
+            Ok(())
+        );
+    }
+}
+
+#[cfg(test)]
+mod local_model_window_scope_tests {
+    use super::{
+        authorize_local_model_mutation, authorize_local_readiness_reader, COMPANION_LABEL,
+        PET_INPUT_LABEL, PET_RENDER_LABEL,
+    };
+
+    #[test]
+    fn main_and_companion_can_read_but_only_main_can_mutate() {
+        assert!(authorize_local_readiness_reader("main").is_ok());
+        assert!(authorize_local_readiness_reader(COMPANION_LABEL).is_ok());
+        assert!(authorize_local_model_mutation("main").is_ok());
+        assert!(authorize_local_model_mutation(COMPANION_LABEL).is_err());
+    }
+
+    #[test]
+    fn pet_surfaces_cannot_read_or_mutate_local_model_state() {
+        for label in [PET_INPUT_LABEL, PET_RENDER_LABEL] {
+            assert!(authorize_local_readiness_reader(label).is_err());
+            assert!(authorize_local_model_mutation(label).is_err());
+        }
     }
 }
 
