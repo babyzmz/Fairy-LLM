@@ -72,6 +72,11 @@
   background: #202321;
 }
 
+.workspace-inspector-tabs button:focus-visible {
+  outline: 1px solid #64d9d0;
+  outline-offset: -3px;
+}
+
 .workspace-inspector-tabs button span {
   min-width: 18px;
   padding: 2px 5px;

@@ -88,12 +88,61 @@ describe("WorkspaceShell", () => {
     const { container } = render(<WorkspaceShell model={model} />);
     const shell = container.querySelector<HTMLElement>(".workspace-main")!;
 
-    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize workspace inspector" }), {
+    const separator = screen.getByRole("separator", { name: "Resize workspace inspector" });
+    expect(separator).toHaveAttribute("aria-valuemin", "360");
+    const maximum = Number(separator.getAttribute("aria-valuemax"));
+    expect(maximum).toBeGreaterThanOrEqual(360);
+    expect(maximum).toBeLessThanOrEqual(Math.round(window.innerWidth * 0.75));
+
+    fireEvent.keyDown(separator, {
       key: "Home",
     });
 
     expect(shell.style.getPropertyValue("--inspector-width")).toBe("360px");
     expect(window.localStorage.getItem("fairy.workspace.inspector-width")).toBe("360");
+    expect(separator).toHaveAttribute("aria-valuenow", "360");
+
+    fireEvent.keyDown(separator, { key: "End" });
+    expect(shell.style.getPropertyValue("--inspector-width")).toBe(`${maximum}px`);
+    expect(separator).toHaveAttribute("aria-valuenow", String(maximum));
+
+    fireEvent.keyDown(separator, { key: "ArrowRight" });
+    expect(separator).toHaveAttribute("aria-valuenow", String(maximum - 24));
+  });
+
+  it("links Inspector tabs to panels and supports roving keyboard focus", () => {
+    const model = workspaceModel();
+    model.selectedTask = workspaceTask();
+    model.workspaceTask = model.selectedTask;
+    render(<WorkspaceShell model={model} />);
+
+    const preview = screen.getByRole("tab", { name: "Preview" });
+    const files = screen.getByRole("tab", { name: /Files/ });
+    const obsidian = screen.getByRole("tab", { name: "Obsidian" });
+    expect(preview).toHaveAttribute("tabindex", "0");
+    expect(files).toHaveAttribute("tabindex", "-1");
+    expect(obsidian).toHaveAttribute("tabindex", "-1");
+    expect(preview).toHaveAttribute("aria-controls");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      preview.id,
+    );
+
+    preview.focus();
+    fireEvent.keyDown(preview, { key: "ArrowRight" });
+    expect(files).toHaveFocus();
+    expect(files).toHaveAttribute("aria-selected", "true");
+    expect(files).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      files.id,
+    );
+
+    fireEvent.keyDown(files, { key: "End" });
+    expect(obsidian).toHaveFocus();
+    fireEvent.keyDown(obsidian, { key: "ArrowRight" });
+    expect(preview).toHaveFocus();
+    expect(preview).toHaveAttribute("aria-selected", "true");
   });
 
   it("keeps an empty workspace inspector collapsed", () => {

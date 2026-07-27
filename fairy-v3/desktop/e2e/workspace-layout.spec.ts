@@ -39,6 +39,48 @@ test("minimum desktop window renders the durable workspace without overflow", as
   expect(layout.contextBottom).toBeLessThanOrEqual(layout.composerTop);
 });
 
+test("Workspace inspector supports keyboard-only tabs and bounded resizing", async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 720 });
+  await page.goto("/");
+
+  const preview = page.getByRole("tab", { name: "Preview" });
+  const files = page.getByRole("tab", { name: /Files/ });
+  await preview.focus();
+  await page.keyboard.press("ArrowRight");
+
+  await expect(files).toBeFocused();
+  await expect(files).toHaveAttribute("aria-selected", "true");
+  await expect(files).toHaveAttribute("tabindex", "0");
+  const panelId = await files.getAttribute("aria-controls");
+  expect(panelId).not.toBeNull();
+  await expect(page.locator(`#${panelId}`)).toHaveAttribute(
+    "aria-labelledby",
+    await files.getAttribute("id") as string,
+  );
+
+  const separator = page.getByRole("separator", {
+    name: "Resize workspace inspector",
+  });
+  await expect(separator).toHaveAttribute("aria-valuemin", "360");
+  const maximum = Number(await separator.getAttribute("aria-valuemax"));
+  expect(maximum).toBeGreaterThanOrEqual(360);
+  expect(maximum).toBeLessThanOrEqual(Math.round(1180 * 0.75));
+
+  await separator.focus();
+  await page.keyboard.press("Home");
+  await expect(separator).toHaveAttribute("aria-valuenow", "360");
+  await page.keyboard.press("End");
+  await expect(separator).toHaveAttribute("aria-valuenow", String(maximum));
+  await page.keyboard.press("ArrowRight");
+  await expect(separator).toHaveAttribute(
+    "aria-valuenow",
+    String(Math.max(360, maximum - 24)),
+  );
+
+  const layout = await measureLayout(page);
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+});
+
 test("Preview Browser opens the scoped Runtime and renders a controlled snapshot", async ({ page }) => {
   await page.setViewportSize({ width: 1180, height: 760 });
   await page.goto("/");
