@@ -182,10 +182,10 @@ def test_expired_memory_command_is_reclaimed_without_duplicate_effects(
 ) -> None:
     running = _start_memory_command(
         recovery_stack,
-        lease_until=datetime.now(UTC) + timedelta(milliseconds=5),
+        lease_until=datetime.now(UTC) + timedelta(milliseconds=250),
     )
 
-    time.sleep(0.02)
+    time.sleep(0.3)
     observation = recovery_stack.memory.observe(recovery_stack.request)
     listed = recovery_stack.memory.list_observations(
         MemoryObservationQuery(
