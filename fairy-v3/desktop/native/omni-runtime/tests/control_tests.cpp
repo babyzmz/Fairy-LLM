@@ -147,6 +147,8 @@ void test_lifecycle() {
     begin["token_budget"] = 4096;
     begin["audio_budget_ms"] = 60000;
     begin["frame_budget"] = 120;
+    begin["video_width"] = 1280;
+    begin["video_height"] = 720;
     require(
         runtime.handle(begin).at(0).at("type") == "context_ready",
         "context did not begin"

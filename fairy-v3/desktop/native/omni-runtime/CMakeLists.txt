@@ -31,6 +31,8 @@ add_library(
   fairy_omni_contract
   STATIC
   src/control.cpp
+  src/media.cpp
+  src/media_pipe_windows.cpp
   src/self_test.cpp
 )
 target_compile_features(fairy_omni_contract PUBLIC cxx_std_20)
@@ -73,4 +75,11 @@ if(BUILD_TESTING)
     target_compile_options(fairy-omni-control-tests PRIVATE /W4 /WX /permissive- /utf-8)
   endif()
   add_test(NAME fairy-omni-control-tests COMMAND fairy-omni-control-tests)
+
+  add_executable(fairy-omni-media-tests tests/media_tests.cpp)
+  target_link_libraries(fairy-omni-media-tests PRIVATE fairy_omni_contract)
+  if(MSVC)
+    target_compile_options(fairy-omni-media-tests PRIVATE /W4 /WX /permissive- /utf-8)
+  endif()
+  add_test(NAME fairy-omni-media-tests COMMAND fairy-omni-media-tests)
 endif()

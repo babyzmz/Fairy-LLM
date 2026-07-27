@@ -8,9 +8,18 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 function Start-Runtime {
+    $pipeName = "fairy-contract-$PID-$([Guid]::NewGuid().ToString('N'))"
+    $server = [IO.Pipes.NamedPipeServerStream]::new(
+        $pipeName,
+        [IO.Pipes.PipeDirection]::Out,
+        1,
+        [IO.Pipes.PipeTransmissionMode]::Byte,
+        [IO.Pipes.PipeOptions]::Asynchronous
+    )
+    $connection = $server.WaitForConnectionAsync()
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $Executable
-    $info.Arguments = "--stdio --media-pipe fairy-contract-integration"
+    $info.Arguments = "--stdio --media-pipe $pipeName"
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.RedirectStandardInput = $true
@@ -19,9 +28,20 @@ function Start-Runtime {
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $info
     if (-not $process.Start()) {
+        $server.Dispose()
         throw "Unable to start contract runtime."
     }
-    return $process
+    if (-not $connection.Wait(5000)) {
+        $process.Kill()
+        $process.WaitForExit()
+        $process.Dispose()
+        $server.Dispose()
+        throw "Runtime did not connect to its parent-owned media pipe."
+    }
+    return [pscustomobject]@{
+        Process = $process
+        Pipe = $server
+    }
 }
 
 function Read-Exactly {
@@ -79,7 +99,45 @@ function Assert-Equal {
     }
 }
 
-$process = Start-Runtime
+function Write-Microphone-Frame {
+    param(
+        [Parameter(Mandatory = $true)]$Stream,
+        [uint64]$Epoch,
+        [uint64]$Sequence,
+        [uint64]$TimestampUs
+    )
+
+    $header = New-Object byte[] 36
+    [Text.Encoding]::ASCII.GetBytes("FOMI").CopyTo($header, 0)
+    [BitConverter]::GetBytes([uint16]1).CopyTo($header, 4)
+    [BitConverter]::GetBytes([uint16]1).CopyTo($header, 6)
+    [BitConverter]::GetBytes($Epoch).CopyTo($header, 8)
+    [BitConverter]::GetBytes($Sequence).CopyTo($header, 16)
+    [BitConverter]::GetBytes($TimestampUs).CopyTo($header, 24)
+    [BitConverter]::GetBytes([uint32]640).CopyTo($header, 32)
+    $payload = New-Object byte[] 640
+    $Stream.Write($header, 0, $header.Length)
+    $Stream.Write($payload, 0, $payload.Length)
+    $Stream.Flush()
+}
+
+function Write-Oversized-Jpeg-Header {
+    param([Parameter(Mandatory = $true)]$Stream)
+
+    $header = New-Object byte[] 36
+    [Text.Encoding]::ASCII.GetBytes("FOMI").CopyTo($header, 0)
+    [BitConverter]::GetBytes([uint16]1).CopyTo($header, 4)
+    [BitConverter]::GetBytes([uint16]3).CopyTo($header, 6)
+    [BitConverter]::GetBytes([uint64]1).CopyTo($header, 8)
+    [BitConverter]::GetBytes([uint64]1).CopyTo($header, 16)
+    [BitConverter]::GetBytes([uint64]20000).CopyTo($header, 24)
+    [BitConverter]::GetBytes([uint32](8 * 1024 * 1024 + 1)).CopyTo($header, 32)
+    $Stream.Write($header, 0, $header.Length)
+    $Stream.Flush()
+}
+
+$runtime = Start-Runtime
+$process = $runtime.Process
 try {
     $input = $process.StandardInput.BaseStream
     $output = $process.StandardOutput.BaseStream
@@ -96,11 +154,51 @@ try {
     Assert-Equal $ready.backend_ready $false "Contract runtime claimed backend readiness."
 
     Write-Frame -Stream $input -Payload @{
-        type = "ping"
+        type = "load"
         session_id = "session-integration"
         segment_id = "segment-integration"
         context_epoch = 1
         sequence = 2
+        manifest_digest = ("a" * 64)
+        model_version = "fixture"
+    }
+    Assert-Equal (Read-Frame -Stream $output).type "load_progress" "Load progress missing."
+    Assert-Equal (Read-Frame -Stream $output).type "model_ready" "Model state missing."
+
+    Write-Frame -Stream $input -Payload @{
+        type = "context_begin"
+        session_id = "session-integration"
+        segment_id = "segment-integration"
+        context_epoch = 1
+        sequence = 3
+        context_kind = "duplex_conversation"
+        token_budget = 4096
+        audio_budget_ms = 60000
+        frame_budget = 120
+        video_width = 0
+        video_height = 0
+    }
+    Assert-Equal (Read-Frame -Stream $output).type "context_ready" "Context state missing."
+
+    Write-Microphone-Frame -Stream $runtime.Pipe -Epoch 1 -Sequence 1 -TimestampUs 20000
+    Write-Frame -Stream $input -Payload @{
+        type = "media_commit"
+        session_id = "session-integration"
+        segment_id = "segment-integration"
+        context_epoch = 1
+        sequence = 4
+        media_sequence = 1
+    }
+    $decision = Read-Frame -Stream $output
+    Assert-Equal $decision.type "decision" "Contract decision missing."
+    Assert-Equal $decision.decision "listen" "Contract media path did not stay fail-closed."
+
+    Write-Frame -Stream $input -Payload @{
+        type = "ping"
+        session_id = "session-integration"
+        segment_id = "segment-integration"
+        context_epoch = 1
+        sequence = 5
         nonce = "roundtrip"
     }
     $pong = Read-Frame -Stream $output
@@ -112,7 +210,7 @@ try {
         session_id = "session-integration"
         segment_id = "segment-integration"
         context_epoch = 1
-        sequence = 3
+        sequence = 6
     }
     $stopped = Read-Frame -Stream $output
     Assert-Equal $stopped.type "stopped" "Runtime did not emit stopped."
@@ -125,10 +223,12 @@ try {
         $process.Kill()
         $process.WaitForExit()
     }
+    $runtime.Pipe.Dispose()
     $process.Dispose()
 }
 
-$rejectingProcess = Start-Runtime
+$rejectingRuntime = Start-Runtime
+$rejectingProcess = $rejectingRuntime.Process
 try {
     Write-Frame -Stream $rejectingProcess.StandardInput.BaseStream -Payload @{
         type = "hello"
@@ -153,7 +253,59 @@ try {
         $rejectingProcess.Kill()
         $rejectingProcess.WaitForExit()
     }
+    $rejectingRuntime.Pipe.Dispose()
     $rejectingProcess.Dispose()
+}
+
+$mediaRejectRuntime = Start-Runtime
+$mediaRejectProcess = $mediaRejectRuntime.Process
+try {
+    $input = $mediaRejectProcess.StandardInput.BaseStream
+    $output = $mediaRejectProcess.StandardOutput.BaseStream
+    Write-Frame -Stream $input -Payload @{
+        type = "hello"
+        protocol_version = 1
+        session_id = "session-media-reject"
+        segment_id = "segment-media-reject"
+        context_epoch = 1
+        sequence = 1
+    }
+    Assert-Equal (Read-Frame -Stream $output).type "ready" "Media rejection runtime was not ready."
+    Write-Oversized-Jpeg-Header -Stream $mediaRejectRuntime.Pipe
+    $diagnostic = $null
+    for ($sequence = 2; $sequence -le 11 -and $null -eq $diagnostic; $sequence++) {
+        Write-Frame -Stream $input -Payload @{
+            type = "ping"
+            session_id = "session-media-reject"
+            segment_id = "segment-media-reject"
+            context_epoch = 1
+            sequence = $sequence
+            nonce = "detect-media-failure"
+        }
+        $response = Read-Frame -Stream $output
+        if ($response.type -eq "diagnostic") {
+            $diagnostic = $response
+        } else {
+            Assert-Equal $response.type "pong" "Unexpected response while awaiting media failure."
+            Start-Sleep -Milliseconds 20
+        }
+    }
+    if ($null -eq $diagnostic) {
+        throw "Malformed media was not rejected before payload allocation."
+    }
+    Assert-Equal $diagnostic.type "diagnostic" "Malformed media did not emit a diagnostic."
+    Assert-Equal $diagnostic.code "media_frame_rejected" "Malformed media diagnostic changed."
+    if (-not $mediaRejectProcess.WaitForExit(5000)) {
+        throw "Runtime did not fail closed after malformed media."
+    }
+    Assert-Equal $mediaRejectProcess.ExitCode 2 "Malformed media exit code mismatch."
+} finally {
+    if (-not $mediaRejectProcess.HasExited) {
+        $mediaRejectProcess.Kill()
+        $mediaRejectProcess.WaitForExit()
+    }
+    $mediaRejectRuntime.Pipe.Dispose()
+    $mediaRejectProcess.Dispose()
 }
 
 Write-Output "control integration tests passed"

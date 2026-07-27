@@ -67,6 +67,7 @@ pub mod hardware_probe;
 pub mod local_model_control;
 pub mod local_readiness;
 pub mod obsidian_path_registry;
+pub mod omni_media_protocol;
 pub mod omni_model_catalog;
 pub mod omni_model_download;
 pub mod omni_model_manager;

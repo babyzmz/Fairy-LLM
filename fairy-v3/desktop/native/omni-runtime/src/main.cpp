@@ -1,5 +1,6 @@
 #include "fairy_omni/control.hpp"
 #include "fairy_omni/identity.hpp"
+#include "fairy_omni/media.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -94,13 +95,42 @@ int run(const int argc, Character **argv) {
 #endif
 
         fairy::omni::ControlRuntime runtime;
+        fairy::omni::MediaBuffer media_buffer;
+        fairy::omni::MediaPipePump media_pipe(arguments.media_pipe, media_buffer);
+        media_pipe.start();
         while (!runtime.stopped()) {
             auto frame = fairy::omni::read_frame(std::cin);
             if (frame.status == fairy::omni::FrameReadStatus::eof) {
                 return 0;
             }
-            for (const auto &event : runtime.handle(frame.payload)) {
+            if (const auto media_error = media_pipe.take_error(); media_error.has_value()) {
+                if (const auto diagnostic = runtime.diagnostic_event(*media_error);
+                    diagnostic.has_value()) {
+                    fairy::omni::write_frame(std::cout, *diagnostic);
+                }
+                return 2;
+            }
+
+            const auto events = runtime.handle(frame.payload);
+            const auto &type = frame.payload.at("type").get_ref<const std::string &>();
+            if (type == "hello") {
+                media_buffer.rotate_epoch(frame.payload.at("context_epoch").get<std::uint64_t>());
+            } else if (type == "context_begin") {
+                media_buffer.configure_video(
+                    frame.payload.at("video_width").get<std::uint32_t>(),
+                    frame.payload.at("video_height").get<std::uint32_t>()
+                );
+            } else if (type == "context_rotate") {
+                media_buffer.rotate_epoch(
+                    frame.payload.at("next_context_epoch").get<std::uint64_t>()
+                );
+            }
+
+            for (const auto &event : events) {
                 fairy::omni::write_frame(std::cout, event);
+            }
+            if (runtime.stopped()) {
+                media_pipe.stop();
             }
         }
         return 0;

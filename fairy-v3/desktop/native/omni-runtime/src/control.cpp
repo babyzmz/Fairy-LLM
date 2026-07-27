@@ -1,6 +1,7 @@
 #include "fairy_omni/control.hpp"
 
 #include "fairy_omni/identity.hpp"
+#include "fairy_omni/media.hpp"
 
 #include <algorithm>
 #include <array>
@@ -292,8 +293,14 @@ std::vector<json> ControlRuntime::handle(const json &command) {
     } else if (type == "load") {
         expected_keys = keys_with({"manifest_digest", "model_version"});
     } else if (type == "context_begin") {
-        expected_keys =
-            keys_with({"context_kind", "token_budget", "audio_budget_ms", "frame_budget"});
+        expected_keys = keys_with(
+            {"context_kind",
+             "token_budget",
+             "audio_budget_ms",
+             "frame_budget",
+             "video_width",
+             "video_height"}
+        );
     } else if (type == "context_rotate") {
         expected_keys = keys_with({"next_context_epoch", "reason", "public_summary"});
     } else if (type == "media_commit") {
@@ -390,6 +397,14 @@ std::vector<json> ControlRuntime::handle(const json &command) {
             require_bounded_nonnegative_u64(command, "audio_budget_ms", 10U * 60U * 1000U);
         const auto frame_budget =
             require_bounded_nonnegative_u64(command, "frame_budget", 4096);
+        const auto video_width =
+            require_bounded_nonnegative_u64(command, "video_width", 8192);
+        const auto video_height =
+            require_bounded_nonnegative_u64(command, "video_height", 8192);
+        if ((video_width == 0U) != (video_height == 0U) ||
+            video_width * video_height > (kMaxBgraBytes / 4U)) {
+            throw ProtocolError("video dimensions exceed the bounded context surface");
+        }
         context_active_ = true;
 
         auto event =
@@ -398,6 +413,8 @@ std::vector<json> ControlRuntime::handle(const json &command) {
         event["token_budget"] = token_budget;
         event["audio_budget_ms"] = audio_budget_ms;
         event["frame_budget"] = frame_budget;
+        event["video_width"] = video_width;
+        event["video_height"] = video_height;
         return {std::move(event)};
     }
 
@@ -467,6 +484,17 @@ std::vector<json> ControlRuntime::handle(const json &command) {
 
 bool ControlRuntime::stopped() const noexcept {
     return stopped_;
+}
+
+std::optional<json> ControlRuntime::diagnostic_event(const std::string_view code) const {
+    if (!initialized_ || stopped_ || code.empty() || code.size() > 96U) {
+        return std::nullopt;
+    }
+    auto event =
+        base_event("diagnostic", session_id_, segment_id_, context_epoch_, last_sequence_);
+    event["code"] = code;
+    event["severity"] = "error";
+    return event;
 }
 
 } // namespace fairy::omni

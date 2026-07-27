@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <istream>
 #include <ostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -39,6 +40,9 @@ void write_frame(std::ostream &output, const nlohmann::json &payload);
 class ControlRuntime final {
   public:
     std::vector<nlohmann::json> handle(const nlohmann::json &command);
+    [[nodiscard]] std::optional<nlohmann::json> diagnostic_event(
+        std::string_view code
+    ) const;
     [[nodiscard]] bool stopped() const noexcept;
 
   private:
