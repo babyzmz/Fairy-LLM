@@ -103,6 +103,21 @@ example as input. It exited with code 1 and reported every absent mandatory
 domain as blocked, including four-hour soak, native WebView2, reference
 performance, privacy, installer lifecycle, security, and artifacts.
 
+A supplemental fail-closed certification on 2026-07-29 used the retained real
+MSI, all seven cabinets, and the media manifest rather than the empty example.
+The gate rehashed all 4,218,053,567 inventoried bytes and reported
+`PHASE_0_7_ACCEPTED`, `COMPLETE_REGRESSION_PASSED`, and
+`ARTIFACTS_VERIFIED`. It still exited with code 1 and kept the four-hour soak,
+native WebView2, reference performance, privacy, installer lifecycle, and
+signing/security domains blocked. The bounded report SHA-256 was
+`2e7124032f1183bd223892b48dcbe27aaf99a85c9330cd86fad3ea1ce77983d1`.
+
+The first real-artifact pass also caught a transcription error in this record:
+the MSI digest had been written as a 65-character value. The authoritative
+media manifest and the MSI on disk both contain the valid 64-character digest
+recorded below. The strict artifact gate passed only after the evidence input
+was corrected to that exact value.
+
 ## Production packaging evidence
 
 An actual `npm run release:windows` composition was run with a clean portable
@@ -131,7 +146,7 @@ CUDA cache:
   candidate passed the actual ICE validation sequence without `-sval`.
 - The schema-v2 media manifest contains exactly eight files totaling
   4,218,051,160 bytes. The MSI is 2,039,172 bytes with SHA-256
-  `1df7519fe1480f0f3e8e9af7d097ff4456bdbb9e4913f3fece14255b7695fdd2b`;
+  `1df7519fe1480f0f3e8e9af7d097ff4456bdbb9e4913f3fece1425b7695fdd2b`;
   each external cabinet is below the 2 GiB WiX limit.
 - The real media set passed strict manifest inventory, size, and SHA-256
   validation. Windows Defender command-line scanning with remediation disabled
