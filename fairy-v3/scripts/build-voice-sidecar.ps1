@@ -137,6 +137,9 @@ try {
         Remove-Item -LiteralPath $destination -Recurse -Force
     }
     Copy-Item -LiteralPath $built -Destination $destination -Recurse
+    . (Join-Path $root "scripts\voice-release-layout.ps1")
+    $removedCacheCount = Remove-VoiceReleaseCaches -Destination $destination
+    Write-Host "Removed $removedCacheCount generated Voice cache directories"
     . (Join-Path $root "scripts\voice-release-licenses.ps1")
     [void](Copy-VoiceReleaseLicenses `
         -CosyVoiceRoot $cosyvoiceRoot `

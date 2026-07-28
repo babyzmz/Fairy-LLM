@@ -8,16 +8,23 @@ from pathlib import Path
 
 from check_release_bundle import (
     REQUIRED_BUNDLE_FILES,
+    REQUIRED_VOICE_ASSET_DIGESTS,
     validate_bundle_root,
     validate_configuration,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def populate_required_resources(root: Path) -> None:
     for relative in REQUIRED_BUNDLE_FILES:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("reviewed release resource", encoding="utf-8")
+        if relative in REQUIRED_VOICE_ASSET_DIGESTS:
+            source = ROOT / "voice-worker" / "assets" / path.name
+            path.write_bytes(source.read_bytes())
+        else:
+            path.write_text("reviewed release resource", encoding="utf-8")
 
 
 def populate_omni_runtime(root: Path) -> None:
@@ -112,6 +119,24 @@ class ReleaseBundlePolicyTests(unittest.TestCase):
             voice.parent.mkdir(parents=True, exist_ok=True)
             voice.write_bytes(b"MZ")
             with self.assertRaisesRegex(AssertionError, "Voice runtime is missing"):
+                validate_bundle_root(root)
+
+    def test_unknown_voice_recording_remains_forbidden(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            populate_required_resources(root)
+            recording = root / "runtime/voice-assets/session.wav"
+            recording.write_bytes(b"unapproved recording")
+            with self.assertRaisesRegex(AssertionError, "forbidden file type"):
+                validate_bundle_root(root)
+
+    def test_tampered_voice_asset_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            populate_required_resources(root)
+            asset = root / "runtime/voice-assets/fairy_clone_core.wav"
+            asset.write_bytes(b"tampered")
+            with self.assertRaisesRegex(AssertionError, "Voice asset digest mismatch"):
                 validate_bundle_root(root)
 
     def test_complete_omni_runtime_is_hash_verified(self) -> None:

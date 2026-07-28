@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "voice-release-licenses.ps1")
+. (Join-Path $PSScriptRoot "voice-release-layout.ps1")
 
 $scratch = Join-Path (
     [System.IO.Path]::GetTempPath()
@@ -25,6 +26,22 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $licenseRoot $name) -PathType Leaf)) {
             throw "Voice license fixture did not copy $name."
         }
+    }
+
+    $cache = Join-Path $destination "package\__pycache__"
+    $nestedCache = Join-Path $cache "nested\__pycache__"
+    $lookalike = Join-Path $destination "package\keep__pycache__"
+    New-Item -ItemType Directory -Force -Path $nestedCache, $lookalike | Out-Null
+    Set-Content -LiteralPath (Join-Path $cache "module.pyc") -Value "cache"
+    Set-Content -LiteralPath (Join-Path $nestedCache "nested.pyc") -Value "cache"
+    Set-Content -LiteralPath (Join-Path $lookalike "keep.txt") -Value "keep"
+    $removedCacheCount = Remove-VoiceReleaseCaches -Destination $destination
+    if (
+        $removedCacheCount -ne 2 -or
+        (Test-Path -LiteralPath $cache) -or
+        -not (Test-Path -LiteralPath $lookalike -PathType Container)
+    ) {
+        throw "Voice release cache cleanup did not stay within its exact directory contract."
     }
 
     Remove-Item -LiteralPath (Join-Path $source "LICENSE") -Force

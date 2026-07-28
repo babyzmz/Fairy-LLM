@@ -24,6 +24,18 @@ REQUIRED_BUNDLE_FILES = {
     "docs/release/realtime-companion-beta-privacy.md",
     "docs/release/realtime-companion-beta-troubleshooting.md",
 }
+REQUIRED_VOICE_ASSET_DIGESTS = {
+    "runtime/voice-assets/PROVENANCE.md": (
+        "d8f295125420487315ee20500453eb1747d0e3dafd798778a573d70d99a6d278"
+    ),
+    "runtime/voice-assets/fairy_clone_core.txt": (
+        "d17bab752c2203dd2752d26447487bafe91265bc4f65987f6f1f4c32145d7be8"
+    ),
+    "runtime/voice-assets/fairy_clone_core.wav": (
+        "2308e292107a6b0b0dcced97b7f25c833a9d534ca0d71c097bbfb0b2e625f89c"
+    ),
+}
+REQUIRED_BUNDLE_FILES.update(REQUIRED_VOICE_ASSET_DIGESTS)
 REQUIRED_VOICE_LICENSES = {
     "runtime/voice-worker/THIRD_PARTY_LICENSES/CosyVoice-LICENSE.txt",
     "runtime/voice-worker/THIRD_PARTY_LICENSES/Matcha-TTS-LICENSE.txt",
@@ -100,7 +112,10 @@ def normalized_relative_files(bundle_root: Path) -> set[str]:
             raise AssertionError(
                 f"bundle contains a forbidden legacy entry: {relative_posix}"
             )
-        if lowered_suffixes & FORBIDDEN_SUFFIXES:
+        if (
+            lowered_suffixes & FORBIDDEN_SUFFIXES
+            and relative_posix not in REQUIRED_VOICE_ASSET_DIGESTS
+        ):
             raise AssertionError(
                 f"bundle contains a forbidden file type: {relative_posix}"
             )
@@ -121,6 +136,11 @@ def validate_bundle_root(bundle_root: Path) -> None:
             raise AssertionError(
                 f"Voice runtime is missing upstream licenses: {', '.join(missing_voice)}"
             )
+    for relative, expected_digest in REQUIRED_VOICE_ASSET_DIGESTS.items():
+        with (bundle_root / relative).open("rb") as stream:
+            actual_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if actual_digest != expected_digest:
+            raise AssertionError(f"Voice asset digest mismatch: {relative}")
     omni_files = {path for path in files if path.startswith("runtime/omni/")}
     if omni_files:
         missing_omni = sorted(REQUIRED_OMNI_RUNTIME_FILES - omni_files)
