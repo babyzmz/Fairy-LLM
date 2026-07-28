@@ -32,6 +32,8 @@ $startInfo.CreateNoWindow = $true
 $startInfo.RedirectStandardInput = $true
 $startInfo.RedirectStandardOutput = $true
 $startInfo.RedirectStandardError = $true
+$startInfo.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$startInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
 
 # Windows PowerShell 5.1 can receive duplicate case variants such as Path/PATH
 # from a parent process. Accessing ProcessStartInfo.Environment* then tries to
@@ -56,7 +58,9 @@ foreach ($name in $environmentOverrides.Keys) {
 
 $process = [System.Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
+$originalConsoleInputEncoding = [Console]::InputEncoding
 try {
+    [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
     if (-not $process.Start()) {
         throw "Bundled Core did not start"
     }
@@ -81,11 +85,36 @@ try {
     }
 
     $responses = @($process.StandardOutput.ReadToEnd().Split([Environment]::NewLine, [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_ | ConvertFrom-Json -ErrorAction Stop })
-    if ($responses.Count -ne 2 -or $responses[0].result.protocol -ne "core-service-v1") {
+    $healthResult = if ($responses.Count -ge 1) {
+        $responses[0].PSObject.Properties["result"]
+    } else {
+        $null
+    }
+    $healthProtocol = if ($null -ne $healthResult) {
+        $healthResult.Value.PSObject.Properties["protocol"]
+    } else {
+        $null
+    }
+    if (
+        $responses.Count -ne 2 -or
+        $null -eq $healthProtocol -or
+        $healthProtocol.Value -ne "core-service-v1"
+    ) {
         throw "Bundled Core did not return the expected health handshake"
     }
     $projectResponseHasError = $null -ne $responses[1].PSObject.Properties["error"]
-    if ($projectResponseHasError -or $null -eq $responses[1].result.project.id) {
+    $projectResult = $responses[1].PSObject.Properties["result"]
+    $project = if ($null -ne $projectResult) {
+        $projectResult.Value.PSObject.Properties["project"]
+    } else {
+        $null
+    }
+    $projectId = if ($null -ne $project) {
+        $project.Value.PSObject.Properties["id"]
+    } else {
+        $null
+    }
+    if ($projectResponseHasError -or $null -eq $projectId) {
         throw "Bundled Core could not create a project through the Rust worker: $($responses[1] | ConvertTo-Json -Compress -Depth 10)"
     }
     if (-not (Test-Path -LiteralPath $managedRoot -PathType Container)) {
@@ -96,7 +125,7 @@ try {
         throw "Bundled MinGit did not initialize managed Git metadata"
     }
 
-    Write-Host "Bundled Core + Rust worker + MinGit composition passed for project $($responses[1].result.project.id)."
+    Write-Host "Bundled Core + Rust worker + MinGit composition passed for project $($projectId.Value)."
 }
 finally {
     if (-not $process.HasExited) {
@@ -104,6 +133,7 @@ finally {
         $process.WaitForExit()
     }
     $process.Dispose()
+    [Console]::InputEncoding = $originalConsoleInputEncoding
     foreach ($name in $environmentOverrides.Keys) {
         [System.Environment]::SetEnvironmentVariable(
             $name,

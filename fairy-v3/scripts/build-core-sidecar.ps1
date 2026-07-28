@@ -15,6 +15,7 @@ $scratch = Join-Path ([System.IO.Path]::GetTempPath()) "fairy-v3-core-sidecar"
 $dist = Join-Path $scratch "dist"
 $work = Join-Path $scratch "work"
 $spec = Join-Path $scratch "spec"
+$originalConsoleInputEncoding = [Console]::InputEncoding
 
 Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $dist, $work, $spec, $outputRoot | Out-Null
@@ -68,7 +69,6 @@ try {
         $startInfo.StandardErrorEncoding = New-Object System.Text.UTF8Encoding($false)
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $startInfo
-        $previousConsoleInputEncoding = [Console]::InputEncoding
         try {
             [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
             if (-not $process.Start()) {
@@ -90,7 +90,7 @@ try {
         }
         finally {
             $process.Dispose()
-            [Console]::InputEncoding = $previousConsoleInputEncoding
+            [Console]::InputEncoding = $originalConsoleInputEncoding
         }
         $responseLines = @(
             $responseText -split "\r?\n" |
@@ -144,5 +144,6 @@ try {
     Write-Host "SHA256 $hash"
 }
 finally {
+    [Console]::InputEncoding = $originalConsoleInputEncoding
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
 }
