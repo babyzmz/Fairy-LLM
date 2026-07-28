@@ -178,4 +178,81 @@ foreach ($message in @(
     }
 }
 
+$nativePath = Join-Path $PSScriptRoot "test-presence-native.ps1"
+$native = Get-Content -Raw -LiteralPath $nativePath
+foreach ($required in @(
+    "MinimumUserIdleSeconds",
+    "New-PresenceInputGuardState",
+    "Acquire-PresenceInputOwnership",
+    "Invoke-PresenceOwnedInputAction",
+    "Sync-PresenceInputOwnership",
+    "nativeProbeSucceeded",
+    "Set-GuardedNativeCursor",
+    "Focus-GuardedNativeWindow",
+    "Hold-GuardedNativeCursor",
+    "Invoke-GuardedNativeClick",
+    "Invoke-GuardedNativeDrag",
+    "Release-NativeMouseButtonForCleanup"
+)) {
+    if ($native -notmatch [regex]::Escape($required)) {
+        throw "Native Presence script is missing guarded contract: $required"
+    }
+}
+if ($native -notmatch
+    '\$preserveRunning\s*=\s*\$KeepRunning\s*-and\s*\$nativeProbeSucceeded') {
+    throw "KeepRunning is not restricted to a successful guarded probe"
+}
+
+function Get-EnclosingFunctionName($Node) {
+    $current = $Node
+    while ($null -ne $current) {
+        if ($current -is
+            [System.Management.Automation.Language.FunctionDefinitionAst]) {
+            return $current.Name
+        }
+        $current = $current.Parent
+    }
+    return ""
+}
+
+$tokens = $null
+$parseErrors = $null
+$nativeAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $nativePath,
+    [ref]$tokens,
+    [ref]$parseErrors
+)
+if ($parseErrors.Count -ne 0) {
+    throw "Native Presence script does not parse"
+}
+$rawMethods = @(
+    "SetCursorPos",
+    "Focus",
+    "LeftButtonDown",
+    "LeftButtonUp"
+)
+$guardedFunctions = @(
+    "Set-GuardedNativeCursor",
+    "Focus-GuardedNativeWindow",
+    "Invoke-GuardedNativeClick",
+    "Invoke-GuardedNativeDrag",
+    "Release-NativeMouseButtonForCleanup"
+)
+$unguarded = @($nativeAst.FindAll({
+    param($node)
+    $node -is
+        [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+    $node.Static -and
+    $node.Expression.Extent.Text -eq "[FairyNativeProbe]" -and
+    $node.Member.Extent.Text -in $rawMethods
+}, $true) | Where-Object {
+    (Get-EnclosingFunctionName $_) -notin $guardedFunctions
+})
+if ($unguarded.Count -ne 0) {
+    throw (
+        "Native Presence script contains unguarded input calls: " +
+        (($unguarded.Extent.Text) -join ", ")
+    )
+}
+
 Write-Output "Presence input ownership guard tests passed."

@@ -6,6 +6,8 @@ param(
     [ValidateSet("auto", "power_saving", "high_performance")]
     [string]$GpuPreference = "auto",
     [int]$StartupTimeoutSeconds = 30,
+    [ValidateRange(5, 60)]
+    [int]$MinimumUserIdleSeconds = 5,
     [switch]$VerifyRegressions,
     [switch]$FreshWebViewProfile,
     [switch]$KeepRunning
@@ -24,6 +26,16 @@ if ($env:OS -ne "Windows_NT") {
 if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
     throw "Fairy executable is missing: $Executable"
 }
+
+. (Join-Path $PSScriptRoot "presence-input-ownership-guard.ps1")
+$inputGuard = New-PresenceInputGuardState `
+    -MinimumIdleSeconds $MinimumUserIdleSeconds
+Acquire-PresenceInputOwnership `
+    -State $inputGuard `
+    -Observation (Get-PresenceInputObservation -Phase "startup") `
+    -Phase "startup"
+$nativeProbeSucceeded = $false
+$mouseButtonDown = $false
 
 Add-Type -TypeDefinition @'
 using System;
@@ -207,10 +219,20 @@ function Test-LoopbackPort([int]$Port) {
 function Wait-LoopbackPort(
     [System.Diagnostics.Process]$Process,
     [int]$Port,
-    [int]$TimeoutSeconds = 30
+    [int]$TimeoutSeconds = 30,
+    $GuardState = $null
 ) {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
+        if ($null -ne $GuardState) {
+            Sync-PresenceInputOwnership `
+                -State $GuardState `
+                -Observation (
+                    Get-PresenceInputObservation -Phase "vite_startup_wait"
+                ) `
+                -OwnedProcessId 0 `
+                -Phase "vite_startup_wait"
+        }
         $Process.Refresh()
         if ($Process.HasExited) {
             throw "Vite development server exited before opening port ${Port}: $($Process.ExitCode)"
@@ -221,7 +243,7 @@ function Wait-LoopbackPort(
     throw "Timed out waiting for Vite development server on port ${Port}"
 }
 
-function Start-ViteDevelopmentServer {
+function Start-ViteDevelopmentServer($GuardState) {
     $node = (Get-Command node -ErrorAction Stop).Source
     $vite = (Resolve-Path -LiteralPath (Join-Path $root "desktop\node_modules\vite\bin\vite.js")).Path
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -232,7 +254,14 @@ function Start-ViteDevelopmentServer {
     $startInfo.CreateNoWindow = $true
     $server = [System.Diagnostics.Process]::Start($startInfo)
     if ($null -eq $server) { throw "Vite development server did not start" }
-    Wait-LoopbackPort $server 1430
+    try {
+        Wait-LoopbackPort $server 1430 30 $GuardState
+    }
+    catch {
+        Stop-ProcessTree $server
+        $server.Dispose()
+        throw
+    }
     return $server
 }
 
@@ -265,9 +294,21 @@ function Get-LensWindows([int]$ProcessId) {
     )
 }
 
-function Wait-Window([int]$ProcessId, [string]$Title, [int]$TimeoutSeconds) {
+function Wait-Window(
+    [int]$ProcessId,
+    [string]$Title,
+    [int]$TimeoutSeconds,
+    $GuardState
+) {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
+        Sync-PresenceInputOwnership `
+            -State $GuardState `
+            -Observation (
+                Get-PresenceInputObservation -Phase "startup_wait"
+            ) `
+            -OwnedProcessId $ProcessId `
+            -Phase "startup_wait"
         $window = Get-Window $ProcessId $Title
         if ($null -ne $window) { return $window }
         Start-Sleep -Milliseconds 100
@@ -283,14 +324,168 @@ function Test-Style([long]$Style, [long]$Mask) {
     return (($Style -band $Mask) -eq $Mask)
 }
 
-function Hold-Cursor([int]$X, [int]$Y, [int]$DurationMilliseconds) {
+function Assert-GuardedNativeOwnership(
+    $GuardState,
+    [int]$OwnedProcessId,
+    [string]$Phase
+) {
+    Sync-PresenceInputOwnership `
+        -State $GuardState `
+        -Observation (Get-PresenceInputObservation -Phase $Phase) `
+        -OwnedProcessId $OwnedProcessId `
+        -Phase $Phase
+}
+
+function Set-GuardedNativeCursor(
+    $GuardState,
+    [int]$OwnedProcessId,
+    [int]$X,
+    [int]$Y,
+    [string]$Phase
+) {
+    $moved = Invoke-PresenceOwnedInputAction `
+        -State $GuardState `
+        -OwnedProcessId $OwnedProcessId `
+        -Phase $Phase `
+        -Action { [FairyNativeProbe]::SetCursorPos($X, $Y) }
+    return [bool]$moved
+}
+
+function Focus-GuardedNativeWindow(
+    $GuardState,
+    [int]$OwnedProcessId,
+    [IntPtr]$Handle,
+    [string]$Phase
+) {
+    $focused = Invoke-PresenceOwnedInputAction `
+        -State $GuardState `
+        -OwnedProcessId $OwnedProcessId `
+        -Phase $Phase `
+        -Action { [FairyNativeProbe]::Focus($Handle) }
+    if (-not $focused) {
+        throw "Windows rejected the native foreground transition"
+    }
+}
+
+function Hold-GuardedNativeCursor(
+    $GuardState,
+    [int]$OwnedProcessId,
+    [int]$X,
+    [int]$Y,
+    [int]$DurationMilliseconds,
+    [string]$Phase
+) {
     $deadline = [DateTime]::UtcNow.AddMilliseconds($DurationMilliseconds)
     do {
-        if (-not [FairyNativeProbe]::SetCursorPos($X, $Y)) {
+        if (-not (Set-GuardedNativeCursor `
+            -GuardState $GuardState `
+            -OwnedProcessId $OwnedProcessId `
+            -X $X `
+            -Y $Y `
+            -Phase $Phase)) {
             throw "Windows rejected the native cursor placement"
         }
         Start-Sleep -Milliseconds 25
     } while ([DateTime]::UtcNow -lt $deadline)
+}
+
+function Release-NativeMouseButtonForCleanup(
+    [ref]$MouseButtonDown
+) {
+    if (-not $MouseButtonDown.Value) { return }
+    [FairyNativeProbe]::LeftButtonUp()
+    $MouseButtonDown.Value = $false
+}
+
+function Invoke-GuardedNativeClick(
+    $GuardState,
+    [int]$OwnedProcessId,
+    [string]$Phase,
+    [ref]$MouseButtonDown
+) {
+    try {
+        Invoke-PresenceOwnedInputAction `
+            -State $GuardState `
+            -OwnedProcessId $OwnedProcessId `
+            -Phase "${Phase}_down" `
+            -Action {
+                $MouseButtonDown.Value = $true
+                [FairyNativeProbe]::LeftButtonDown()
+            }
+        Start-Sleep -Milliseconds 35
+        Invoke-PresenceOwnedInputAction `
+            -State $GuardState `
+            -OwnedProcessId $OwnedProcessId `
+            -Phase "${Phase}_up" `
+            -Action {
+                [FairyNativeProbe]::LeftButtonUp()
+                $MouseButtonDown.Value = $false
+            }
+    }
+    finally {
+        Release-NativeMouseButtonForCleanup $MouseButtonDown
+    }
+}
+
+function Invoke-GuardedNativeDrag(
+    $GuardState,
+    [int]$OwnedProcessId,
+    [int]$StartX,
+    [int]$StartY,
+    [int]$DeltaX,
+    [int]$DeltaY,
+    [int]$Steps,
+    [string]$Phase,
+    [ref]$MouseButtonDown
+) {
+    if (-not (Set-GuardedNativeCursor `
+        -GuardState $GuardState `
+        -OwnedProcessId $OwnedProcessId `
+        -X $StartX `
+        -Y $StartY `
+        -Phase "${Phase}_start")) {
+        throw "Windows rejected the native drag start position"
+    }
+
+    try {
+        Invoke-PresenceOwnedInputAction `
+            -State $GuardState `
+            -OwnedProcessId $OwnedProcessId `
+            -Phase "${Phase}_down" `
+            -Action {
+                $MouseButtonDown.Value = $true
+                [FairyNativeProbe]::LeftButtonDown()
+            }
+        Start-Sleep -Milliseconds 340
+        foreach ($step in 1..$Steps) {
+            $x = $StartX + [int][Math]::Round(
+                $DeltaX * ($step / [double]$Steps)
+            )
+            $y = $StartY + [int][Math]::Round(
+                $DeltaY * ($step / [double]$Steps)
+            )
+            if (-not (Set-GuardedNativeCursor `
+                -GuardState $GuardState `
+                -OwnedProcessId $OwnedProcessId `
+                -X $x `
+                -Y $y `
+                -Phase "${Phase}_step")) {
+                throw "Windows rejected a native drag position"
+            }
+            Start-Sleep -Milliseconds 35
+        }
+        Invoke-PresenceOwnedInputAction `
+            -State $GuardState `
+            -OwnedProcessId $OwnedProcessId `
+            -Phase "${Phase}_up" `
+            -Action {
+                [FairyNativeProbe]::LeftButtonUp()
+                $MouseButtonDown.Value = $false
+            }
+    }
+    finally {
+        Release-NativeMouseButtonForCleanup $MouseButtonDown
+    }
 }
 
 function Stop-ProcessTree([System.Diagnostics.Process]$Target) {
@@ -375,9 +570,17 @@ if ($GpuPreference -ne "auto") {
 }
 
 try {
+    Assert-GuardedNativeOwnership `
+        -GuardState $inputGuard `
+        -OwnedProcessId 0 `
+        -Phase "before_vite_start"
     if (-not (Test-LoopbackPort 1430)) {
-        $viteProcess = Start-ViteDevelopmentServer
+        $viteProcess = Start-ViteDevelopmentServer $inputGuard
     }
+    Assert-GuardedNativeOwnership `
+        -GuardState $inputGuard `
+        -OwnedProcessId 0 `
+        -Phase "before_fairy_start"
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $resolvedExecutable
     $startInfo.WorkingDirectory = Split-Path -Parent $startInfo.FileName
@@ -431,14 +634,41 @@ try {
     }
     if ($null -eq $process) { throw "Fairy process did not start" }
 
-    $main = Wait-Window $process.Id "Fairy" $StartupTimeoutSeconds
-    $render = Wait-Window $process.Id "Fairy Presence Renderer" $StartupTimeoutSeconds
-    $inputWindow = Wait-Window $process.Id "Fairy Presence Input" $StartupTimeoutSeconds
-    $cursorInjectionAvailable = [FairyNativeProbe]::SetCursorPos(($main.X + 80), ($main.Y + 80))
+    $main = Wait-Window `
+        $process.Id `
+        "Fairy" `
+        $StartupTimeoutSeconds `
+        $inputGuard
+    $render = Wait-Window `
+        $process.Id `
+        "Fairy Presence Renderer" `
+        $StartupTimeoutSeconds `
+        $inputGuard
+    $inputWindow = Wait-Window `
+        $process.Id `
+        "Fairy Presence Input" `
+        $StartupTimeoutSeconds `
+        $inputGuard
+    $cursorInjectionAvailable = Set-GuardedNativeCursor `
+        -GuardState $inputGuard `
+        -OwnedProcessId $process.Id `
+        -X ($main.X + 80) `
+        -Y ($main.Y + 80) `
+        -Phase "startup_cursor_probe"
     if ($cursorInjectionAvailable) {
-        Hold-Cursor ($main.X + 80) ($main.Y + 80) 2000
+        Hold-GuardedNativeCursor `
+            -GuardState $inputGuard `
+            -OwnedProcessId $process.Id `
+            -X ($main.X + 80) `
+            -Y ($main.Y + 80) `
+            -DurationMilliseconds 2000 `
+            -Phase "startup_cursor_hold"
     } else {
         Start-Sleep -Milliseconds 2000
+        Assert-GuardedNativeOwnership `
+            -GuardState $inputGuard `
+            -OwnedProcessId $process.Id `
+            -Phase "startup_cursor_fallback"
     }
     $main = Get-Window $process.Id "Fairy"
     $render = Get-Window $process.Id "Fairy Presence Renderer"
@@ -486,8 +716,16 @@ try {
         throw "Native render placement disagrees with coordinator: hwnd=[$($render.X),$($render.Y)], expected=[$expectedRenderX,$expectedRenderY]"
     }
 
-    [FairyNativeProbe]::Focus($main.Handle) | Out-Null
+    Focus-GuardedNativeWindow `
+        -GuardState $inputGuard `
+        -OwnedProcessId $process.Id `
+        -Handle $main.Handle `
+        -Phase "main_focus"
     Start-Sleep -Milliseconds 200
+    Assert-GuardedNativeOwnership `
+        -GuardState $inputGuard `
+        -OwnedProcessId $process.Id `
+        -Phase "after_main_focus"
     $foregroundBeforeHover = [FairyNativeProbe]::GetForegroundWindow()
     $scale = [Math]::Max(0.5, $render.Width / 640.0)
     $candidateAnchors = @(
@@ -500,7 +738,13 @@ try {
     $hoverDidNotFocus = $null
     if ($cursorInjectionAvailable) {
         foreach ($candidate in $candidateAnchors) {
-            Hold-Cursor $candidate.X $candidate.Y 900
+            Hold-GuardedNativeCursor `
+                -GuardState $inputGuard `
+                -OwnedProcessId $process.Id `
+                -X $candidate.X `
+                -Y $candidate.Y `
+                -DurationMilliseconds 900 `
+                -Phase "hover_hold"
             $inputWindow = Get-Window $process.Id "Fairy Presence Input"
             if ($null -ne $inputWindow -and $inputWindow.Visible -and $inputWindow.Width -gt $expectedCoreExtent) {
                 $activeAnchor = $candidate
@@ -539,9 +783,11 @@ try {
     }
     $inputProbeScript = Join-Path $root "desktop\scripts\probe-presence-input.mjs"
     if ($cursorInjectionAvailable) {
-        [FairyNativeProbe]::LeftButtonDown()
-        Start-Sleep -Milliseconds 35
-        [FairyNativeProbe]::LeftButtonUp()
+        Invoke-GuardedNativeClick `
+            -GuardState $inputGuard `
+            -OwnedProcessId $process.Id `
+            -Phase "core_click_close" `
+            -MouseButtonDown ([ref]$mouseButtonDown)
         Start-Sleep -Milliseconds 250
         $closedStateOutput = & node $inputProbeScript --port $port --action state
         if ($LASTEXITCODE -ne 0) { throw "WebView2 could not verify the first native core click" }
@@ -552,9 +798,11 @@ try {
         $closedInputWindow = Get-Window $process.Id "Fairy Presence Input"
         $closedRootAtCore = [FairyNativeProbe]::RootWindowAt($activeAnchor.X, $activeAnchor.Y)
 
-        [FairyNativeProbe]::LeftButtonDown()
-        Start-Sleep -Milliseconds 35
-        [FairyNativeProbe]::LeftButtonUp()
+        Invoke-GuardedNativeClick `
+            -GuardState $inputGuard `
+            -OwnedProcessId $process.Id `
+            -Phase "core_click_open" `
+            -MouseButtonDown ([ref]$mouseButtonDown)
         Start-Sleep -Milliseconds 250
         $openedStateOutput = & node $inputProbeScript --port $port --action state
         if ($LASTEXITCODE -ne 0) { throw "WebView2 could not verify the second native core click" }
@@ -610,24 +858,16 @@ try {
         $dpr = [double]$inputProbe.device_pixel_ratio
         $dragStartX = $inputBefore.X + [int][Math]::Round(($inputProbe.core_target.left + ($inputProbe.core_target.width / 2)) * $dpr)
         $dragStartY = $inputBefore.Y + [int][Math]::Round(($inputProbe.core_target.top + ($inputProbe.core_target.height / 2)) * $dpr)
-        if (-not [FairyNativeProbe]::SetCursorPos($dragStartX, $dragStartY)) {
-            throw "Windows rejected the native drag start position"
-        }
-        [FairyNativeProbe]::LeftButtonDown()
-        try {
-            Start-Sleep -Milliseconds 340
-            foreach ($step in 1..6) {
-                $x = $dragStartX + [int][Math]::Round(-48 * ($step / 6.0))
-                $y = $dragStartY + [int][Math]::Round(-48 * ($step / 6.0))
-                if (-not [FairyNativeProbe]::SetCursorPos($x, $y)) {
-                    throw "Windows rejected a native drag position"
-                }
-                Start-Sleep -Milliseconds 35
-            }
-        }
-        finally {
-            [FairyNativeProbe]::LeftButtonUp()
-        }
+        Invoke-GuardedNativeDrag `
+            -GuardState $inputGuard `
+            -OwnedProcessId $process.Id `
+            -StartX $dragStartX `
+            -StartY $dragStartY `
+            -DeltaX -48 `
+            -DeltaY -48 `
+            -Steps 6 `
+            -Phase "regression_drag" `
+            -MouseButtonDown ([ref]$mouseButtonDown)
         Start-Sleep -Milliseconds 250
         $renderAfter = Get-Window $process.Id "Fairy Presence Renderer"
         $inputAfter = Get-Window $process.Id "Fairy Presence Input"
@@ -663,7 +903,13 @@ try {
     }
 
     if ($cursorInjectionAvailable) {
-        Hold-Cursor ($main.X + 80) ($main.Y + 80) 2000
+        Hold-GuardedNativeCursor `
+            -GuardState $inputGuard `
+            -OwnedProcessId $process.Id `
+            -X ($main.X + 80) `
+            -Y ($main.Y + 80) `
+            -DurationMilliseconds 2000 `
+            -Phase "return_to_idle"
     }
     $inputProbeScript = Join-Path $root "desktop\scripts\probe-presence-input.mjs"
     $closeInputOutput = & node $inputProbeScript --port $port --action close
@@ -685,7 +931,16 @@ try {
         throw "pet-render exposed controls or overflowed its native surface"
     }
 
-    [FairyNativeProbe]::PostMessageW($main.Handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    Assert-GuardedNativeOwnership `
+        -GuardState $inputGuard `
+        -OwnedProcessId $process.Id `
+        -Phase "before_main_close"
+    [FairyNativeProbe]::PostMessageW(
+        $main.Handle,
+        0x0010,
+        [IntPtr]::Zero,
+        [IntPtr]::Zero
+    ) | Out-Null
     Start-Sleep -Milliseconds 700
     $process.Refresh()
     if ($process.HasExited) { throw "Closing the main window terminated the tray application" }
@@ -697,6 +952,10 @@ try {
     if ($VerifyRegressions) {
         $inputBeforeClose = Get-Window $process.Id "Fairy Presence Input"
         $renderBeforeInputClose = Get-Window $process.Id "Fairy Presence Renderer"
+        Assert-GuardedNativeOwnership `
+            -GuardState $inputGuard `
+            -OwnedProcessId $process.Id `
+            -Phase "before_input_close"
         [FairyNativeProbe]::PostMessageW(
             $inputBeforeClose.Handle,
             0x0010,
@@ -713,7 +972,7 @@ try {
         $inputCloseIndependent = $true
     }
 
-    [PSCustomObject]@{
+    $result = [PSCustomObject]@{
         process_id = $process.Id
         renderer_mode = $webViewProbe.final.renderer
         renderer_health = $webViewProbe.final.health
@@ -736,21 +995,26 @@ try {
         input_close_independent = $inputCloseIndependent
         context_menu_items = if ($VerifyRegressions) { $menuProbe.items } else { @() }
         webview2_port = $port
-    } | ConvertTo-Json -Depth 4
+    }
+    $resultJson = $result | ConvertTo-Json -Depth 4
+    $nativeProbeSucceeded = $true
+    $resultJson
 }
 finally {
-    if ($null -ne $process -and -not $KeepRunning) {
+    Release-NativeMouseButtonForCleanup ([ref]$mouseButtonDown)
+    $preserveRunning = $KeepRunning -and $nativeProbeSucceeded
+    if ($null -ne $process -and -not $preserveRunning) {
         $process.Refresh()
         if (-not $process.HasExited) {
             Stop-ProcessTree $process
         }
         $process.Dispose()
     }
-    if ($null -ne $viteProcess -and -not $KeepRunning) {
+    if ($null -ne $viteProcess -and -not $preserveRunning) {
         Stop-ProcessTree $viteProcess
         $viteProcess.Dispose()
     }
-    if (-not $KeepRunning) {
+    if (-not $preserveRunning) {
         Remove-VerifiedScratchDirectory $scratch $scratchPrefix
     }
     if ($GpuPreference -ne "auto") {
