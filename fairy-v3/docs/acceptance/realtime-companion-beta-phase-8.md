@@ -20,6 +20,14 @@ release candidate. Install, upgrade, uninstall, signature verification, the
 mandatory four-hour production-model soak, native WebView2 recovery evidence,
 and reference-device performance/privacy evidence remain absent.
 
+After packaging, the pinned production model was downloaded through the
+governed model manager and a rebuilt CUDA runtime passed its real three-model
+initialization probe. The available RTX 5060 Ti remains correctly ineligible
+for Local Beta because DXGI reports about 15.67 GiB of physical dedicated
+memory, below the frozen 16 GiB product floor. This successful runtime probe
+does not change the public-release decision or make the earlier unsigned MSI a
+candidate for the newer source state.
+
 This record certifies the Phase 8 implementation and its rejection behavior. It
 does not convert missing physical or release-candidate evidence into a pass.
 
@@ -129,13 +137,47 @@ launchable native layout; it is not an MSI install, upgrade, uninstall, ICE,
 or signing pass. A raw `target/release/fairy.exe` without the packaged resource
 layout is intentionally not a valid native acceptance target.
 
+## Post-packaging production Omni evidence
+
+The governed live model gate subsequently downloaded and verified the exact
+three-file MiniCPM-o 4.5 set:
+
+- model payload: 6,781,995,488 bytes;
+- model manifest digest:
+  `8afc38a4665340e1308b286f01da8eb7c608d5c1d745e5e4292a057812b76ac0`;
+- runtime patch-set digest:
+  `b2a095f49fb5d48c587505673b0549a50ee6bd4717066c7a9e562eb5c031d29a`;
+- rebuilt staged runtime SHA-256:
+  `76cb3d85c9a659b51824b93bb9bc444e15f91d0004b17950d31a9e769dd49b4f`.
+
+The live Rust gate rehashed the installed files, verified the stored manifest,
+launched the staged production-CUDA runtime from the Unicode workspace path,
+and received `backend_ready=true` with `model_probe=ready`. The durable model
+state is `ready` and Local Readiness reports the runtime as `passed`.
+An isolated self-test capture exited zero with exactly one 483-byte JSON line
+on stdout; 43,043 bytes of upstream diagnostics remained on stderr.
+
+The same report recorded Windows x64, AVX2, CUDA/DXGI adapter identity match,
+CUDA driver API 13.3, 16,829,644,800 bytes of dedicated VRAM, a
+16,024,338,432-byte current local-memory budget, and a 15,330,181,120-byte
+Focus requirement. Budget was sufficient, but the strict physical threshold
+was not: the capability reason remained `vram_below16gb`. This is the intended
+fail-closed result and means the machine cannot supply the mandatory supported
+16 GiB+ soak evidence.
+
+The source change that fixed stdout protocol isolation and UTF-8 audio/vision
+tensor paths postdates the internal MSI. Therefore its executable hash above
+does not match the packaged Omni hash in the preceding section, and a new
+production composition is required before any exact-candidate release gate.
+
 ## Mocked, deterministic, and real boundaries
 
 The release scripts and fixtures exercise exact schemas, file inventories,
 hashes, policy thresholds, and failure behavior with controlled data. Vitest
 uses mocked Tauri transport; Playwright uses the governed desktop fixture.
 Rust and Python suites exercise real implementation state machines with
-deterministic adapters. These gates do not substitute for CUDA inference,
+deterministic adapters. The new live gate proves real CUDA model
+initialization, but does not substitute for sustained multimodal inference,
 physical audio/capture devices, a signed installer, a reference game workload,
 or a four-hour wall-clock session.
 
@@ -143,7 +185,8 @@ The WSL sandbox attestation was not required in this run. Docker was explicitly
 disabled, so PostgreSQL/S3 recovery, capability Outbox, two-device sync, memory
 retrieval, document/evidence, and runtime Preview integration were not
 executed. Live paid GLM traffic was not run. The fixed MiniCPM-o 4.5 model
-weights were not downloaded, so production local inference was not claimed.
+weights and production CUDA runtime passed initialization, but production
+local inference and long-duration stability are not claimed.
 
 ## Existing test changes
 
@@ -163,8 +206,8 @@ candidate:
 - install, cold-start, upgrade, uninstall, and verify user-data preservation;
 - sign the complete candidate, verify every signature, and pass malware
   scanning again after signing;
-- download and verify the pinned MiniCPM-o 4.5 model through the governed model
-  manager without bundling weights into the installer;
+- rebuild the exact MSI/cabinet candidate from the current source and verified
+  Omni runtime without bundling the downloaded model weights;
 - complete a four-hour wall-clock local MiniCPM session on a supported NVIDIA
   16 GiB+ reference device, including capture, audio, Voice, pause/resume,
   window switches, context rotations, recovery, quarantine, and cleanup;

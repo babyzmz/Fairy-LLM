@@ -702,10 +702,14 @@ fn collect_relative_files(root: &Path) -> Result<HashSet<String>, OmniModelManag
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::Mutex;
 
     use super::*;
+    use crate::local_readiness::{LocalReadinessService, OmniRuntimeReadiness};
     use crate::omni_model_catalog::bundled_minicpm_o45_manifest;
+    use crate::omni_model_download::OmniModelDownloader;
+    use fairy_realtime_worker::RealtimeActivityProfile;
 
     struct FixtureTransfer {
         payloads: Vec<(String, Vec<u8>)>,
@@ -1067,5 +1071,96 @@ mod tests {
             .finish_runtime_self_test(None)
             .expect("passed runtime self-test");
         assert_eq!(manager.status().phase, OmniModelInstallPhase::Ready);
+    }
+
+    #[test]
+    #[ignore = "downloads the pinned production model and requires a CUDA-capable NVIDIA GPU"]
+    fn live_minicpm_o45_install_and_cuda_self_test() {
+        let models_root = required_live_directory("FAIRY_LIVE_OMNI_MODELS_ROOT");
+        let runtime_root = required_live_directory("FAIRY_LIVE_OMNI_RUNTIME_ROOT");
+        assert!(
+            models_root.ends_with("models"),
+            "FAIRY_LIVE_OMNI_MODELS_ROOT must end with a dedicated models directory"
+        );
+        assert!(
+            runtime_root.join("omni").is_dir(),
+            "FAIRY_LIVE_OMNI_RUNTIME_ROOT must contain the staged omni directory"
+        );
+
+        let manifest = bundled_minicpm_o45_manifest().expect("production manifest");
+        let mut manager =
+            OmniModelManager::new(&models_root, manifest.clone()).expect("model manager");
+        match manager.status().phase {
+            OmniModelInstallPhase::NotInstalled | OmniModelInstallPhase::Partial => {
+                manager
+                    .begin_install(u64::MAX)
+                    .expect("begin governed model install");
+                manager
+                    .download_and_install(
+                        &OmniModelDownloader::new().expect("production model downloader"),
+                    )
+                    .expect("download, verify, and atomically promote pinned model");
+            }
+            OmniModelInstallPhase::Ready
+            | OmniModelInstallPhase::SelfTestFailed
+            | OmniModelInstallPhase::Corrupt => {
+                manager
+                    .begin_verify()
+                    .expect("begin installed verification");
+                manager
+                    .verify_installed()
+                    .expect("verify installed model before CUDA probe");
+            }
+            OmniModelInstallPhase::RuntimeMissing => {}
+            phase => panic!("live model store is not idle: {phase:?}"),
+        }
+        assert_eq!(
+            manager.status().phase,
+            OmniModelInstallPhase::RuntimeMissing
+        );
+
+        manager
+            .begin_runtime_self_test()
+            .expect("begin production CUDA self-test");
+        let mut readiness =
+            LocalReadinessService::production(&models_root, &runtime_root, manifest)
+                .expect("production readiness service");
+        let self_test = readiness.run_self_test(manager.status());
+        match self_test {
+            Ok(report) => {
+                assert!(report.cuda_compiled);
+                assert!(report.backend_ready);
+                assert_eq!(report.model_probe, "ready");
+                manager
+                    .finish_runtime_self_test(None)
+                    .expect("persist ready model state");
+            }
+            Err(error) => {
+                manager
+                    .finish_runtime_self_test(Some("OMNI_LIVE_SELF_TEST_FAILED"))
+                    .expect("persist failed live self-test state");
+                panic!("production CUDA self-test failed: {error}");
+            }
+        }
+
+        let report = readiness
+            .report(manager.status(), RealtimeActivityProfile::Focus, true)
+            .expect("live readiness report");
+        assert_eq!(manager.status().phase, OmniModelInstallPhase::Ready);
+        assert_eq!(report.runtime, OmniRuntimeReadiness::Passed);
+        eprintln!(
+            "live local readiness: {}",
+            serde_json::to_string(&report).expect("serialize live readiness report")
+        );
+    }
+
+    fn required_live_directory(name: &str) -> PathBuf {
+        let path = PathBuf::from(
+            std::env::var_os(name)
+                .unwrap_or_else(|| panic!("{name} must be set for the ignored live model gate")),
+        );
+        assert!(path.is_absolute(), "{name} must be an absolute path");
+        assert!(path.is_dir(), "{name} must be an existing directory");
+        path
     }
 }
