@@ -1,9 +1,9 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [string]$BaselineInstaller,
     [string]$CandidateInstaller,
     [string]$CandidateExecutable,
+    [switch]$ValidateMediaOnly,
     [switch]$KeepInstalled
 )
 
@@ -25,7 +25,12 @@ $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $isElevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $installScope = if ($isElevated) { "per-machine" } else { "per-user" }
 $msiScopeProperties = if ($isElevated) { "" } else { " ALLUSERS=2 MSIINSTALLPERUSER=1" }
-foreach ($path in @($BaselineInstaller, $CandidateInstaller, $CandidateExecutable)) {
+$requiredPaths = if ($ValidateMediaOnly) {
+    @($CandidateInstaller)
+} else {
+    @($BaselineInstaller, $CandidateInstaller, $CandidateExecutable)
+}
+foreach ($path in $requiredPaths) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Release installation dependency is missing: $path"
     }
@@ -39,15 +44,36 @@ function Assert-ReleaseMedia([string]$Installer) {
         throw "Split MSI release manifest is missing: $manifestPath"
     }
     $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
-    if ([int]$manifest.schema_version -ne 1 -or [string]$manifest.product -ne "Fairy") {
+    if (
+        [int]$manifest.schema_version -ne 2 -or
+        [string]$manifest.product -ne "Fairy" -or
+        [string]$manifest.architecture -ne "x64"
+    ) {
         throw "Split MSI release manifest schema or product is unsupported"
     }
     if ($manifest.installer -ne (Split-Path -Leaf $Installer)) {
         throw "Split MSI manifest does not identify the candidate installer"
     }
+    $mediaEntries = @($manifest.media)
+    $cabinetNames = @($manifest.cabinets | ForEach-Object { [string]$_ })
+    if (
+        $mediaEntries.Count -ne [int]$manifest.artifact_count -or
+        $cabinetNames.Count -eq 0 -or
+        @($cabinetNames | Select-Object -Unique).Count -ne $cabinetNames.Count
+    ) {
+        throw "Split MSI manifest media count or cabinet set is invalid"
+    }
+    $declaredMediaNames = @($mediaEntries | ForEach-Object { [string]$_.name })
+    $expectedMediaNames = @([string]$manifest.installer) + $cabinetNames
+    if (
+        $declaredMediaNames.Count -ne $expectedMediaNames.Count -or
+        @(Compare-Object $declaredMediaNames $expectedMediaNames).Count -ne 0
+    ) {
+        throw "Split MSI manifest media does not match its installer and cabinets"
+    }
     $seenMedia = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     [long]$totalBytes = 0
-    foreach ($media in $manifest.media) {
+    foreach ($media in $mediaEntries) {
         $mediaName = [string]$media.name
         if ([System.IO.Path]::GetFileName($mediaName) -ne $mediaName -or -not $seenMedia.Add($mediaName)) {
             throw "Split MSI manifest contains an unsafe or duplicate media name: $mediaName"
@@ -72,6 +98,14 @@ function Assert-ReleaseMedia([string]$Installer) {
 }
 
 Assert-ReleaseMedia $CandidateInstaller
+if ($ValidateMediaOnly) {
+    [pscustomobject]@{
+        schema_version = 1
+        installer = (Resolve-Path -LiteralPath $CandidateInstaller).Path
+        release_media_valid = $true
+    } | ConvertTo-Json -Compress
+    return
+}
 
 function Get-FairyUninstallEntry {
     $registryPaths = @(
