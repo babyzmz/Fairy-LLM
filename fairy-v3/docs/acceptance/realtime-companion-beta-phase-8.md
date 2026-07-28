@@ -211,11 +211,30 @@ initialization, but does not substitute for sustained multimodal inference,
 physical audio/capture devices, a signed installer, a reference game workload,
 or a four-hour wall-clock session.
 
-The WSL sandbox attestation was not required in this run. Docker was explicitly
-disabled, so PostgreSQL/S3 recovery, capability Outbox, two-device sync, memory
-retrieval, document/evidence, and runtime Preview integration were not
-executed. Live paid GLM traffic was not run. The fixed MiniCPM-o 4.5 model
-weights and production CUDA runtime passed initialization, but production
+The initial complete repository sequence used `-SkipDocker` and did not require
+WSL. A supplemental platform run on 2026-07-29 then exercised both real
+boundaries:
+
+- `FairySandbox` WSL 2 attestation passed as executor
+  `wsl_fairy_sandbox` version `1.0.0`.
+- A real no-network structured Sandbox job completed and returned the expected
+  bounded stdout digest.
+- A projectless chat Workspace Runtime started a Node HTTP Preview inside WSL,
+  reached `running`, answered its readiness probe, and stopped cleanly.
+- The Rust static Preview recovery integration passed all 3 tests, including
+  duplicate starts, oversized request rejection, and explicit recovery after
+  worker loss.
+- Docker Desktop server `29.6.2` built the pinned Cloud images and ran the real
+  PostgreSQL/object-store integration profile. All 29 selected integration
+  tests passed in 12.84 seconds; 124 non-profile tests were deselected.
+- Compose removed every test container and network, Docker Desktop was stopped,
+  and the previously stopped `FairySandbox` distribution was returned to
+  `Stopped`.
+
+This closes the current-source WSL and Docker integration evidence gap. It does
+not replace a final rerun against the source and artifact hashes selected for
+public release. Live paid GLM traffic was not run. The fixed MiniCPM-o 4.5
+model weights and production CUDA runtime passed initialization, but production
 local inference and long-duration stability are not claimed.
 
 ## Existing test changes
