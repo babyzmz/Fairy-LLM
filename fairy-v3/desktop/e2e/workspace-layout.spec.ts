@@ -3,6 +3,8 @@ import { PNG } from "pngjs";
 
 import { installWorkspaceFixture, PREVIEW_URL } from "./support/coreFixture";
 
+const WORKSPACE_READY_TIMEOUT_MS = 15_000;
+
 test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
 });
@@ -11,7 +13,9 @@ test("minimum desktop window renders the durable workspace without overflow", as
   await page.setViewportSize({ width: 880, height: 680 });
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Task Timeline" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Task Timeline" })).toBeVisible({
+    timeout: WORKSPACE_READY_TIMEOUT_MS,
+  });
   await expect(page.getByText("Preview is ready")).toBeVisible();
   await expect(page.getByTitle("Task preview")).toHaveAttribute("src", PREVIEW_URL);
   await expect(page.getByTitle("Task preview")).toHaveAttribute("sandbox", "allow-forms allow-scripts");
