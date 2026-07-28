@@ -47,9 +47,9 @@ All commands ran from their owning project directories.
 
 - Omni source-lock tests passed for the pinned upstream revision
   `74699a53df6ca0f4947ff37066f851532c20b12d`.
-- All three digest-locked patches applied cleanly. The combined patch-set
+- All five digest-locked patches applied cleanly. The combined patch-set
   digest was
-  `72b89b34a81b2a49abb5079bd411fc6676650e750873e2ec51cb796f49a597bd`.
+  `b2a095f49fb5d48c587505673b0549a50ee6bd4717066c7a9e562eb5c031d29a`.
 - Omni backend boundary checks passed.
 - The contract runtime built successfully. CTest passed 2/2 and the strict
   control/media process integration suite passed.

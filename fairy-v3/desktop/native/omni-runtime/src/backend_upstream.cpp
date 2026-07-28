@@ -4,8 +4,17 @@
 #include "omni.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <iostream>
 #include <limits>
+#include <string>
 #include <system_error>
+
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 #if defined(FAIRY_OMNI_PRODUCTION_CUDA) && !defined(GGML_USE_CUDA)
 #error "The production-cuda profile must compile the pinned upstream with CUDA."
@@ -13,6 +22,90 @@
 
 namespace fairy::omni {
 namespace {
+
+int stream_descriptor(std::FILE *stream) {
+#ifdef _WIN32
+    return _fileno(stream);
+#else
+    return fileno(stream);
+#endif
+}
+
+int duplicate_descriptor(const int descriptor) {
+#ifdef _WIN32
+    return _dup(descriptor);
+#else
+    return dup(descriptor);
+#endif
+}
+
+int replace_descriptor(const int source, const int destination) {
+#ifdef _WIN32
+    return _dup2(source, destination);
+#else
+    return dup2(source, destination) < 0 ? -1 : 0;
+#endif
+}
+
+void close_descriptor(const int descriptor) {
+#ifdef _WIN32
+    static_cast<void>(_close(descriptor));
+#else
+    static_cast<void>(close(descriptor));
+#endif
+}
+
+class ScopedUpstreamDiagnosticRedirect final {
+  public:
+    ScopedUpstreamDiagnosticRedirect() {
+        std::cout.flush();
+        std::cerr.flush();
+        std::fflush(stdout);
+        std::fflush(stderr);
+        const auto output = stream_descriptor(stdout);
+        const auto diagnostics = stream_descriptor(stderr);
+        saved_output_ = duplicate_descriptor(output);
+        if (saved_output_ < 0) {
+            return;
+        }
+        if (replace_descriptor(diagnostics, output) != 0) {
+            close_descriptor(saved_output_);
+            saved_output_ = -1;
+            return;
+        }
+        active_ = true;
+    }
+
+    ScopedUpstreamDiagnosticRedirect(const ScopedUpstreamDiagnosticRedirect &) = delete;
+    ScopedUpstreamDiagnosticRedirect &operator=(const ScopedUpstreamDiagnosticRedirect &) = delete;
+
+    ~ScopedUpstreamDiagnosticRedirect() {
+        if (!active_) {
+            return;
+        }
+        std::cout.flush();
+        std::fflush(stdout);
+        static_cast<void>(replace_descriptor(saved_output_, stream_descriptor(stdout)));
+        close_descriptor(saved_output_);
+    }
+
+    [[nodiscard]] bool active() const {
+        return active_;
+    }
+
+  private:
+    int saved_output_ = -1;
+    bool active_ = false;
+};
+
+std::string utf8_path(const std::filesystem::path &path) {
+#ifdef _WIN32
+    const auto value = path.u8string();
+    return {reinterpret_cast<const char *>(value.data()), value.size()};
+#else
+    return path.string();
+#endif
+}
 
 bool regular_model_file(const std::filesystem::path &path) {
     std::error_code error;
@@ -83,9 +176,9 @@ class UpstreamBackend final : public Backend {
 
         params_ = common_params{};
         params_.offline = true;
-        params_.model.path = paths.llm.string();
-        params_.vpm_model = paths.vision.string();
-        params_.apm_model = paths.audio.string();
+        params_.model.path = utf8_path(paths.llm);
+        params_.vpm_model = utf8_path(paths.vision);
+        params_.apm_model = utf8_path(paths.audio);
         params_.tts_model.clear();
         params_.tts_bin_dir.clear();
         params_.save_logits = false;
@@ -97,6 +190,10 @@ class UpstreamBackend final : public Backend {
         params_.mmproj_use_gpu = false;
 #endif
 
+        ScopedUpstreamDiagnosticRedirect diagnostics;
+        if (!diagnostics.active()) {
+            return {true, cuda_compiled(), false, "diagnostic_redirect_failed"};
+        }
         context_ = omni_init(
             &params_,
             2,

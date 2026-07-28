@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fairy <fairy@local>
+Date: Tue, 28 Jul 2026 17:00:00 +1000
+Subject: [PATCH 4/4] fairy: open model tensors from UTF-8 Windows paths
+
+---
+ tools/omni/audition.cpp | 3 ++-
+ tools/omni/vision.cpp   | 3 ++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/tools/omni/audition.cpp b/tools/omni/audition.cpp
+index bed8a59..eecb2da 100644
+--- a/tools/omni/audition.cpp
++++ b/tools/omni/audition.cpp
+@@ -13,6 +13,7 @@
+ #include <cmath>
+ #include <cstdlib>
+ #include <cstring>
++#include <filesystem>
+ #include <fstream>
+ #include <map>
+ #include <regex>
+@@ -1149,7 +1150,7 @@ struct audition_model_loader {
+         {
+             std::vector<uint8_t> read_buf;
+ 
+-            auto fin = std::ifstream(fname, std::ios::binary);
++            auto fin = std::ifstream(std::filesystem::u8path(fname), std::ios::binary);
+             if (!fin) {
+                 throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
+             }
+diff --git a/tools/omni/vision.cpp b/tools/omni/vision.cpp
+index 9c727b0..3d91b43 100644
+--- a/tools/omni/vision.cpp
++++ b/tools/omni/vision.cpp
+@@ -16,6 +16,7 @@
+ #include <cmath>
+ #include <cstdlib>
+ #include <cstring>
++#include <filesystem>
+ #include <fstream>
+ #include <map>
+ #include <regex>
+@@ -1475,7 +1476,7 @@ struct vision_model_loader {
+         {
+             std::vector<uint8_t> read_buf;
+ 
+-            auto fin = std::ifstream(fname, std::ios::binary);
++            auto fin = std::ifstream(std::filesystem::u8path(fname), std::ios::binary);
+             if (!fin) {
+                 throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
+             }
+-- 
+2.50.1.windows.1

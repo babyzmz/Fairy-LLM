@@ -31,11 +31,14 @@ Phase 2 locks the source and development toolchain in
 `desktop/native/omni-runtime/upstream.lock.json`. The source checkout is always
 detached at the revision above, and the ordered patch-set digest is calculated
 as SHA-256 over each UTF-8 repository-relative patch path, a NUL byte, the raw
-patch bytes, and a trailing NUL byte. The reviewed three-patch Fairy set has
+patch bytes, and a trailing NUL byte. The reviewed five-patch Fairy set has
 digest
-`72b89b34a81b2a49abb5079bd411fc6676650e750873e2ec51cb796f49a597bd`.
+`b2a095f49fb5d48c587505673b0549a50ee6bd4717066c7a9e562eb5c031d29a`.
 It adds memory-backed duplex media, disables upstream filesystem/TTS output for
-the embedded runtime, and fails closed when a decision exceeds its byte bound.
+the embedded runtime, fails closed when a decision exceeds its byte bound, and
+opens secondary audio/vision tensor streams from UTF-8 Windows paths. All
+embedded-runtime diagnostics, including background thread output, are routed
+to stderr so stdout remains reserved for bounded control frames.
 Verification always applies the ordered patch set to a fresh local clone of the
 exact revision before any upstream profile is configured.
 

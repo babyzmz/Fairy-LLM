@@ -8,7 +8,7 @@
   },
   "patch_set": {
     "digest_algorithm": "sha256-path-nul-content-nul-v1",
-    "digest": "72b89b34a81b2a49abb5079bd411fc6676650e750873e2ec51cb796f49a597bd",
+    "digest": "b2a095f49fb5d48c587505673b0549a50ee6bd4717066c7a9e562eb5c031d29a",
     "patches": [
       {
         "path": "patches/0001-memory-backed-duplex-media.patch",
@@ -21,6 +21,14 @@
       {
         "path": "patches/0003-bounded-decision-result.patch",
         "sha256": "868503960e68a4ac3c0a8c3dedd09ccd0f69af16fdbc195a3438bdd296ca8309"
+      },
+      {
+        "path": "patches/0004-windows-utf8-model-paths.patch",
+        "sha256": "1f694169787475bb0bffe8ffb2141b48d922127ddf20668e946a00e3c84994fb"
+      },
+      {
+        "path": "patches/0005-upstream-diagnostics-to-stderr.patch",
+        "sha256": "40fec2db45689c08200dd22a7f950e20cb0bf9e2e1bf40dde6414e9edf91a52a"
       }
     ]
   },

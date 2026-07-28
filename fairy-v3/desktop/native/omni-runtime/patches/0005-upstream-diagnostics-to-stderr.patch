@@ -1,0 +1,68 @@
+diff --git a/tools/omni/omni.cpp b/tools/omni/omni.cpp
+index e517bc4..c82e6cf 100644
+--- a/tools/omni/omni.cpp
++++ b/tools/omni/omni.cpp
+@@ -3982,13 +3982,14 @@ void print_with_timestamp(const char* format, ...)
+ #else
+     localtime_r(&in_time_t, &buf);
+ #endif
+-    std::cout << std::put_time(&buf, "%H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << ms.count() << " ";
++    std::cerr << std::put_time(&buf, "%H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << ms.count() << " ";
+     
+     // 打印格式化字符串
+     va_list args;
+     va_start(args, format);
+-    vprintf(format, args);
++    vfprintf(stderr, format, args);
+     va_end(args);
++    fflush(stderr);
+ }
+ 
+ static struct llama_model * llama_init(common_params * params, std::string model_path) {
+@@ -4918,13 +4919,13 @@ static void process_audio(struct omni_context * ctx_omni, struct omni_embed * em
+ 
+ void eval_prefix(struct omni_context* ctx_omni, common_params* params){
+     std::string prefix = "<|im_start|>user\n";
+-    std::cout << "prefix : " << prefix << std::endl;
++    std::cerr << "prefix : " << prefix << std::endl;
+     eval_string(ctx_omni, params, prefix.c_str(), params->n_batch, &ctx_omni->n_past, false);
+ }
+ 
+ void eval_prefix_with_hidden(struct omni_context* ctx_omni, common_params* params, float *& hidden_states){
+     std::string prefix = "<|im_start|>user\n";
+-    std::cout << "prefix : " << prefix << std::endl;
++    std::cerr << "prefix : " << prefix << std::endl;
+     eval_string_with_hidden(ctx_omni, params, prefix.c_str(), params->n_batch, &ctx_omni->n_past, false, hidden_states);
+ }
+ 
+@@ -8085,7 +8086,7 @@ void tts_thread_func(struct omni_context * ctx_omni, common_params *params) {
+         
+         if (ctx_omni->speek_done) {
+             // 可能是外部强行打断了，清除内部所有状态
+-            printf("speek done setted by outside, clear all internal states\n");
++            fprintf(stderr, "speek done setted by outside, clear all internal states\n");
+             tts_finish = true;
+             // Reset TTS model state by clearing KV cache
+             // Note: This might need llama_kv_cache_clear or similar function
+@@ -8228,7 +8229,7 @@ void tts_thread_func(struct omni_context * ctx_omni, common_params *params) {
+             tts_n_past = 0;  // Reset TTS model state
+             audio_tokens.clear();
+             all_audio_tokens.clear();  // Clear for next round
+-            printf("\ntts finished\n");
++            fprintf(stderr, "\ntts finished\n");
+ 
+             ctx_omni->speek_done = true;
+             ctx_omni->warmup_done = true;  // 第一轮对话结束，后续 prefill 需要等待
+diff --git a/tools/omni/vision.cpp b/tools/omni/vision.cpp
+index 3d91b43..8ce285b 100644
+--- a/tools/omni/vision.cpp
++++ b/tools/omni/vision.cpp
+@@ -2645,7 +2645,7 @@ static bool vision_image_encode_coreml(float * pixel_values, int32_t * position_
+         }
+         coremlEncoder = omni_coreml_loadModel(coreml_model_path);
+         if (!coremlEncoder) {
+-            printf("Failed to load CoreML model from: %s\n", coreml_model_path ? coreml_model_path : "null");
++            fprintf(stderr, "Failed to load CoreML model from: %s\n", coreml_model_path ? coreml_model_path : "null");
+             return false;
+         }
+         cached_model_path = coreml_model_path ? coreml_model_path : "";
