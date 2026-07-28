@@ -255,10 +255,6 @@ try {
     $startInfo.FileName = (Resolve-Path -LiteralPath $Executable).Path
     $startInfo.WorkingDirectory = Split-Path -Parent $startInfo.FileName
     $startInfo.UseShellExecute = $false
-    $startInfo.Environment["LOCALAPPDATA"] = $localAppData
-    $startInfo.Environment["APPDATA"] = $appData
-    $startInfo.Environment["FAIRY_DESKTOP_DATA_DIR"] = $fairyData
-    $startInfo.Environment["WEBVIEW2_USER_DATA_FOLDER"] = $webViewData
     $webViewArguments = @()
     if (-not $SkipRendererProbe) {
         $webViewArguments += "--remote-debugging-port=$port"
@@ -268,10 +264,39 @@ try {
     } elseif ($GpuPreference -eq "high_performance") {
         $webViewArguments += "--force_high_performance_gpu"
     }
-    if ($webViewArguments.Count -gt 0) {
-        $startInfo.Environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = $webViewArguments -join " "
+    $childEnvironment = [ordered]@{
+        LOCALAPPDATA = $localAppData
+        APPDATA = $appData
+        FAIRY_DESKTOP_DATA_DIR = $fairyData
+        WEBVIEW2_USER_DATA_FOLDER = $webViewData
     }
-    $process = [System.Diagnostics.Process]::Start($startInfo)
+    if ($webViewArguments.Count -gt 0) {
+        $childEnvironment.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $webViewArguments -join " "
+    }
+    $previousChildEnvironment = @{}
+    try {
+        foreach ($entry in $childEnvironment.GetEnumerator()) {
+            $previousChildEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable(
+                $entry.Key,
+                [EnvironmentVariableTarget]::Process
+            )
+            [Environment]::SetEnvironmentVariable(
+                $entry.Key,
+                [string]$entry.Value,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+        $process = [System.Diagnostics.Process]::Start($startInfo)
+    }
+    finally {
+        foreach ($entry in $previousChildEnvironment.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable(
+                $entry.Key,
+                $entry.Value,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+    }
     if ($null -eq $process) { throw "Fairy process did not start" }
 
     if ($KeepPresenceActive) {

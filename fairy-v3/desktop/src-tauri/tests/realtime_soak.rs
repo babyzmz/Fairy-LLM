@@ -259,6 +259,17 @@ fn wall_clock_gate_is_strict_and_records_only_sanitized_fields() {
     assert!(!probe.contains("raw_media"));
 }
 
+#[test]
+fn native_presence_soak_avoids_case_colliding_process_environment_maps() {
+    let harness = include_str!("../../../scripts/test-presence-soak.ps1");
+
+    assert!(harness.contains("$childEnvironment = [ordered]@{"));
+    assert!(harness.contains("$previousChildEnvironment = @{}"));
+    assert!(harness.contains("[EnvironmentVariableTarget]::Process"));
+    assert!(!harness.contains("$startInfo.Environment["));
+    assert!(!harness.contains("$startInfo.EnvironmentVariables["));
+}
+
 fn drive_resource_governor() -> Vec<RealtimeResourceLevel> {
     let mut governor = RealtimeResourceGovernor::new(0);
     let mut levels = vec![governor.snapshot().policy.level];
