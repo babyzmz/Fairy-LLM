@@ -32,10 +32,27 @@ $startInfo.CreateNoWindow = $true
 $startInfo.RedirectStandardInput = $true
 $startInfo.RedirectStandardOutput = $true
 $startInfo.RedirectStandardError = $true
-$startInfo.Environment["FAIRY_V3_DATA_DIR"] = $dataDir
-$startInfo.Environment["FAIRY_LOCAL_WORKER_PROGRAM"] = $DesktopProgram
-$startInfo.Environment["FAIRY_LOCAL_WORKER_ARGS_JSON"] = '["--local-worker"]'
-$startInfo.Environment["FAIRY_GIT_PROGRAM"] = $gitProgram
+
+# Windows PowerShell 5.1 can receive duplicate case variants such as Path/PATH
+# from a parent process. Accessing ProcessStartInfo.Environment* then tries to
+# collapse the inherited block into a case-insensitive dictionary and fails.
+# Scope the four composition overrides to this process instead and restore them
+# after the child exits.
+$environmentOverrides = [ordered]@{
+    FAIRY_V3_DATA_DIR = $dataDir
+    FAIRY_LOCAL_WORKER_PROGRAM = $DesktopProgram
+    FAIRY_LOCAL_WORKER_ARGS_JSON = '["--local-worker"]'
+    FAIRY_GIT_PROGRAM = $gitProgram
+}
+$previousEnvironment = @{}
+foreach ($name in $environmentOverrides.Keys) {
+    $previousEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, [System.EnvironmentVariableTarget]::Process)
+    [System.Environment]::SetEnvironmentVariable(
+        $name,
+        $environmentOverrides[$name],
+        [System.EnvironmentVariableTarget]::Process
+    )
+}
 
 $process = [System.Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
@@ -87,5 +104,12 @@ finally {
         $process.WaitForExit()
     }
     $process.Dispose()
+    foreach ($name in $environmentOverrides.Keys) {
+        [System.Environment]::SetEnvironmentVariable(
+            $name,
+            $previousEnvironment[$name],
+            [System.EnvironmentVariableTarget]::Process
+        )
+    }
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
 }
