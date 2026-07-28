@@ -11,22 +11,23 @@ release gate.
 
 Fairy Realtime Companion Beta is **not approved for public release** from this
 machine. A pinned, portable CUDA toolchain now builds the production Omni
-runtime, and the production Tauri composition produced one MSI plus eight
-external cabinets and an exact media manifest. Windows Installer ICE
-validation could not run because the Windows Installer service is inaccessible
-in the current Codex environment; the retained candidate was linked with ICE
-suppressed only for internal inspection. It is unsigned and is therefore not a
-release candidate. Install, upgrade, uninstall, signature verification, the
-mandatory four-hour production-model soak, native WebView2 recovery evidence,
-and reference-device performance/privacy evidence remain absent.
+runtime, and the current production Tauri composition produced one MSI plus
+seven external cabinets and an exact media manifest. The exact MSI passed WiX
+ICE validation without suppression, strict bundle inspection, Windows Defender
+scanning, and bounded native launch inspection. It remains unsigned. A real
+per-machine installation attempt reached `InstallFinalize` but Windows
+Installer rejected the non-administrator token with Error 1925 and rolled the
+transaction back. Install, upgrade, uninstall, signature verification, the
+mandatory four-hour production-model soak, broader native WebView2 recovery
+evidence, and reference-device performance/privacy evidence therefore remain
+absent.
 
-After packaging, the pinned production model was downloaded through the
-governed model manager and a rebuilt CUDA runtime passed its real three-model
-initialization probe. The available RTX 5060 Ti remains correctly ineligible
-for Local Beta because DXGI reports about 15.67 GiB of physical dedicated
-memory, below the frozen 16 GiB product floor. This successful runtime probe
-does not change the public-release decision or make the earlier unsigned MSI a
-candidate for the newer source state.
+The pinned production model was downloaded through the governed model manager,
+and the exact Omni runtime packaged in the current MSI passed its real
+three-model CUDA initialization probe. The available RTX 5060 Ti remains
+correctly ineligible for Local Beta because DXGI reports about 15.67 GiB of
+physical dedicated memory, below the frozen 16 GiB product floor. These
+successful candidate checks do not change the public-release decision.
 
 This record certifies the Phase 8 implementation and its rejection behavior. It
 does not convert missing physical or release-candidate evidence into a pass.
@@ -62,7 +63,7 @@ The final repository gate
 - Release disclosures, bundle policy, release-gate fixtures, Omni runtime
   policy fixtures, and Voice license fixtures passed.
 - Sandbox tests passed 49 tests with one existing platform skip.
-- Core passed 869 tests in 509.33 seconds; locked Ruff check and format passed.
+- Core passed 869 tests in 555.92 seconds; locked Ruff check and format passed.
 - Capabilities passed 118 tests.
 - Cloud unit tests passed 123 tests with one existing skip and 29
   PostgreSQL-backed integration tests deselected.
@@ -73,18 +74,27 @@ The final repository gate
 - The deterministic four-hour-equivalent Realtime soak passed. It remains a
   state-machine regression gate and is not the required four-hour wall-clock
   production-model soak.
-- The bundled Core executable was rebuilt, probed, and hashed as
-  `c31fd63d5ed2315d31c4aea4d502f96701f6d35712b62cba09b978f2acb0106f`.
+- The repository gate rebuilt and probed a fresh bundled Core executable,
+  hashing it as
+  `d85cf55aa78018aa335d5730daa161e152a5d700aec12e3096318ee52c8380fe`.
+  This gate output is distinct from the executable in the retained MSI,
+  whose exact candidate hash is recorded below.
 - Pinned MinGit `2.55.0.windows.2` was composed and probed with the Core and
   Rust worker.
 - Complete Vitest passed 98 files / 530 tests. The known jsdom Canvas warning
   did not skip or fail a test.
 - Complete Playwright passed 79 tests in one controlled Vite lifecycle. The
   performance project completed in about 1.2 seconds.
-- TypeScript and the production Vite build passed. Core readiness was
-  1,590 ms against a 3,000 ms budget; initial renderer gzip was 733.7 KiB
+- TypeScript and the production Vite build passed. A final isolated rerun of
+  the terminal performance gate measured Core readiness at 1,846.0 ms against
+  a 3,000 ms budget; initial renderer gzip was 733.7 KiB
   against an 800 KiB budget.
 - Generated contracts were unchanged, and `git diff --check` passed.
+
+The Rust workspace portion used `CARGO_BUILD_JOBS=1` after the first parallel
+attempt encountered Windows error 1455 while unrelated user applications were
+using substantial memory. The serial rerun passed the same tests and warnings
+policy without reducing coverage.
 
 Release-gate fixtures cover a passing candidate plus blocked, missing,
 malformed, unknown-field, path-traversal, digest, stale-evidence, threshold,
@@ -100,42 +110,61 @@ CUDA cache:
 
 - Core production sidecar build and probe passed. The packaged executable
   SHA-256 is
-  `c31fd63d5ed2315d31c4aea4d502f96701f6d35712b62cba09b978f2acb0106f`.
+  `48e0925c54b695b4a2c11bc91145df6f8dc1f7f99372e7fdefece0b4664cb403`.
 - Voice production runtime rebuilt successfully. Its packaged executable
   SHA-256 is
-  `0c9d19fce7f66918a3ad05b470b58ee96d946647c5d531b2a08bf8e001286331`.
+  `4778e2e6f60d40eba190fa14436df100f56635dd44e65afb9c5b68081eadcc1d`.
+  Staging removed all 17 generated Python cache directories while retaining
+  only the three exact, hash-pinned governed Fairy voice assets.
 - The pinned portable toolchain used CUDA 13.0.3, nvcc 13.0.88, Ninja
   1.13.2, and cuBLAS 13.1.1.3. The production Omni runtime passed strict
   staging with exactly four manifest components and no model weights.
 - The packaged Omni executable SHA-256 is
-  `187a1e705a014a503a108c23175018e8d951ba3515a7959ba72763b1ec67b307`.
+  `7dc65e7aab9b04ceb1f898d7932aebc5aed73378ac61f2f7ed30494a67a9d110`.
   The two packaged CUDA redistributables match the staging manifest:
   `cublas64_13.dll` hashes to
   `b787fada026a2cfe3eb07fe6f15b73b7a2aec6083a3cbc9584eb006737b980d6`
   and `cublasLt64_13.dll` hashes to
   `5d9ef9e66b68713f2b2a9cd6f0219f20f458e5d36e893fe34fe483bbcd68a744`.
-- The optimized Tauri application and all eight split cabinets were generated.
-  WiX then reached database validation and failed with `LGHT0217`/`LGHT0216`
-  because ICE01 through ICE09 could not access the Windows Installer service.
-- Re-linking the already generated cabinets with `-sval -reusecab` produced an
-  internal inspection candidate. This bypass is recorded as a blocker and
-  cannot satisfy the release gate.
-- The schema-v2 media manifest contains exactly nine files totaling
-  4,217,563,062 bytes. The MSI is 2,058,763 bytes with SHA-256
-  `ffb9dc81e5543e056bc07ef6cdc1d955d6c81c1ce961737df93cdff08adb70d6`;
+- The optimized Tauri application and all seven split cabinets were generated.
+  WiX `candle` and `light` completed with database validation enabled; the
+  candidate passed the actual ICE validation sequence without `-sval`.
+- The schema-v2 media manifest contains exactly eight files totaling
+  4,218,051,160 bytes. The MSI is 2,039,172 bytes with SHA-256
+  `1df7519fe1480f0f3e8e9af7d097ff4456bdbb9e4913f3fece14255b7695fdd2b`;
   each external cabinet is below the 2 GiB WiX limit.
 - The real media set passed strict manifest inventory, size, and SHA-256
   validation. Windows Defender command-line scanning with remediation disabled
   reported no threats.
-- Authenticode inspection reports both `fairy.exe` and the internal MSI as
-  `NotSigned`.
+- The raw release `fairy.exe` hashes to
+  `5645c201aebc1ceb2136fc0dd69f74d5f3c882040156af73421858c958b950fd`;
+  the MSI payload hashes to
+  `a6a6c155909ba3e2e21cbeb238ba5e8f7ea6f6b47eeb4ce1885fe3e3488ee636`
+  after Tauri applies its installer bundle-type patch.
+- Authenticode inspection reports both the application and MSI as `NotSigned`.
 
 The MSI was also decompiled into an isolated package image for bounded native
-inspection. The reconstructed image contained 8,053 files and the packaged
-`fairy.exe` created a real main window. This proves that the media contains a
-launchable native layout; it is not an MSI install, upgrade, uninstall, ICE,
-or signing pass. A raw `target/release/fairy.exe` without the packaged resource
-layout is intentionally not a valid native acceptance target.
+inspection. All 7,984 declared files were extracted and mechanically
+reconstructed, and the resulting image passed the strict real-bundle policy.
+The exact packaged `fairy.exe` created one real WebView2 main window, rendered
+`CORE READY`, created no independent Settings WebView, and showed no Voice
+worker preheat before being closed cleanly. This proves that the media contains
+a launchable native layout; it is not an installed cold-start, upgrade,
+uninstall, or signing pass. A raw `target/release/fairy.exe` without the
+packaged resource layout is intentionally not a valid native acceptance target.
+
+The exact per-machine MSI was then invoked through Windows Installer. It
+reached `InstallFinalize`, failed with Error 1925 because the current Codex
+process has no administrator token, and fully rolled back without leaving a
+Fairy registration or installation directory. An administrative-image attempt
+was blocked by the same environment at installer transaction finalization.
+This is an explicit privilege blocker, not installation evidence.
+
+Three post-composition changes harden the PowerShell release probes and bound a
+desktop readiness wait under host load. They do not change the staged Fairy,
+Core, Voice, or Omni product payload recorded here. A public candidate must
+nevertheless be recomposed, signed, and reverified from the final source after
+all remaining physical and installer gates can be executed.
 
 ## Post-packaging production Omni evidence
 
@@ -148,7 +177,7 @@ three-file MiniCPM-o 4.5 set:
 - runtime patch-set digest:
   `b2a095f49fb5d48c587505673b0549a50ee6bd4717066c7a9e562eb5c031d29a`;
 - rebuilt staged runtime SHA-256:
-  `76cb3d85c9a659b51824b93bb9bc444e15f91d0004b17950d31a9e769dd49b4f`.
+  `7dc65e7aab9b04ceb1f898d7932aebc5aed73378ac61f2f7ed30494a67a9d110`.
 
 The live Rust gate rehashed the installed files, verified the stored manifest,
 launched the staged production-CUDA runtime from the Unicode workspace path,
@@ -165,10 +194,11 @@ was not: the capability reason remained `vram_below16gb`. This is the intended
 fail-closed result and means the machine cannot supply the mandatory supported
 16 GiB+ soak evidence.
 
-The source change that fixed stdout protocol isolation and UTF-8 audio/vision
-tensor paths postdates the internal MSI. Therefore its executable hash above
-does not match the packaged Omni hash in the preceding section, and a new
-production composition is required before any exact-candidate release gate.
+The exact hash above is the Omni executable contained in the current MSI
+payload. Its isolated three-model CUDA self-test exited zero, emitted exactly
+one protocol record on stdout, and reported `backend_ready=true`,
+`model_probe=ready`, `cuda_compiled=true`, and
+`build_profile=production-cuda`.
 
 ## Mocked, deterministic, and real boundaries
 
@@ -192,22 +222,24 @@ local inference and long-duration stability are not claimed.
 
 `scripts/test-all.ps1` now runs the Phase 8 release disclosures, bundle,
 runtime-policy, license, and release-gate fixtures as part of the normal full
-repository verification sequence. Existing assertions were not weakened.
-Production build scripts were changed only to enforce model exclusion and
-license retention; their failure conditions remain strict.
+repository verification sequence. Core sidecar and composition probes now use
+bounded child-process lifecycles, restore the caller's console encoding, parse
+exactly one UTF-8 JSON response, and fail closed on missing fields. The desktop
+minimum-window readiness wait is explicitly bounded at 15 seconds so host load
+does not inherit Playwright's unrelated 5-second locator default. Existing
+assertions were not weakened. Production build scripts continue to enforce
+model exclusion and license retention; their failure conditions remain strict.
 
 ## Gates required before public Beta release
 
 All of the following remain blocked and must be rerun against one exact
 candidate:
 
-- rerun WiX with the Windows Installer service available and pass all ICE
-  validation against the exact MSI and cabinet set;
-- install, cold-start, upgrade, uninstall, and verify user-data preservation;
+- install with an administrator token, cold-start the installed application,
+  upgrade from a supported prior baseline, uninstall, and verify user-data
+  preservation;
 - sign the complete candidate, verify every signature, and pass malware
   scanning again after signing;
-- rebuild the exact MSI/cabinet candidate from the current source and verified
-  Omni runtime without bundling the downloaded model weights;
 - complete a four-hour wall-clock local MiniCPM session on a supported NVIDIA
   16 GiB+ reference device, including capture, audio, Voice, pause/resume,
   window switches, context rotations, recovery, quarantine, and cleanup;
