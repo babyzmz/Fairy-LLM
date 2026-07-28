@@ -32,6 +32,55 @@ successful candidate checks do not change the public-release decision.
 This record certifies the Phase 8 implementation and its rejection behavior. It
 does not convert missing physical or release-candidate evidence into a pass.
 
+## Native automation input ownership acceptance contract
+
+Status: **PENDING IMPLEMENTATION AND VERIFICATION**
+
+Native Presence regression, active cursor-retaining soak, and benchmark
+automation must not compete with a person using the Windows desktop:
+
+- Input automation may acquire ownership only after at least five continuous
+  seconds of system input idle time. Callers may raise the threshold through a
+  bounded 5–60 second parameter but cannot disable or lower it.
+- After acquisition, a changed last-input tick, cursor position, or unexpected
+  foreground process stops the run immediately with
+  `PRESENCE_USER_INPUT_COMPETITION`. An unreadable Windows observation stops
+  the run with `PRESENCE_INPUT_GUARD_UNAVAILABLE`.
+- The guard owns only an in-memory baseline of input tick, cursor position, and
+  foreground handle for one script process. It may adopt a foreground
+  transition only when the window belongs to the exact Fairy process launched
+  by that probe.
+- Native startup waits, focus, cursor holds, clicks, and drag steps require the
+  shared guard. Active soak cursor placement uses the same guard. A read-only
+  soak without `-KeepPresenceActive` does not claim input ownership.
+- Competition is fail-closed: automation does not wait, retry, reclaim focus,
+  overwrite the person's next pointer move, or average a partial benchmark.
+  `-KeepRunning` is permitted only after the complete guarded native probe
+  succeeds.
+- Cleanup remains unconditional after a blocked or failed run: an outstanding
+  synthetic mouse-down is released, owned child processes stop, contained
+  scratch state is removed, and temporary GPU preference changes are restored.
+- Diagnostics may contain only a stable code, bounded reason, threshold, and
+  phase. Coordinates, handles, titles, key values, typed content, screenshots,
+  captions, and process command lines are forbidden.
+
+Acceptance evidence must include deterministic synthetic-observation tests for
+the 4,999/5,000 millisecond boundary, configuration bounds, unchanged state,
+input-tick drift, cursor drift, foreground isolation, exact Fairy-process
+adoption, post-action baseline updates, observer failure, unsigned tick wrap,
+and diagnostic privacy. PowerShell AST checks must prove that executable native
+and active-soak input sites use the shared guard, that the benchmark forwards
+the threshold, and that `KeepRunning` is success-only.
+
+Those tests mock the observation stream and therefore do not prove Windows
+focus, hit testing, pointer injection, or cleanup in a real WebView2 runtime.
+One guarded native smoke may provide supplemental evidence only when the
+desktop already meets the idle threshold. A competition result is a safe block,
+not a pass, and must not be retried automatically. Real native evidence remains
+separate from the Phase 8 proposal, pressure, crash, quarantine, reload,
+privacy, supported-GPU four-hour, installer, signing, and reference-performance
+gates.
+
 ## Release contract and disclosures
 
 - The supported Windows artifact is MSI with external cabinet files. The
