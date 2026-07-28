@@ -34,7 +34,8 @@ does not convert missing physical or release-candidate evidence into a pass.
 
 ## Native automation input ownership acceptance contract
 
-Status: **PENDING IMPLEMENTATION AND VERIFICATION**
+Status: **IMPLEMENTED; DETERMINISTIC CERTIFICATION PASSED; NATIVE SMOKE
+SAFELY BLOCKED**
 
 Native Presence regression, active cursor-retaining soak, and benchmark
 automation must not compete with a person using the Windows desktop:
@@ -80,6 +81,31 @@ not a pass, and must not be retried automatically. Real native evidence remains
 separate from the Phase 8 proposal, pressure, crash, quarantine, reload,
 privacy, supported-GPU four-hour, installer, signing, and reference-performance
 gates.
+
+### Input ownership guard evidence — 2026-07-29
+
+- Deterministic certification: **PASS**. Native regression, active soak, and
+  benchmark automation share a mandatory input guard with a five-second
+  minimum idle threshold.
+- Coverage: **PASS**. Synthetic and structural tests cover the 4,999/5,000
+  millisecond boundary, 5–60 second configuration bounds, acquisition state,
+  last-input tick, cursor drift, exact-process foreground ownership, observer
+  failure, unsigned tick wrap, post-action baseline updates, bounded
+  diagnostics, guarded input sites, benchmark threshold forwarding, isolated
+  sample cleanup, and success-only `KeepRunning`.
+- Complete non-Docker repository gate: **PASS** via
+  `scripts/test-all.ps1 -SkipDocker`. Core passed 869 tests, Capabilities
+  passed 118, Cloud passed 123 with its credential-bound PostgreSQL test
+  skipped, Vitest passed 98 files / 530 tests, and Playwright passed 79 tests.
+  Core readiness measured 1,789.1 ms against 3,000 ms and initial renderer
+  gzip measured 733.7 KiB against 800 KiB.
+- Guarded native smoke: **SAFELY BLOCKED** with
+  `PRESENCE_USER_INPUT_COMPETITION` at `before_vite_start` after cursor
+  competition was detected. It was not retried, no Fairy or Vite process was
+  launched, and no native scratch profile remained.
+- Scope: this certification does not convert any missing installer, signing,
+  supported-GPU four-hour, native recovery/privacy, or reference-performance
+  evidence to passed.
 
 ## Release contract and disclosures
 
@@ -312,6 +338,15 @@ minimum-window readiness wait is explicitly bounded at 15 seconds so host load
 does not inherit Playwright's unrelated 5-second locator default. Existing
 assertions were not weakened. Production build scripts continue to enforce
 model exclusion and license retention; their failure conditions remain strict.
+
+The input ownership work added
+`scripts/test-presence-input-ownership-guard.ps1` and registered it in
+`scripts/test-all.ps1`. It changed the existing native, soak, and benchmark
+scripts only to fail closed on competing input, make `KeepRunning`
+success-only, isolate benchmark samples, and preserve unconditional cleanup.
+The soak's existing cursor calls were replaced by guarded calls; benchmark
+errors that represent guard failure now propagate instead of becoming partial
+results. No existing product assertion or release threshold was weakened.
 
 ## Gates required before public Beta release
 
