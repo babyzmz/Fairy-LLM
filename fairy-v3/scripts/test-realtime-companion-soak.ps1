@@ -131,11 +131,39 @@ try {
     $startInfo.FileName = $resolvedExecutable
     $startInfo.WorkingDirectory = Split-Path -Parent $resolvedExecutable
     $startInfo.UseShellExecute = $false
-    $startInfo.Environment["FAIRY_DESKTOP_DATA_DIR"] = $resolvedDataDirectory
-    $startInfo.Environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
-        "--remote-debugging-port=$port"
-    )
-    $process = [System.Diagnostics.Process]::Start($startInfo)
+    # Windows PowerShell 5.1 can inherit both Path and PATH from Codex. Reading
+    # ProcessStartInfo.Environment* then collapses that block into a
+    # case-insensitive dictionary and throws before the soak can start. Scope
+    # only the two child overrides to this process and restore them immediately
+    # after Process.Start captures the inherited environment.
+    $childEnvironment = [ordered]@{
+        FAIRY_DESKTOP_DATA_DIR = $resolvedDataDirectory
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
+    }
+    $previousChildEnvironment = @{}
+    try {
+        foreach ($entry in $childEnvironment.GetEnumerator()) {
+            $previousChildEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable(
+                $entry.Key,
+                [EnvironmentVariableTarget]::Process
+            )
+            [Environment]::SetEnvironmentVariable(
+                $entry.Key,
+                [string]$entry.Value,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+        $process = [System.Diagnostics.Process]::Start($startInfo)
+    }
+    finally {
+        foreach ($entry in $previousChildEnvironment.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable(
+                $entry.Key,
+                $entry.Value,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+    }
     if ($null -eq $process) {
         throw "Fairy did not start."
     }

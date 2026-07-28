@@ -241,6 +241,11 @@ fn wall_clock_gate_is_strict_and_records_only_sanitized_fields() {
     assert!(harness.contains("ConfirmDataDirectory"));
     assert!(harness.contains("Stop-ProcessTree"));
     assert!(harness.contains("process_cleanup_confirmed"));
+    assert!(harness.contains("$childEnvironment = [ordered]@{"));
+    assert!(harness.contains("$previousChildEnvironment = @{}"));
+    assert!(harness.contains("[EnvironmentVariableTarget]::Process"));
+    assert!(!harness.contains("$startInfo.Environment["));
+    assert!(!harness.contains("$startInfo.EnvironmentVariables["));
     assert!(probe.contains("const REPORT_KEYS"));
     assert!(probe.contains("\"observed_duration_seconds\""));
     assert!(probe.contains("\"digest_count\""));
