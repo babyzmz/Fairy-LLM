@@ -3,6 +3,7 @@ param(
     [ValidateSet("contract", "production")]
     [string]$Profile = "contract",
     [string]$ModelRoot,
+    [string]$CudaToolchainRoot,
     [switch]$RequireModelProbe
 )
 
@@ -15,8 +16,8 @@ $buildScript = Join-Path $runtimeRoot "scripts\build.ps1"
 $manifestPath = Join-Path $projectRoot "desktop\src-tauri\resources\omni\minicpm-o-4.5.json"
 $stageRoot = Join-Path $projectRoot "desktop\src-tauri\runtime\omni"
 $stageExecutable = Join-Path $stageRoot "fairy-omni-runtime.exe"
-$stageProfile = Join-Path $stageRoot "build-profile.txt"
 $nativeProfile = if ($Profile -eq "production") { "production-cuda" } else { "contract" }
+$stageScript = Join-Path $PSScriptRoot "omni-runtime-stage.ps1"
 $policyScript = Join-Path $projectRoot "scripts\omni-release-policy.ps1"
 . $policyScript
 $probePolicy = Resolve-OmniReleaseProbe `
@@ -25,19 +26,48 @@ $probePolicy = Resolve-OmniReleaseProbe `
     -RuntimeRoot $runtimeRoot `
     -RequireModelProbe:$RequireModelProbe
 $ModelRoot = [string]$probePolicy.model_root
-$requireModelProbe = [bool]$probePolicy.require_model_probe
+$modelProbeRequired = [bool]$probePolicy.require_model_probe
 
-$buildOutput = @(
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $buildScript `
-        -Profile $nativeProfile `
-        -Test
+$buildArguments = @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    $buildScript,
+    "-Profile",
+    $nativeProfile,
+    "-Test"
 )
+if (-not [string]::IsNullOrWhiteSpace($CudaToolchainRoot)) {
+    $buildArguments += @("-CudaToolchainRoot", $CudaToolchainRoot)
+}
+$buildOutput = @(& powershell @buildArguments)
 if ($LASTEXITCODE -ne 0) {
     throw "The Omni '$nativeProfile' build failed."
 }
 $executable = [IO.Path]::GetFullPath([string]$buildOutput[-1])
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw "The Omni build did not produce the declared executable."
+}
+
+if ($Profile -eq "production") {
+    $toolchainArguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        (Join-Path $runtimeRoot "scripts\cuda-toolchain.ps1"),
+        "-Offline"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($CudaToolchainRoot)) {
+        $toolchainArguments += @("-ToolchainRoot", $CudaToolchainRoot)
+    }
+    $toolchainOutput = @(& powershell @toolchainArguments)
+    if ($LASTEXITCODE -ne 0 -or $toolchainOutput.Count -eq 0) {
+        throw "The verified CUDA runtime dependencies are unavailable for self-test."
+    }
+    $cudaToolchain = [string]$toolchainOutput[-1] | ConvertFrom-Json
+    $env:Path = "$([string]$cudaToolchain.bin);$env:Path"
 }
 
 $reportText = @(
@@ -68,13 +98,13 @@ if ($Profile -eq "production") {
     if (-not [bool]$report.cuda_compiled) {
         throw "The production Omni runtime was not compiled with CUDA."
     }
-    if ($requireModelProbe -and (
+    if ($modelProbeRequired -and (
         -not [bool]$report.backend_ready -or
         [string]$report.model_probe -ne "ready"
     )) {
         throw "The production Omni runtime did not pass the required model probe."
     }
-    if (-not $requireModelProbe -and (
+    if (-not $modelProbeRequired -and (
         [bool]$report.backend_ready -or
         [string]$report.model_probe -ne "model_files_invalid"
     )) {
@@ -85,28 +115,40 @@ elseif ([bool]$report.cuda_compiled -or [bool]$report.backend_ready) {
     throw "The contract runtime unexpectedly claimed production capability."
 }
 
-New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
-$temporaryExecutable = Join-Path $stageRoot "fairy-omni-runtime.exe.$PID.tmp"
-$temporaryProfile = Join-Path $stageRoot "build-profile.txt.$PID.tmp"
-try {
-    Copy-Item -LiteralPath $executable -Destination $temporaryExecutable -Force
-    [IO.File]::WriteAllText(
-        $temporaryProfile,
-        "$nativeProfile`n",
-        [Text.UTF8Encoding]::new($false)
-    )
-    Move-Item -LiteralPath $temporaryExecutable -Destination $stageExecutable -Force
-    Move-Item -LiteralPath $temporaryProfile -Destination $stageProfile -Force
+$stageArguments = @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    $stageScript,
+    "-Profile",
+    $nativeProfile,
+    "-Executable",
+    $executable,
+    "-StageRoot",
+    $stageRoot,
+    "-RuntimeCompatibility",
+    ([string]$report.runtime_compatibility),
+    "-UpstreamRevision",
+    ([string]$report.upstream_runtime_revision),
+    "-PatchSetDigest",
+    ([string]$report.patch_set_digest)
+)
+if (-not [string]::IsNullOrWhiteSpace($CudaToolchainRoot)) {
+    $stageArguments += @("-ToolchainRoot", $CudaToolchainRoot)
 }
-finally {
-    Remove-Item -LiteralPath $temporaryExecutable -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $temporaryProfile -Force -ErrorAction SilentlyContinue
+$stageOutput = @(& powershell @stageArguments)
+if ($LASTEXITCODE -ne 0 -or $stageOutput.Count -eq 0) {
+    throw "The verified Omni runtime could not be staged."
 }
+$stageReport = [string]$stageOutput[-1] | ConvertFrom-Json
 
 [pscustomobject]@{
     schema_version = 1
     profile = $nativeProfile
     executable = $stageExecutable
+    component_manifest = Join-Path $stageRoot "runtime-components.json"
+    component_count = @($stageReport.components).Count
     backend_ready = [bool]$report.backend_ready
-    model_probe_required = $requireModelProbe
+    model_probe_required = $modelProbeRequired
 } | ConvertTo-Json -Compress

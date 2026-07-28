@@ -24,7 +24,9 @@ desktop/src-tauri/binaries/*.exe
 desktop/src-tauri/runtime/git/
 desktop/src-tauri/runtime/voice-worker/
 desktop/src-tauri/runtime/omni/*.exe
+desktop/src-tauri/runtime/omni/*.dll
 desktop/src-tauri/runtime/omni/build-profile.txt
+desktop/src-tauri/runtime/omni/runtime-components.json
 desktop/native/omni-runtime/_deps/
 desktop/native/omni-runtime/.tools/
 desktop/native/omni-runtime/out/

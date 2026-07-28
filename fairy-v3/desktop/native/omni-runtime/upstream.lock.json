@@ -31,7 +31,15 @@
       "url": "https://cmake.org/files/v4.4/cmake-4.4.0-windows-x86_64.zip",
       "sha256": "156d70eb7625a7b469444df7d0861d2af8d5d0a437fce32c350372b08f5620e8"
     },
-    "generator": "Visual Studio 17 2022",
+    "cuda": {
+      "lock_file": "cuda-toolchain.lock.json",
+      "schema_version": 1
+    },
+    "generators": {
+      "contract": "Visual Studio 17 2022",
+      "upstream-cpu": "Visual Studio 17 2022",
+      "production-cuda": "Ninja Multi-Config"
+    },
     "architecture": "x64",
     "minimum_msvc": "19.44"
   }

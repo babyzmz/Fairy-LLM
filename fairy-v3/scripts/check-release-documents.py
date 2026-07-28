@@ -42,6 +42,9 @@ def main() -> None:
             "MiniCPM-o 4.5",
             "Voice runtime",
             "MinGit",
+            "NVIDIA CUDA / cuBLAS runtime",
+            "cublas64_13.dll",
+            "cublasLt64_13.dll",
         ),
         "third-party notice",
     )
@@ -100,6 +103,20 @@ def main() -> None:
         license_text = read(relative_path)
         if "Permission is hereby granted" not in license_text:
             raise AssertionError(f"license text is incomplete: {relative_path}")
+
+    nvidia_notice = read(
+        "desktop/src-tauri/resources/legal/NVIDIA-CUDA-REDISTRIBUTION-NOTICE.txt"
+    )
+    require(
+        nvidia_notice,
+        (
+            "cublas64_13.dll",
+            "cublasLt64_13.dll",
+            "https://docs.nvidia.com/cuda/archive/13.0.3/eula/index.html",
+            "does not redistribute the NVIDIA display driver",
+        ),
+        "NVIDIA CUDA redistribution notice",
+    )
 
     forbidden = (
         "api_key",

@@ -1,0 +1,28 @@
+NVIDIA CUDA / cuBLAS Redistribution Notice
+
+Fairy includes the following Windows x64 runtime files with its production
+Omni runtime:
+
+- cublas64_13.dll
+- cublasLt64_13.dll
+
+The files originate from NVIDIA's libcublas 13.1.1.3 package published under
+the cuda-13.0.3 package label. They are governed by the NVIDIA License
+Agreement for NVIDIA Software Development Kits and the CUDA Toolkit
+Supplement, including the redistribution conditions and the redistributable
+file list in Attachment A.
+
+Authoritative agreement for CUDA Toolkit 13.0.3:
+https://docs.nvidia.com/cuda/archive/13.0.3/eula/index.html
+
+The agreement's Windows redistributable list identifies the CUDA BLAS Library
+runtime files, including version- and architecture-specific variations of
+cublas.dll and cublasLt.dll. The agreement, not this notice, controls use and
+redistribution.
+
+Copyright (c) NVIDIA Corporation. All rights reserved.
+
+Fairy does not redistribute the NVIDIA display driver or nvcuda.dll. A
+compatible driver must be installed separately by the user or device
+administrator. Fairy also does not place the CUDA compiler, headers,
+micromamba, Conda package archives, or build cache in the release bundle.

@@ -124,6 +124,20 @@ Invoke-Step "Release: Omni packaging policy" $Root "powershell" @(
     "-File",
     "scripts/test-omni-release-policy.ps1"
 )
+Invoke-Step "Release: Omni CUDA toolchain policy" $Root "powershell" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "desktop/native/omni-runtime/scripts/cuda-toolchain.tests.ps1"
+)
+Invoke-Step "Release: Omni runtime staging policy" $Root "powershell" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts/test-omni-runtime-staging.ps1"
+)
 Invoke-Step "Release: Voice license policy" $Root "powershell" @(
     "-NoProfile",
     "-ExecutionPolicy",

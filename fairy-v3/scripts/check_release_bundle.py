@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +19,7 @@ REQUIRED_BUNDLE_FILES = {
     "legal/THIRD_PARTY_NOTICES.md",
     "legal/licenses/llama.cpp-omni-LICENSE.txt",
     "legal/licenses/windows-capture-dda-LICENSE.txt",
+    "legal/licenses/NVIDIA-CUDA-REDISTRIBUTION-NOTICE.txt",
     "docs/release/realtime-companion-beta-support.md",
     "docs/release/realtime-companion-beta-privacy.md",
     "docs/release/realtime-companion-beta-troubleshooting.md",
@@ -25,6 +28,14 @@ REQUIRED_VOICE_LICENSES = {
     "runtime/voice-worker/THIRD_PARTY_LICENSES/CosyVoice-LICENSE.txt",
     "runtime/voice-worker/THIRD_PARTY_LICENSES/Matcha-TTS-LICENSE.txt",
 }
+REQUIRED_OMNI_RUNTIME_FILES = {
+    "runtime/omni/build-profile.txt",
+    "runtime/omni/cublas64_13.dll",
+    "runtime/omni/cublasLt64_13.dll",
+    "runtime/omni/fairy-omni-runtime.exe",
+    "runtime/omni/runtime-components.json",
+}
+ALLOWED_OMNI_STAGE_FILES = REQUIRED_OMNI_RUNTIME_FILES | {"runtime/omni/.gitkeep"}
 FORBIDDEN_SUFFIXES = {
     ".db",
     ".db-shm",
@@ -110,6 +121,94 @@ def validate_bundle_root(bundle_root: Path) -> None:
             raise AssertionError(
                 f"Voice runtime is missing upstream licenses: {', '.join(missing_voice)}"
             )
+    omni_files = {path for path in files if path.startswith("runtime/omni/")}
+    if omni_files:
+        missing_omni = sorted(REQUIRED_OMNI_RUNTIME_FILES - omni_files)
+        if missing_omni:
+            raise AssertionError(
+                f"Omni runtime is missing governed components: {', '.join(missing_omni)}"
+            )
+        unknown_omni = sorted(omni_files - ALLOWED_OMNI_STAGE_FILES)
+        if unknown_omni:
+            raise AssertionError(
+                f"Omni runtime contains unknown components: {', '.join(unknown_omni)}"
+            )
+        validate_omni_runtime(bundle_root)
+
+
+def validate_omni_runtime(bundle_root: Path) -> None:
+    omni_root = bundle_root / "runtime" / "omni"
+    manifest_path = omni_root / "runtime-components.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if set(manifest) != {
+        "schema_version",
+        "build_profile",
+        "runtime_compatibility",
+        "upstream_revision",
+        "patch_set_digest",
+        "components",
+    }:
+        raise AssertionError("Omni runtime component manifest shape is not exact")
+    if (
+        manifest["schema_version"] != 1
+        or manifest["build_profile"] != "production-cuda"
+        or manifest["runtime_compatibility"] != "fairy-omni-runtime-v1"
+        or not isinstance(manifest["upstream_revision"], str)
+        or not re.fullmatch(r"[0-9a-f]{40}", manifest["upstream_revision"])
+        or not isinstance(manifest["patch_set_digest"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", manifest["patch_set_digest"])
+        or not isinstance(manifest["components"], list)
+    ):
+        raise AssertionError("Omni runtime component manifest identity is invalid")
+
+    expected_names = {
+        "build-profile.txt",
+        "cublas64_13.dll",
+        "cublasLt64_13.dll",
+        "fairy-omni-runtime.exe",
+    }
+    components = manifest["components"]
+    names = [component.get("name") for component in components]
+    if len(names) != len(set(names)) or set(names) != expected_names:
+        raise AssertionError("Omni runtime component set is not exact")
+    for component in components:
+        if set(component) != {
+            "name",
+            "package",
+            "version",
+            "license",
+            "bytes",
+            "sha256",
+        }:
+            raise AssertionError("Omni runtime component metadata shape is not exact")
+        name = component["name"]
+        if (
+            not isinstance(name, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name)
+            or name in {".", ".."}
+            or not isinstance(component["package"], str)
+            or not component["package"]
+            or not isinstance(component["version"], str)
+            or not component["version"]
+            or not isinstance(component["license"], str)
+            or not component["license"]
+            or not isinstance(component["bytes"], int)
+            or component["bytes"] <= 0
+            or not isinstance(component["sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", component["sha256"])
+        ):
+            raise AssertionError("Omni runtime component metadata is invalid")
+        path = omni_root / name
+        if path.stat().st_size != component["bytes"]:
+            raise AssertionError(f"Omni runtime component size mismatch: {name}")
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if digest != component["sha256"]:
+            raise AssertionError(f"Omni runtime component digest mismatch: {name}")
+    if (omni_root / "build-profile.txt").read_text(encoding="utf-8").strip() != (
+        "production-cuda"
+    ):
+        raise AssertionError("Omni runtime staged profile is invalid")
 
 
 def parse_args() -> argparse.Namespace:

@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "platform": "win-64",
+  "cache_namespace": "cuda-13.0.3-cublas-13.1.1.3-ninja-1.13.2",
+  "micromamba": {
+    "version": "2.4.0",
+    "url": "https://github.com/mamba-org/micromamba-releases/releases/download/2.4.0-0/micromamba-win-64",
+    "archive": "micromamba-2.4.0-win-64.exe",
+    "sha256": "22838dc20603e84c3d50e5633852a97d197f9ed0a5b35028eb457ef450946d1c",
+    "executable_sha256": "22838dc20603e84c3d50e5633852a97d197f9ed0a5b35028eb457ef450946d1c"
+  },
+  "requirements": {
+    "cuda_compiler": "13.0.3",
+    "nvcc": "13.0.88",
+    "ninja": "1.13.2",
+    "libcublas": "13.1.1.3",
+    "architecture": "x64",
+    "license": "LicenseRef-NVIDIA-End-User-License-Agreement"
+  },
+  "required_files": [
+    "Library/bin/nvcc.exe",
+    "Library/bin/ninja.exe",
+    "Library/include/cuda.h",
+    "Library/lib/x64/cublas.lib",
+    "Library/bin/cublas64_13.dll",
+    "Library/bin/cublasLt64_13.dll"
+  ],
+  "runtime_components": [
+    {
+      "name": "cublas64_13.dll",
+      "package": "libcublas",
+      "version": "13.1.1.3",
+      "license": "LicenseRef-NVIDIA-End-User-License-Agreement",
+      "bytes": 51561584,
+      "sha256": "b787fada026a2cfe3eb07fe6f15b73b7a2aec6083a3cbc9584eb006737b980d6"
+    },
+    {
+      "name": "cublasLt64_13.dll",
+      "package": "libcublas",
+      "version": "13.1.1.3",
+      "license": "LicenseRef-NVIDIA-End-User-License-Agreement",
+      "bytes": 480399472,
+      "sha256": "5d9ef9e66b68713f2b2a9cd6f0219f20f458e5d36e893fe34fe483bbcd68a744"
+    }
+  ],
+  "packages": [
+    {"name":"cuda-cccl_win-64","version":"13.0.85","build":"h57928b3_0","url":"https://conda.anaconda.org/conda-forge/noarch/cuda-cccl_win-64-13.0.85-h57928b3_0.conda","sha256":"5d8262414e69138c4a56f730f334eb4e7c647aff087449de0c70ed1b65935eae","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-compiler","version":"13.0.3","build":"0","url":"https://conda.anaconda.org/nvidia/label/cuda-13.0.3/win-64/cuda-compiler-13.0.3-0.conda","sha256":"601ba23f774580654f52163c8855a126126fabeee442b43337ddddf7acb2338d","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-crt-dev_win-64","version":"13.0.88","build":"h57928b3_0","url":"https://conda.anaconda.org/conda-forge/noarch/cuda-crt-dev_win-64-13.0.88-h57928b3_0.conda","sha256":"024221bfdb15a0cd405b1b8f3a840f70db0cc395d2af01c7ed8a4ad69dee3dee","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-crt-tools","version":"13.0.88","build":"h57928b3_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-crt-tools-13.0.88-h57928b3_0.conda","sha256":"0461ffb36fced83b52cde97a2eb039a0db83689b032248a32fc0d504d53d432e","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-ctadvisor","version":"13.0.85","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-ctadvisor-13.0.85-hac47afa_0.conda","sha256":"27209c0a61f1b3b211777dc15e0efc9d5e38db7ee888d80c0742dfb910bde906","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-cudart","version":"13.0.96","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-cudart-13.0.96-hac47afa_0.conda","sha256":"81b8659f23ba9c394e591cde159e00288f1ed27c9ea35d35afed135ccd46e1de","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-cudart_win-64","version":"13.0.96","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/noarch/cuda-cudart_win-64-13.0.96-hac47afa_0.conda","sha256":"2ce873cd08ca1e307e04c917645304ae0fb229633e3eebb83a31965a35197edb","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-cudart-dev","version":"13.0.96","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-cudart-dev-13.0.96-hac47afa_0.conda","sha256":"43593183127b0ecbce8aa7e69e368fa7fe7b98f06c00ae727f7c04bc77e29a70","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-cudart-dev_win-64","version":"13.0.96","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/noarch/cuda-cudart-dev_win-64-13.0.96-hac47afa_0.conda","sha256":"cb188e885a7a1449d408d1c8305d2941852d6cd6de6b10bae1680b700f83d6c2","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-cudart-static","version":"13.0.96","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-cudart-static-13.0.96-hac47afa_0.conda","sha256":"1d3dfc56ce65b6b529ac824714469919218d50cd73d97dbbd43c18cbb21c227e","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-cudart-static_win-64","version":"13.0.96","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/noarch/cuda-cudart-static_win-64-13.0.96-hac47afa_0.conda","sha256":"019448d21c6fdec4fcb82d90611b5b2edbba515585fab5fd8cbf30bc2f53610f","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-cuobjdump","version":"13.0.85","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-cuobjdump-13.0.85-hac47afa_0.conda","sha256":"11a5ad03b68b96650c7e9f7290d1614b6c6452e164849152c93f6cfe7b845e98","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-cuxxfilt","version":"13.0.85","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-cuxxfilt-13.0.85-hac47afa_0.conda","sha256":"30db9959d130460705d11c24e10f8a697d8393fd5854c21568b1307ee9661445","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvcc","version":"13.0.88","build":"h8f04d04_6","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-nvcc-13.0.88-h8f04d04_6.conda","sha256":"1fa9e3cba484869c82394b0e4b7aab59c87d0d637b31513bb63e2f63cf94fd6f","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvcc_win-64","version":"13.0.88","build":"hd70436c_6","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-nvcc_win-64-13.0.88-hd70436c_6.conda","sha256":"5f9ded711313967bd6a850c784312bbd24dc85908289bcfbb72c768de6b22947","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvcc-dev_win-64","version":"13.0.88","build":"h36c15f3_0","url":"https://conda.anaconda.org/conda-forge/noarch/cuda-nvcc-dev_win-64-13.0.88-h36c15f3_0.conda","sha256":"256fab7d4b386404c9ed2b2e7f3386bcc67fa3f90558ae0a1576aa967237c7b0","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvcc-impl","version":"13.0.88","build":"h53cbb54_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-nvcc-impl-13.0.88-h53cbb54_0.conda","sha256":"4ce3f4cf0909ae2edfd0371603328141358dcd4fe698a71b8857664cc082fceb","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvcc-tools","version":"13.0.88","build":"he0c23c2_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-nvcc-tools-13.0.88-he0c23c2_0.conda","sha256":"b4bbff58f03239d08160ea9e2fb26a7b1ac5a20495e5019f1d98178ba3f81eb8","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvdisasm","version":"13.0.85","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-nvdisasm-13.0.85-hac47afa_0.conda","sha256":"1bbb086fd6f38329d4850d5d2cbe4a38a9bc9cd781c49e7fc5814e418d674e5f","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvprune","version":"13.0.85","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-nvprune-13.0.85-hac47afa_0.conda","sha256":"05eb7a5d794ec67ccf8972e219bdc8139231b11f421cee5791ee0067d086c9e2","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvrtc","version":"13.0.88","build":"hac47afa_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-nvrtc-13.0.88-hac47afa_0.conda","sha256":"0ce0c5ba6e13ec1ad2379d7f1f03b860e3c2050113530de6a3c9639cc85a94b3","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvvm-dev_win-64","version":"13.0.88","build":"h57928b3_0","url":"https://conda.anaconda.org/conda-forge/noarch/cuda-nvvm-dev_win-64-13.0.88-h57928b3_0.conda","sha256":"8da10e25f234099a1a4c8474beb4281b36205395ece33c9b0e6cc529b075aeea","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvvm-impl","version":"13.0.88","build":"h2466b09_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-nvvm-impl-13.0.88-h2466b09_0.conda","sha256":"7462c74cd44f426c5a0f2762df28a010b168f8045b9e780aaa5676a486a13482","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-nvvm-tools","version":"13.0.88","build":"h2466b09_0","url":"https://conda.anaconda.org/conda-forge/win-64/cuda-nvvm-tools-13.0.88-h2466b09_0.conda","sha256":"750828e2236aff8164f6555432fbe0b55a90d9ade8b1e565182ded20f6e66c72","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"cuda-version","version":"13.0","build":"hc7b4dd1_3","url":"https://conda.anaconda.org/conda-forge/noarch/cuda-version-13.0-hc7b4dd1_3.conda","sha256":"b0511bf95bf784096866c8add22afe365ff534c5d87f033119653d6d3c57d4bc","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"libcublas","version":"13.1.1.3","build":"hde976d8_0","url":"https://conda.anaconda.org/nvidia/label/cuda-13.0.3/win-64/libcublas-13.1.1.3-hde976d8_0.conda","sha256":"16efa96531054a596397d774e5f891e3ac0b27b6da0f352a2022c05aa9a2a8ad","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"libcublas-dev","version":"13.1.1.3","build":"hde976d8_0","url":"https://conda.anaconda.org/nvidia/label/cuda-13.0.3/win-64/libcublas-dev-13.1.1.3-hde976d8_0.conda","sha256":"21309449a1ea0bac09b2450e25d235cb3e2ebe0eb2bfde5043dc1f9b1d5f630c","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"libnvptxcompiler-dev","version":"13.0.88","build":"h57928b3_0","url":"https://conda.anaconda.org/conda-forge/win-64/libnvptxcompiler-dev-13.0.88-h57928b3_0.conda","sha256":"bf1b4fed1ad76fec3e3b772a622e59578d7cf978bdd567067b3098e9694658de","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"libnvptxcompiler-dev_win-64","version":"13.0.88","build":"h57928b3_0","url":"https://conda.anaconda.org/conda-forge/noarch/libnvptxcompiler-dev_win-64-13.0.88-h57928b3_0.conda","sha256":"1f0a659ebb00d6b1ea26cbd23f1b75f8c69d9cbb6e253c1aa926d8c43ed8d808","license":"LicenseRef-NVIDIA-End-User-License-Agreement"},
+    {"name":"ninja","version":"1.13.2","build":"h477610d_0","url":"https://conda.anaconda.org/conda-forge/win-64/ninja-1.13.2-h477610d_0.conda","sha256":"e41a945c34a5f0bd2109b73a65486cd93023fa0a9bcba3ef98f9a3da40ba1180","license":"Apache-2.0"},
+    {"name":"ucrt","version":"10.0.26100.0","build":"h57928b3_0","url":"https://conda.anaconda.org/conda-forge/win-64/ucrt-10.0.26100.0-h57928b3_0.conda","sha256":"3005729dce6f3d3f5ec91dfc49fc75a0095f9cd23bab49efb899657297ac91a5","license":"LicenseRef-MicrosoftWindowsSDK10"},
+    {"name":"vc","version":"14.5","build":"h1b7c187_39","url":"https://conda.anaconda.org/conda-forge/win-64/vc-14.5-h1b7c187_39.conda","sha256":"17693b60cb54f80c60275f003f3bfc1b128af56dbfd65c4fae37c64eeb755ce1","license":"BSD-3-Clause"},
+    {"name":"vc14_runtime","version":"14.51.36231","build":"h1b9f54f_39","url":"https://conda.anaconda.org/conda-forge/win-64/vc14_runtime-14.51.36231-h1b9f54f_39.conda","sha256":"8153ed849c92e891eacac0f2f8d7ecb79f9b5fd7f7917fbb896f252a60a40390","license":"LicenseRef-MicrosoftVisualCpp2015-2022Runtime"},
+    {"name":"vcomp14","version":"14.51.36231","build":"h1b9f54f_39","url":"https://conda.anaconda.org/conda-forge/win-64/vcomp14-14.51.36231-h1b9f54f_39.conda","sha256":"07fb14713c4bc62e2533a2e23a363abfb0e65650681fba0ae4c840e2219350f3","license":"LicenseRef-MicrosoftVisualCpp2015-2022Runtime"},
+    {"name":"vs2015_runtime","version":"14.51.36231","build":"h84cd919_39","url":"https://conda.anaconda.org/conda-forge/win-64/vs2015_runtime-14.51.36231-h84cd919_39.conda","sha256":"6de6c2cf008fc2dce61060b583f2d8494c83883106952b201381b6b0505f03d7","license":"BSD-3-Clause"},
+    {"name":"vs2019_win-64","version":"19.29.30139","build":"h7dcff83_39","url":"https://conda.anaconda.org/conda-forge/win-64/vs2019_win-64-19.29.30139-h7dcff83_39.conda","sha256":"9238d99cb9d1dd4f17473d3e46d18fed480f1dc6b0c163aff315511088b30897","license":"BSD-3-Clause"},
+    {"name":"vswhere","version":"3.1.7","build":"h40126e0_1","url":"https://conda.anaconda.org/conda-forge/noarch/vswhere-3.1.7-h40126e0_1.conda","sha256":"b72270395326dc56de9bd6ca82f63791b3c8c9e2b98e25242a9869a4ca821895","license":"MIT"}
+  ]
+}

@@ -53,10 +53,16 @@ notices in the generated Core distribution.
 | --- | --- | --- | --- |
 | `llama.cpp-omni` / ggml | `74699a53df6ca0f4947ff37066f851532c20b12d` | MIT | Omni runtime source baseline; license copied to `legal/llama.cpp-omni-LICENSE.txt` |
 | Fairy Windows DXGI capture integration, derived from `window-capture` | repository lock | MIT | License copied to `legal/windows-capture-dda-LICENSE.txt` |
+| NVIDIA CUDA / cuBLAS runtime | CUDA toolchain label `13.0.3`; `libcublas` `13.1.1.3` | NVIDIA SDK EULA | `cublas64_13.dll` and `cublasLt64_13.dll` are bundled with the production Omni runtime; notice copied to `legal/NVIDIA-CUDA-REDISTRIBUTION-NOTICE.txt` |
 | MiniCPM-o 4.5 GGUF | `502eec5b03eaee9d0d2ce17a176e3490103c9a63` | Apache-2.0 | Downloaded separately; model bytes are not in the installer |
 
 MiniCPM provenance, file sizes, and hashes are recorded in
 `docs/third-party/minicpm-o-4.5-model-manifest.md`.
+
+The NVIDIA display driver and its `nvcuda.dll` are not distributed by Fairy.
+The release device must obtain a compatible driver from NVIDIA. The CUDA
+compiler, headers, package manager, and build cache are release-build inputs
+only and are not included in the installer.
 
 ## Voice runtime
 

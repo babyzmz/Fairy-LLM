@@ -34,8 +34,7 @@
     {
       "name": "production-cuda",
       "displayName": "Fairy Omni production CUDA",
-      "generator": "Visual Studio 17 2022",
-      "architecture": "x64",
+      "generator": "Ninja Multi-Config",
       "binaryDir": "${sourceDir}/out/production-cuda",
       "cacheVariables": {
         "BUILD_TESTING": "OFF",
