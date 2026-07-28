@@ -255,4 +255,84 @@ if ($unguarded.Count -ne 0) {
     )
 }
 
+$soakPath = Join-Path $PSScriptRoot "test-presence-soak.ps1"
+$soak = Get-Content -Raw -LiteralPath $soakPath
+$benchmark = Get-Content -Raw -LiteralPath (
+    Join-Path $PSScriptRoot "test-presence-benchmark.ps1"
+)
+foreach ($required in @(
+    "MinimumUserIdleSeconds",
+    "Acquire-PresenceInputOwnership",
+    "Invoke-PresenceOwnedInputAction"
+)) {
+    if ($soak -notmatch [regex]::Escape($required)) {
+        throw "Presence soak is missing guarded contract: $required"
+    }
+}
+if ($benchmark -notmatch
+    '-MinimumUserIdleSeconds\s+\$MinimumUserIdleSeconds') {
+    throw "Presence benchmark does not forward the idle threshold"
+}
+if ($benchmark -notmatch
+    'PRESENCE_USER_INPUT_COMPETITION') {
+    throw "Presence benchmark does not stop on input competition"
+}
+if ($benchmark -notmatch
+    'PRESENCE_INPUT_GUARD_UNAVAILABLE') {
+    throw "Presence benchmark does not stop when the guard is unavailable"
+}
+foreach ($required in @(
+    "[guid]::NewGuid()",
+    "Remove-VerifiedBenchmarkSample"
+)) {
+    if ($benchmark -notmatch [regex]::Escape($required)) {
+        throw "Presence benchmark sample isolation is missing: $required"
+    }
+}
+
+$tokens = $null
+$parseErrors = $null
+$soakAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $soakPath,
+    [ref]$tokens,
+    [ref]$parseErrors
+)
+if ($parseErrors.Count -ne 0) {
+    throw "Presence soak script does not parse"
+}
+
+function Test-IsGuardedActionScriptBlock($Node) {
+    $current = $Node.Parent
+    while ($null -ne $current) {
+        if ($current -is
+            [System.Management.Automation.Language.ScriptBlockExpressionAst]) {
+            $command = $current.Parent
+            if (
+                $command -is
+                    [System.Management.Automation.Language.CommandAst] -and
+                $command.GetCommandName() -eq
+                    "Invoke-PresenceOwnedInputAction"
+            ) {
+                return $true
+            }
+        }
+        $current = $current.Parent
+    }
+    return $false
+}
+
+$unguardedSoakMoves = @($soakAst.FindAll({
+    param($node)
+    $node -is
+        [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+    $node.Static -and
+    $node.Expression.Extent.Text -eq "[FairyPresenceSoakCursor]" -and
+    $node.Member.Extent.Text -eq "MoveToRenderWindow"
+}, $true) | Where-Object {
+    -not (Test-IsGuardedActionScriptBlock $_)
+})
+if ($unguardedSoakMoves.Count -ne 0) {
+    throw "Presence soak contains unguarded cursor movement"
+}
+
 Write-Output "Presence input ownership guard tests passed."

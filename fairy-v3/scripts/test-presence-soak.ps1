@@ -21,6 +21,8 @@ param(
     [ValidateSet("standard", "enhanced")]
     [string]$OpticsMode = "standard",
     [switch]$KeepPresenceActive,
+    [ValidateRange(5, 60)]
+    [int]$MinimumUserIdleSeconds = 5,
     [switch]$SkipRendererProbe,
     [string]$OutputPath
 )
@@ -35,6 +37,18 @@ if ([string]::IsNullOrWhiteSpace($Executable)) {
 if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
     throw "Fairy executable is missing: $Executable"
 }
+
+. (Join-Path $PSScriptRoot "presence-input-ownership-guard.ps1")
+$inputGuard = $null
+if ($KeepPresenceActive) {
+    $inputGuard = New-PresenceInputGuardState `
+        -MinimumIdleSeconds $MinimumUserIdleSeconds
+    Acquire-PresenceInputOwnership `
+        -State $inputGuard `
+        -Observation (Get-PresenceInputObservation -Phase "startup") `
+        -Phase "startup"
+}
+
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path ([System.IO.Path]::GetTempPath()) "fairy-presence-soak.json"
 }
@@ -83,6 +97,34 @@ public static class FairyPresenceSoakCursor {
     }
 }
 '@
+}
+
+function Assert-PresenceSoakInputOwnership(
+    $GuardState,
+    [int]$OwnedProcessId,
+    [string]$Phase
+) {
+    if ($null -eq $GuardState) { return }
+    Sync-PresenceInputOwnership `
+        -State $GuardState `
+        -Observation (Get-PresenceInputObservation -Phase $Phase) `
+        -OwnedProcessId $OwnedProcessId `
+        -Phase $Phase
+}
+
+function Invoke-GuardedPresenceCursor(
+    $GuardState,
+    [int]$OwnedProcessId,
+    [string]$Phase
+) {
+    $moved = Invoke-PresenceOwnedInputAction `
+        -State $GuardState `
+        -OwnedProcessId $OwnedProcessId `
+        -Phase $Phase `
+        -Action {
+            [FairyPresenceSoakCursor]::MoveToRenderWindow($OwnedProcessId)
+        }
+    return [bool]$moved
 }
 
 function Get-AvailablePort {
@@ -251,6 +293,10 @@ $process = $null
 $probe = $null
 
 try {
+    Assert-PresenceSoakInputOwnership `
+        -GuardState $inputGuard `
+        -OwnedProcessId 0 `
+        -Phase "before_fairy_start"
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = (Resolve-Path -LiteralPath $Executable).Path
     $startInfo.WorkingDirectory = Split-Path -Parent $startInfo.FileName
@@ -301,7 +347,10 @@ try {
 
     if ($KeepPresenceActive) {
         $activeDeadline = [DateTime]::UtcNow.AddSeconds(30)
-        while (-not [FairyPresenceSoakCursor]::MoveToRenderWindow($process.Id)) {
+        while (-not (Invoke-GuardedPresenceCursor `
+            -GuardState $inputGuard `
+            -OwnedProcessId $process.Id `
+            -Phase "startup_wait")) {
             $process.Refresh()
             if ($process.HasExited) { throw "Fairy exited before Presence became active" }
             if ([DateTime]::UtcNow -ge $activeDeadline) {
@@ -329,9 +378,18 @@ try {
     $warmupStartedAt = [DateTime]::UtcNow
     while (([DateTime]::UtcNow - $warmupStartedAt).TotalSeconds -lt $WarmupSeconds) {
         if ($KeepPresenceActive) {
-            [FairyPresenceSoakCursor]::MoveToRenderWindow($process.Id) | Out-Null
+            if (-not (Invoke-GuardedPresenceCursor `
+                -GuardState $inputGuard `
+                -OwnedProcessId $process.Id `
+                -Phase "warmup")) {
+                throw "Presence cursor target disappeared during warm-up"
+            }
         }
         Start-Sleep -Seconds 1
+        Assert-PresenceSoakInputOwnership `
+            -GuardState $inputGuard `
+            -OwnedProcessId $process.Id `
+            -Phase "warmup_wait"
         $process.Refresh()
         if ($process.HasExited) { throw "Fairy exited during the soak warm-up" }
     }
@@ -343,9 +401,18 @@ try {
     $lastSampleAt = $startedAt
     while (([DateTime]::UtcNow - $startedAt).TotalSeconds -lt $durationSeconds) {
         if ($KeepPresenceActive) {
-            [FairyPresenceSoakCursor]::MoveToRenderWindow($process.Id) | Out-Null
+            if (-not (Invoke-GuardedPresenceCursor `
+                -GuardState $inputGuard `
+                -OwnedProcessId $process.Id `
+                -Phase "soak")) {
+                throw "Presence cursor target disappeared during soak"
+            }
         }
         Start-Sleep -Seconds $SampleSeconds
+        Assert-PresenceSoakInputOwnership `
+            -GuardState $inputGuard `
+            -OwnedProcessId $process.Id `
+            -Phase "soak_wait"
         $process.Refresh()
         if ($process.HasExited) { throw "Fairy exited during the soak" }
         $now = [DateTime]::UtcNow
