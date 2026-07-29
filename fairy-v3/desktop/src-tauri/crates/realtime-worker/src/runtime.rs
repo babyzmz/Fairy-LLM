@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::audio_processing::{RealtimeAudioProcessor, RealtimeMicrophoneProcessor};
 use crate::backend::{
     BackendCaptionSpeaker, BackendEvent, CloudBackendLaunch, CloudLiveBackend, LocalOmniBackend,
     LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackend, RealtimeBackendKind,
@@ -38,6 +39,7 @@ pub struct RuntimeLaunch {
     pub local_omni: Option<LocalOmniLaunch>,
     pub persona: ValidatedRealtimePersona,
     pub activity_profile: RealtimeActivityProfile,
+    pub desktop_host_process_id: u32,
     pub source_id: Option<u64>,
     pub microphone_enabled: bool,
     pub screen_enabled: bool,
@@ -158,6 +160,7 @@ fn run_session(
         local_omni,
         persona,
         activity_profile,
+        desktop_host_process_id,
         source_id,
         microphone_enabled: initial_microphone_enabled,
         screen_enabled,
@@ -269,6 +272,15 @@ fn run_session(
             return;
         }
     };
+    let (mut fairy_reference, fairy_reference_error) =
+        if voice_output != RealtimeVoiceOutput::TextOnly {
+            match ProcessLoopbackCapture::start_process_tree(desktop_host_process_id) {
+                Ok(reference) => (Some(reference), None),
+                Err(_) => (None, Some("AEC_REFERENCE_UNAVAILABLE".to_owned())),
+            }
+        } else {
+            (None, None)
+        };
     if startup_cancel_requested(&commands, &cancelled) {
         emit_cancelled(&events, &identity);
         return;
@@ -288,7 +300,7 @@ fn run_session(
         emit_cancelled(&events, &identity);
         return;
     }
-    let playback = if native_audio {
+    let playback = if native_audio && fairy_reference.is_some() {
         match AudioPlayback::start() {
             Ok(playback) => Some(playback),
             Err(_) => {
@@ -327,8 +339,34 @@ fn run_session(
         cloud_provider: identity.cloud_provider,
         error_code: None,
     });
+    let _ = events.send(WorkerEvent::MediaChannelState {
+        session_id: identity.session_id.clone(),
+        segment_id: identity.segment_id.clone(),
+        context_epoch: identity.context_epoch,
+        channel: "microphone".to_owned(),
+        sequence: 1,
+        status: "active".to_owned(),
+        error_code: None,
+    });
+    let _ = events.send(WorkerEvent::MediaChannelState {
+        session_id: identity.session_id.clone(),
+        segment_id: identity.segment_id.clone(),
+        context_epoch: identity.context_epoch,
+        channel: "fairy_render_reference".to_owned(),
+        sequence: 1,
+        status: if fairy_reference.is_some() {
+            "active"
+        } else if fairy_reference_error.is_some() {
+            "unavailable"
+        } else {
+            "paused"
+        }
+        .to_owned(),
+        error_code: fairy_reference_error,
+    });
     let session_start = Instant::now();
     let mut frame_gate = FrameGate::new(identity.context_epoch);
+    let mut audio_processor = RealtimeAudioProcessor::default();
     let mut last_usage_sent = Instant::now();
     let mut last_resource_sample_sent = Instant::now();
     // User input gates remain separate from native standby ownership.
@@ -342,6 +380,7 @@ fn run_session(
     let mut tool_call_count = 0_u64;
     let mut event_sequence = 0_u64;
     let mut current_user_utterance = false;
+    let mut speech_activity = SpeechActivityArbiter::default();
     let mut resource_policy = RealtimeResourcePolicy::for_level(RealtimeResourceLevel::Normal);
     let mut max_inference_latency_ms = 0_u32;
     let mut frame_processing_failures = 0_u8;
@@ -436,6 +475,9 @@ fn run_session(
                     return;
                 }
                 while microphone.try_recv().is_some() {}
+                if let Some(capture) = fairy_reference.as_mut() {
+                    while capture.try_recv().is_some() {}
+                }
                 if let Some(capture) = game_audio.as_mut() {
                     while capture.try_recv().is_some() {}
                 }
@@ -447,7 +489,9 @@ fn run_session(
                 }
                 identity.context_epoch = next_context_epoch;
                 frame_gate.reset(next_context_epoch);
+                audio_processor.reset();
                 current_user_utterance = false;
+                speech_activity.reset();
                 event_sequence = 0;
                 standby = false;
                 let _ = events.send(WorkerEvent::ContextRotated {
@@ -468,12 +512,15 @@ fn run_session(
                 standby = true;
                 drain_runtime_media(
                     &microphone,
+                    fairy_reference.as_mut(),
                     game_audio.as_mut(),
                     video.as_ref(),
                     playback.as_ref(),
+                    &mut audio_processor,
                 );
                 frame_gate.reset(identity.context_epoch);
                 current_user_utterance = false;
+                speech_activity.reset();
                 let _ = events.send(WorkerEvent::SessionState {
                     session_id: identity.session_id.clone(),
                     segment_id: identity.segment_id.clone(),
@@ -523,13 +570,16 @@ fn run_session(
                 }
                 drain_runtime_media(
                     &microphone,
+                    fairy_reference.as_mut(),
                     game_audio.as_mut(),
                     video.as_ref(),
                     playback.as_ref(),
+                    &mut audio_processor,
                 );
                 identity.context_epoch = next_context_epoch;
                 frame_gate.reset(next_context_epoch);
                 current_user_utterance = false;
+                speech_activity.reset();
                 event_sequence = 0;
                 standby = false;
                 let _ = events.send(WorkerEvent::ContextRotated {
@@ -568,14 +618,17 @@ fn run_session(
                 }
                 drain_runtime_media(
                     &microphone,
+                    fairy_reference.as_mut(),
                     game_audio.as_mut(),
                     video.as_ref(),
                     playback.as_ref(),
+                    &mut audio_processor,
                 );
                 identity.segment_id = next_segment_id;
                 identity.context_epoch = 1;
                 frame_gate.reset(1);
                 current_user_utterance = false;
+                speech_activity.reset();
                 event_sequence = 0;
                 standby = false;
                 let _ = events.send(WorkerEvent::SegmentWoken {
@@ -611,11 +664,14 @@ fn run_session(
                 if policy.media_paused {
                     drain_runtime_media(
                         &microphone,
+                        fairy_reference.as_mut(),
                         game_audio.as_mut(),
                         video.as_ref(),
                         playback.as_ref(),
+                        &mut audio_processor,
                     );
                     current_user_utterance = false;
+                    speech_activity.reset();
                 }
                 let _ = events.send(WorkerEvent::ResourcePolicyApplied {
                     session_id: identity.session_id.clone(),
@@ -635,6 +691,17 @@ fn run_session(
                 }
             }
             Err(mpsc::TryRecvError::Empty) => {}
+        }
+        if let Some(capture) = fairy_reference.as_mut() {
+            while let Some(packet) = capture.try_recv() {
+                if standby || resource_policy.media_paused {
+                    drop(packet);
+                    continue;
+                }
+                let mut samples = resample_pcm16(&packet.pcm16, packet.sample_rate, 16_000);
+                audio_processor.push_render_reference(&samples);
+                samples.zeroize();
+            }
         }
         if let Some(capture) = game_audio.as_mut() {
             while let Some(packet) = capture.try_recv() {
@@ -668,18 +735,54 @@ fn run_session(
                 continue;
             }
             let mut samples = resample_pcm16(&packet.pcm16, packet.sample_rate, 16_000);
-            audio_input_samples = audio_input_samples.saturating_add(samples.len() as u64);
-            let mut bytes = Vec::with_capacity(samples.len() * 2);
-            for sample in &samples {
-                bytes.extend_from_slice(&sample.to_le_bytes());
-            }
+            let processed = audio_processor.process_microphone(&samples);
             samples.zeroize();
-            if let Err(error) = active_backend.push_microphone(&bytes) {
+            for mut frame in processed {
+                if frame.speech_started {
+                    frame_gate.note_user_question(elapsed_ms(session_start));
+                    if speech_activity.local_started() {
+                        interruption_count = interruption_count.saturating_add(1);
+                        if let Some(playback) = playback.as_ref() {
+                            playback.clear();
+                        }
+                        let _ = events.send(WorkerEvent::BargeIn {
+                            session_id: identity.session_id.clone(),
+                            segment_id: identity.segment_id.clone(),
+                            context_epoch: identity.context_epoch,
+                        });
+                        let _ = events.send(WorkerEvent::Presence {
+                            session_id: identity.session_id.clone(),
+                            segment_id: identity.segment_id.clone(),
+                            context_epoch: identity.context_epoch,
+                            state: "listening".to_owned(),
+                            level: None,
+                        });
+                    }
+                }
+                if frame.speech_stopped {
+                    if speech_activity.local_stopped() {
+                        let _ = events.send(WorkerEvent::Presence {
+                            session_id: identity.session_id.clone(),
+                            segment_id: identity.segment_id.clone(),
+                            context_epoch: identity.context_epoch,
+                            state: "analyzing".to_owned(),
+                            level: None,
+                        });
+                    }
+                }
+                audio_input_samples = audio_input_samples.saturating_add(frame.pcm16.len() as u64);
+                let mut bytes = Vec::with_capacity(frame.pcm16.len() * 2);
+                for sample in &frame.pcm16 {
+                    bytes.extend_from_slice(&sample.to_le_bytes());
+                }
+                frame.pcm16.zeroize();
+                if let Err(error) = active_backend.push_microphone(&bytes) {
+                    bytes.zeroize();
+                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
+                    return;
+                }
                 bytes.zeroize();
-                emit_backend_failure(&events, &identity, &error, candidate_emitted);
-                return;
             }
-            bytes.zeroize();
         }
         let now_ms = elapsed_ms(session_start);
         if resource_policy.media_paused {
@@ -813,31 +916,35 @@ fn run_session(
                 }
                 BackendEvent::SpeechStarted => {
                     frame_gate.note_user_question(elapsed_ms(session_start));
-                    interruption_count = interruption_count.saturating_add(1);
-                    if let Some(playback) = playback.as_ref() {
-                        playback.clear();
+                    if speech_activity.backend_started() {
+                        interruption_count = interruption_count.saturating_add(1);
+                        if let Some(playback) = playback.as_ref() {
+                            playback.clear();
+                        }
+                        let _ = events.send(WorkerEvent::BargeIn {
+                            session_id: identity.session_id.clone(),
+                            segment_id: identity.segment_id.clone(),
+                            context_epoch: identity.context_epoch,
+                        });
+                        let _ = events.send(WorkerEvent::Presence {
+                            session_id: identity.session_id.clone(),
+                            segment_id: identity.segment_id.clone(),
+                            context_epoch: identity.context_epoch,
+                            state: "listening".to_owned(),
+                            level: None,
+                        });
                     }
-                    let _ = events.send(WorkerEvent::BargeIn {
-                        session_id: identity.session_id.clone(),
-                        segment_id: identity.segment_id.clone(),
-                        context_epoch: identity.context_epoch,
-                    });
-                    let _ = events.send(WorkerEvent::Presence {
-                        session_id: identity.session_id.clone(),
-                        segment_id: identity.segment_id.clone(),
-                        context_epoch: identity.context_epoch,
-                        state: "listening".to_owned(),
-                        level: None,
-                    });
                 }
                 BackendEvent::SpeechStopped => {
-                    let _ = events.send(WorkerEvent::Presence {
-                        session_id: identity.session_id.clone(),
-                        segment_id: identity.segment_id.clone(),
-                        context_epoch: identity.context_epoch,
-                        state: "analyzing".to_owned(),
-                        level: None,
-                    });
+                    if speech_activity.backend_stopped() {
+                        let _ = events.send(WorkerEvent::Presence {
+                            session_id: identity.session_id.clone(),
+                            segment_id: identity.segment_id.clone(),
+                            context_epoch: identity.context_epoch,
+                            state: "analyzing".to_owned(),
+                            level: None,
+                        });
+                    }
                 }
                 BackendEvent::ToolCall {
                     call_id,
@@ -924,13 +1031,68 @@ fn elapsed_ms(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
+#[derive(Default)]
+struct SpeechActivityArbiter {
+    local_active: bool,
+    backend_active: bool,
+    barge_in_announced: bool,
+}
+
+impl SpeechActivityArbiter {
+    fn local_started(&mut self) -> bool {
+        self.local_active = true;
+        self.announce_once()
+    }
+
+    fn local_stopped(&mut self) -> bool {
+        self.local_active = false;
+        self.finish_if_inactive()
+    }
+
+    fn backend_started(&mut self) -> bool {
+        self.backend_active = true;
+        self.announce_once()
+    }
+
+    fn backend_stopped(&mut self) -> bool {
+        self.backend_active = false;
+        self.finish_if_inactive()
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn announce_once(&mut self) -> bool {
+        if self.barge_in_announced {
+            return false;
+        }
+        self.barge_in_announced = true;
+        true
+    }
+
+    fn finish_if_inactive(&mut self) -> bool {
+        if self.local_active || self.backend_active {
+            return false;
+        }
+        let had_utterance = self.barge_in_announced;
+        self.barge_in_announced = false;
+        had_utterance
+    }
+}
+
 fn drain_runtime_media(
     microphone: &MicrophoneCapture,
+    fairy_reference: Option<&mut ProcessLoopbackCapture>,
     application_audio: Option<&mut ProcessLoopbackCapture>,
     video: Option<&VideoCapture>,
     playback: Option<&AudioPlayback>,
+    audio_processor: &mut RealtimeAudioProcessor,
 ) {
     while microphone.try_recv().is_some() {}
+    if let Some(capture) = fairy_reference {
+        while capture.try_recv().is_some() {}
+    }
     if let Some(capture) = application_audio {
         while capture.try_recv().is_some() {}
     }
@@ -940,6 +1102,7 @@ fn drain_runtime_media(
     if let Some(playback) = playback {
         playback.clear();
     }
+    audio_processor.reset();
 }
 
 fn application_audio_scope_supported(
@@ -1107,6 +1270,18 @@ mod tests {
         assert!(startup_cancel_requested(&receiver, &cancelled));
         assert!(started.elapsed() < Duration::from_millis(100));
         assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn local_and_provider_vad_share_one_barge_in_lifecycle() {
+        let mut activity = SpeechActivityArbiter::default();
+        assert!(activity.local_started());
+        assert!(!activity.backend_started());
+        assert!(!activity.local_stopped());
+        assert!(activity.backend_stopped());
+        assert!(activity.backend_started());
+        activity.reset();
+        assert!(activity.local_started());
     }
 
     #[test]

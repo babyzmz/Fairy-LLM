@@ -164,11 +164,17 @@ impl MicrophoneCapture {
 #[cfg(target_os = "windows")]
 impl ProcessLoopbackCapture {
     pub fn start(source_id: u64) -> Result<Self, MediaError> {
+        Self::start_process_tree(process_id_for_window(source_id)?)
+    }
+
+    pub fn start_process_tree(process_id: u32) -> Result<Self, MediaError> {
         use flexaudio_core::types::ProcessMode;
         use flexaudio_core::{raw_ring, CaptureBackend, RawSink};
         use flexaudio_os_windows::WasapiProcessBackend;
 
-        let process_id = process_id_for_window(source_id)?;
+        if process_id == 0 {
+            return Err(MediaError::ProcessLoopbackUnavailable);
+        }
         let (producer, consumer) = raw_ring(PROCESS_AUDIO_RING_SAMPLES);
         let sink = RawSink::new(producer, 48_000, 2);
         let mut backend = WasapiProcessBackend::new(process_id, ProcessMode::Include);
@@ -215,6 +221,10 @@ pub struct ProcessLoopbackCapture;
 #[cfg(not(target_os = "windows"))]
 impl ProcessLoopbackCapture {
     pub fn start(_source_id: u64) -> Result<Self, MediaError> {
+        Err(MediaError::ProcessLoopbackUnavailable)
+    }
+
+    pub fn start_process_tree(_process_id: u32) -> Result<Self, MediaError> {
         Err(MediaError::ProcessLoopbackUnavailable)
     }
 

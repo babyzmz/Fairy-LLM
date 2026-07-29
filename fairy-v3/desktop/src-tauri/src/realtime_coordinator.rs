@@ -1058,6 +1058,7 @@ fn worker_presence_input(
             None,
         )),
         WorkerEvent::Ready { .. }
+        | WorkerEvent::MediaChannelState { .. }
         | WorkerEvent::LocalSidecarFailure { .. }
         | WorkerEvent::ResourceSample { .. }
         | WorkerEvent::Usage { .. }

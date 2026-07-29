@@ -219,6 +219,7 @@ pub struct BackendStartRequest {
     pub activity_profile: RealtimeActivityProfile,
     pub interaction_intensity: RealtimeInteractionIntensity,
     pub voice_output: RealtimeVoiceOutput,
+    pub desktop_host_process_id: u32,
     pub source_id: Option<u64>,
     pub microphone_enabled: bool,
     pub screen_enabled: bool,
@@ -236,6 +237,7 @@ pub fn validate_backend_start(request: &BackendStartRequest) -> Result<(), Start
     let mut valid = !request.session_id.trim().is_empty()
         && !request.segment_id.trim().is_empty()
         && request.context_epoch > 0
+        && request.desktop_host_process_id > 0
         && request.persona_snapshot_present
         && request.screen_enabled == request.source_id.is_some()
         && (request.screen_enabled || !request.application_audio_enabled);
@@ -275,6 +277,7 @@ mod tests {
             activity_profile: RealtimeActivityProfile::Auto,
             interaction_intensity: RealtimeInteractionIntensity::Standard,
             voice_output: RealtimeVoiceOutput::FairyVoice,
+            desktop_host_process_id: 4_242,
             source_id: Some(42),
             microphone_enabled: true,
             screen_enabled: true,
@@ -349,6 +352,10 @@ mod tests {
 
         let mut request = local_request();
         request.persona_snapshot_present = false;
+        assert!(validate_backend_start(&request).is_err());
+
+        let mut request = local_request();
+        request.desktop_host_process_id = 0;
         assert!(validate_backend_start(&request).is_err());
     }
 

@@ -44,6 +44,7 @@ pub fn validate_start(
         activity_profile: RealtimeActivityProfile::Game,
         interaction_intensity: RealtimeInteractionIntensity::Standard,
         voice_output,
+        desktop_host_process_id: 1,
         source_id,
         microphone_enabled: true,
         screen_enabled,

@@ -1,3 +1,4 @@
+mod audio_processing;
 mod backend;
 mod frame_gate;
 mod media;
@@ -9,6 +10,10 @@ mod runtime_events;
 mod session;
 mod transport;
 
+pub use audio_processing::{
+    ProcessedAudioFrame, RealtimeAudioProcessor, RealtimeMicrophoneProcessor,
+    AUDIO_PROCESSING_FRAME_SAMPLES, AUDIO_PROCESSING_SAMPLE_RATE,
+};
 pub use backend::{
     validate_backend_start, BackendStartRequest, LocalOmniLaunch, RealtimeActivityProfile,
     RealtimeBackendKind, RealtimeCandidateDecision, RealtimeCloudProviderKind,
