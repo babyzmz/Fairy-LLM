@@ -54,9 +54,10 @@ use realtime_backend_resolver::{
 };
 use realtime_worker::{
     bundled_realtime_launch, development_realtime_launch, RealtimeWorkerExtendInput,
-    RealtimeWorkerManager, RealtimeWorkerSetInputInput, RealtimeWorkerSetPolicyInput,
-    RealtimeWorkerSpeechStateInput, RealtimeWorkerStartInput, RealtimeWorkerStatus,
-    RealtimeWorkerStopInput, RealtimeWorkerToolResultInput, RealtimeWorkerWakeInput,
+    RealtimeWorkerManager, RealtimeWorkerReplaceSourceInput, RealtimeWorkerRetryMediaInput,
+    RealtimeWorkerSetInputInput, RealtimeWorkerSetPolicyInput, RealtimeWorkerSpeechStateInput,
+    RealtimeWorkerStartInput, RealtimeWorkerStatus, RealtimeWorkerStopInput,
+    RealtimeWorkerToolResultInput, RealtimeWorkerWakeInput,
 };
 use voice_worker::{
     bundled_voice_launch, development_voice_launch, prepared_realtime_session,
@@ -98,6 +99,7 @@ pub mod realtime_backend_resolver;
 pub mod realtime_context;
 pub mod realtime_coordinator;
 pub mod realtime_dialogue;
+pub mod realtime_privacy;
 pub mod realtime_resource_governor;
 pub mod realtime_sidecar_supervisor;
 pub mod realtime_worker;
@@ -938,6 +940,32 @@ async fn realtime_worker_set_input(
     state
         .realtime
         .set_input(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn realtime_worker_retry_media(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerRetryMediaInput,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .realtime
+        .retry_media_channel(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn realtime_worker_replace_source(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerReplaceSourceInput,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .realtime
+        .replace_capture_source(input)
         .map_err(|error| error.to_string())
 }
 
@@ -5447,6 +5475,8 @@ pub fn run() {
             realtime_worker_stop,
             realtime_worker_tool_result,
             realtime_worker_set_input,
+            realtime_worker_retry_media,
+            realtime_worker_replace_source,
             realtime_worker_set_policy,
             realtime_worker_wake,
             realtime_worker_pause_privacy,
@@ -5660,6 +5690,8 @@ mod realtime_activation_tests {
             online_assistance_enabled: false,
             cloud_microphone_upload_consent: true,
             cloud_screen_upload_consent: true,
+            capture_mode: crate::realtime_privacy::RealtimeCaptureMode::SelectedWindow,
+            excluded_applications: Vec::new(),
         }
     }
 

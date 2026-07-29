@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -29,7 +30,13 @@ use crate::realtime_coordinator::{
     RealtimeCoordinatorEvent, RealtimeCoordinatorStart, RealtimeCoordinatorState,
     RealtimePresenceProjection, RealtimePresenceState, RealtimeWakeTransition,
 };
-use crate::realtime_dialogue::{RealtimeDialogueDecision, RealtimeDialogueDirector};
+use crate::realtime_dialogue::{
+    RealtimeDialogueDecision, RealtimeDialogueDirector, RealtimeEnvironmentGates,
+};
+use crate::realtime_privacy::{
+    inspect_window, normalize_excluded_applications, sample_foreground_window, RealtimeCaptureMode,
+    RealtimeSensitiveCategory,
+};
 use crate::realtime_resource_governor::{
     RealtimeResourceGovernor, RealtimeResourceSample, RealtimeResourceSnapshot,
 };
@@ -81,6 +88,10 @@ pub struct RealtimeWorkerStartInput {
     pub online_assistance_enabled: bool,
     pub cloud_microphone_upload_consent: bool,
     pub cloud_screen_upload_consent: bool,
+    #[serde(default)]
+    pub capture_mode: RealtimeCaptureMode,
+    #[serde(default)]
+    pub excluded_applications: Vec<String>,
 }
 
 impl RealtimeWorkerStartInput {
@@ -109,6 +120,18 @@ pub struct RealtimeWorkerSetInputInput {
     pub session_id: String,
     pub microphone: bool,
     pub video: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RealtimeWorkerRetryMediaInput {
+    pub session_id: String,
+    pub channel: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RealtimeWorkerReplaceSourceInput {
+    pub session_id: String,
+    pub source_id: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -151,8 +174,28 @@ pub struct RealtimeWorkerStatus {
     pub assistance: Vec<RealtimeAssistancePublicState>,
     pub resource: Option<RealtimeResourceSnapshot>,
     pub sidecar: RealtimeSidecarSnapshot,
+    pub capture_scope: Option<RealtimeCaptureScopePublicState>,
+    pub media_channels: Vec<RealtimeMediaChannelPublicState>,
     #[serde(flatten)]
     pub usage: RealtimeWorkerUsage,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RealtimeCaptureScopePublicState {
+    pub mode: RealtimeCaptureMode,
+    pub source_sequence: u64,
+    pub source_available: bool,
+    pub privacy_paused: bool,
+    pub sensitive_category: Option<RealtimeSensitiveCategory>,
+    pub error_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RealtimeMediaChannelPublicState {
+    pub channel: String,
+    pub sequence: u64,
+    pub status: String,
+    pub error_code: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -194,6 +237,8 @@ struct WorkerGovernanceHandles {
     resource_governor: Arc<Mutex<Option<RealtimeResourceGovernor>>>,
     sidecar_supervisor: Arc<Mutex<RealtimeSidecarSupervisor>>,
     recovery: Arc<Mutex<Option<RealtimeRecoveryEnvelope>>>,
+    capture_scope: Arc<Mutex<Option<RealtimeCaptureScopeState>>>,
+    media_channels: Arc<Mutex<BTreeMap<String, RealtimeMediaChannelPublicState>>>,
     local_omni: LocalOmniLaunch,
 }
 
@@ -239,6 +284,35 @@ impl RealtimeRecoveryEnvelope {
     }
 }
 
+#[derive(Clone)]
+struct RealtimeCaptureScopeState {
+    mode: RealtimeCaptureMode,
+    requested_source_id: Option<u64>,
+    effective_source_id: Option<u64>,
+    source_sequence: u64,
+    pending_source_id: Option<u64>,
+    pending_source_sequence: Option<u64>,
+    privacy_paused: bool,
+    sensitive_category: Option<RealtimeSensitiveCategory>,
+    error_code: Option<String>,
+    excluded_applications: Vec<String>,
+    screen_enabled: bool,
+    application_audio_enabled: bool,
+}
+
+impl RealtimeCaptureScopeState {
+    fn public(&self) -> RealtimeCaptureScopePublicState {
+        RealtimeCaptureScopePublicState {
+            mode: self.mode,
+            source_sequence: self.source_sequence,
+            source_available: self.effective_source_id.is_some(),
+            privacy_paused: self.privacy_paused,
+            sensitive_category: self.sensitive_category,
+            error_code: self.error_code.clone(),
+        }
+    }
+}
+
 enum DialogueGovernance {
     Projection(Value),
     Rotate(PendingContextRotation),
@@ -257,6 +331,8 @@ pub struct RealtimeWorkerManager {
     resource_governor: Arc<Mutex<Option<RealtimeResourceGovernor>>>,
     sidecar_supervisor: Arc<Mutex<RealtimeSidecarSupervisor>>,
     recovery: Arc<Mutex<Option<RealtimeRecoveryEnvelope>>>,
+    capture_scope: Arc<Mutex<Option<RealtimeCaptureScopeState>>>,
+    media_channels: Arc<Mutex<BTreeMap<String, RealtimeMediaChannelPublicState>>>,
 }
 
 impl RealtimeWorkerManager {
@@ -278,6 +354,8 @@ impl RealtimeWorkerManager {
             resource_governor: Arc::new(Mutex::new(None)),
             sidecar_supervisor: Arc::new(Mutex::new(sidecar_supervisor)),
             recovery: Arc::new(Mutex::new(None)),
+            capture_scope: Arc::new(Mutex::new(None)),
+            media_channels: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -319,6 +397,8 @@ impl RealtimeWorkerManager {
             assistance: self.assistance.snapshot(session_id.as_deref()),
             resource: self.resource_snapshot(),
             sidecar: self.sidecar_snapshot(),
+            capture_scope: self.capture_scope_snapshot(),
+            media_channels: self.media_channels_snapshot(),
             session_id,
             segment_id: projection.as_ref().map(|value| value.0.clone()),
             context_epoch: projection.as_ref().map(|value| value.1),
@@ -455,7 +535,14 @@ impl RealtimeWorkerManager {
             .map_err(|_| RealtimeWorkerError::Protocol)?
         };
         let identity = coordinator.active_identity().clone();
-        let director = RealtimeDialogueDirector::new(
+        let excluded_applications = normalize_excluded_applications(&input.excluded_applications)
+            .map_err(|_| RealtimeWorkerError::Protocol)?;
+        let source_decision = input
+            .source_id
+            .map(|source_id| inspect_window(source_id, &excluded_applications));
+        let source_sensitive = source_decision.is_some_and(|decision| decision.sensitive.is_some());
+        let ambient = crate::ambient_context::sample_ambient_device_facts();
+        let mut director = RealtimeDialogueDirector::new(
             identity.session_id.clone(),
             identity.segment_id.clone(),
             identity.epoch,
@@ -463,6 +550,28 @@ impl RealtimeWorkerManager {
             input.voice_output,
         )
         .ok_or(RealtimeWorkerError::Protocol)?;
+        director.set_environment(RealtimeEnvironmentGates {
+            locked: ambient.locked,
+            do_not_disturb: ambient.do_not_disturb,
+            sensitive_window: source_sensitive,
+            privacy_paused: false,
+        });
+        let capture_scope = RealtimeCaptureScopeState {
+            mode: input.capture_mode,
+            requested_source_id: input.source_id,
+            effective_source_id: (!source_sensitive).then_some(input.source_id).flatten(),
+            source_sequence: 1,
+            pending_source_id: None,
+            pending_source_sequence: None,
+            privacy_paused: source_sensitive,
+            sensitive_category: source_decision.and_then(|decision| decision.sensitive),
+            error_code: source_decision
+                .and_then(|decision| decision.sensitive)
+                .map(|category| category.public_code().to_owned()),
+            excluded_applications,
+            screen_enabled: input.screen_enabled,
+            application_audio_enabled: input.application_audio_enabled,
+        };
         let previous_dialogue = self
             .dialogue
             .lock()
@@ -526,6 +635,8 @@ impl RealtimeWorkerManager {
                 resource_governor: Arc::clone(&self.resource_governor),
                 sidecar_supervisor: Arc::clone(&self.sidecar_supervisor),
                 recovery: Arc::clone(&self.recovery),
+                capture_scope: Arc::clone(&self.capture_scope),
+                media_channels: Arc::clone(&self.media_channels),
                 local_omni: self.launch.local_omni.clone(),
             },
         ) {
@@ -566,10 +677,13 @@ impl RealtimeWorkerManager {
             interaction_intensity: input.interaction_intensity,
             voice_output: input.voice_output,
             desktop_host_process_id: std::process::id(),
-            source_id: input.source_id,
+            source_id: (!capture_scope.privacy_paused)
+                .then_some(input.source_id)
+                .flatten(),
             microphone_enabled: input.microphone_enabled,
-            screen_enabled: input.screen_enabled,
-            application_audio_enabled: input.application_audio_enabled,
+            screen_enabled: input.screen_enabled && !capture_scope.privacy_paused,
+            application_audio_enabled: input.application_audio_enabled
+                && !capture_scope.privacy_paused,
             online_assistance_enabled: input.online_assistance_enabled,
         };
         self.assistance.attach_session(
@@ -617,6 +731,13 @@ impl RealtimeWorkerManager {
                 presence_projection_payload(projection),
             );
         }
+        *self
+            .capture_scope
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)? = Some(capture_scope);
+        if let Ok(mut channels) = self.media_channels.lock() {
+            channels.clear();
+        }
         process.session_id = Some(input.session_id);
         let status = RealtimeWorkerStatus {
             running: true,
@@ -630,6 +751,8 @@ impl RealtimeWorkerManager {
             assistance: self.assistance.snapshot(process.session_id.as_deref()),
             resource: self.resource_snapshot(),
             sidecar: self.sidecar_snapshot(),
+            capture_scope: self.capture_scope_snapshot(),
+            media_channels: self.media_channels_snapshot(),
             usage: self.usage_snapshot(),
         };
         *guard = Some(process);
@@ -664,6 +787,8 @@ impl RealtimeWorkerManager {
                 assistance: Vec::new(),
                 resource: None,
                 sidecar: self.sidecar_snapshot(),
+                capture_scope: None,
+                media_channels: Vec::new(),
                 usage: self.usage_snapshot(),
             });
         };
@@ -699,6 +824,8 @@ impl RealtimeWorkerManager {
                     assistance: Vec::new(),
                     resource: None,
                     sidecar: self.sidecar_snapshot(),
+                    capture_scope: None,
+                    media_channels: Vec::new(),
                     usage: self.usage_snapshot(),
                 });
             }
@@ -724,6 +851,8 @@ impl RealtimeWorkerManager {
             assistance: Vec::new(),
             resource: None,
             sidecar: self.sidecar_snapshot(),
+            capture_scope: None,
+            media_channels: Vec::new(),
             usage: self.usage_snapshot(),
         })
     }
@@ -768,6 +897,160 @@ impl RealtimeWorkerManager {
                 video: input.video,
             },
         )
+    }
+
+    pub fn retry_media_channel(
+        &self,
+        input: RealtimeWorkerRetryMediaInput,
+    ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+        if !matches!(
+            input.channel.as_str(),
+            "microphone"
+                | "selected_window"
+                | "selected_application_audio"
+                | "fairy_render_reference"
+        ) {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        let guard = self
+            .process
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?;
+        let process = guard.as_ref().ok_or(RealtimeWorkerError::Unavailable)?;
+        if process.session_id.as_deref() != Some(input.session_id.as_str()) {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        let identity = self
+            .active_identity
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?
+            .clone()
+            .ok_or(RealtimeWorkerError::Unavailable)?;
+        let source_sequence = self
+            .capture_scope
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?
+            .as_ref()
+            .map(|scope| scope.source_sequence)
+            .ok_or(RealtimeWorkerError::Unavailable)?;
+        send_command(
+            &process.input,
+            &HostCommand::RetryMediaChannel {
+                session_id: identity.session_id,
+                segment_id: identity.segment_id,
+                context_epoch: identity.epoch,
+                channel: input.channel,
+                source_sequence,
+            },
+        )?;
+        drop(guard);
+        Ok(self.status())
+    }
+
+    pub fn replace_capture_source(
+        &self,
+        input: RealtimeWorkerReplaceSourceInput,
+    ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+        let decision = {
+            let scope = self
+                .capture_scope
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let scope = scope.as_ref().ok_or(RealtimeWorkerError::Unavailable)?;
+            inspect_window(input.source_id, &scope.excluded_applications)
+        };
+        if !decision.is_safe() {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        let guard = self
+            .process
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?;
+        let process = guard.as_ref().ok_or(RealtimeWorkerError::Unavailable)?;
+        if process.session_id.as_deref() != Some(input.session_id.as_str()) {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        let privacy_paused = self
+            .capture_scope
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?
+            .as_ref()
+            .is_some_and(|scope| scope.privacy_paused);
+        let pending = {
+            let mut coordinator = self
+                .coordinator
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let coordinator = coordinator
+                .as_mut()
+                .ok_or(RealtimeWorkerError::Unavailable)?;
+            if privacy_paused {
+                coordinator
+                    .apply(RealtimeCoordinatorEvent::ResumePrivacy)
+                    .map_err(|_| RealtimeWorkerError::Protocol)?;
+                coordinator
+                    .pending_context_rotation()
+                    .cloned()
+                    .ok_or(RealtimeWorkerError::Protocol)?
+            } else {
+                coordinator
+                    .prepare_context_rotation(ContextRotationReason::WindowChanged)
+                    .map_err(|_| RealtimeWorkerError::Protocol)?
+            }
+        };
+        let carryover = self.build_context_carryover(
+            &pending.current,
+            &pending.current.segment_id,
+            pending.next_epoch,
+        )?;
+        let (source_sequence, screen_enabled, application_audio_enabled) = {
+            let scope = self
+                .capture_scope
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let scope = scope.as_ref().ok_or(RealtimeWorkerError::Unavailable)?;
+            (
+                scope.source_sequence.saturating_add(1),
+                scope.screen_enabled,
+                scope.application_audio_enabled,
+            )
+        };
+        let command = HostCommand::ReplaceCaptureSource {
+            session_id: pending.current.session_id.clone(),
+            segment_id: pending.current.segment_id.clone(),
+            current_context_epoch: pending.current.epoch,
+            next_context_epoch: pending.next_epoch,
+            source_id: input.source_id,
+            source_sequence,
+            screen_enabled,
+            application_audio_enabled,
+            reason: pending.reason.as_str().to_owned(),
+            carryover,
+        };
+        if send_command(&process.input, &command).is_err() {
+            let _ = self
+                .coordinator
+                .lock()
+                .ok()
+                .and_then(|mut coordinator| coordinator.as_mut()?.fail_context_rotation().ok());
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        if let Ok(mut scope) = self.capture_scope.lock() {
+            if let Some(scope) = scope.as_mut() {
+                scope.requested_source_id = Some(input.source_id);
+                scope.pending_source_id = Some(input.source_id);
+                scope.pending_source_sequence = Some(source_sequence);
+            }
+        }
+        if let Ok(mut active) = self.active_identity.lock() {
+            *active = Some(ContextEpochIdentity {
+                session_id: pending.current.session_id,
+                segment_id: pending.current.segment_id,
+                epoch: pending.next_epoch,
+            });
+        }
+        drop(guard);
+        Ok(self.status())
     }
 
     pub fn set_policy(
@@ -1188,6 +1471,20 @@ impl RealtimeWorkerManager {
             })
     }
 
+    fn capture_scope_snapshot(&self) -> Option<RealtimeCaptureScopePublicState> {
+        self.capture_scope
+            .lock()
+            .ok()
+            .and_then(|scope| scope.as_ref().map(RealtimeCaptureScopeState::public))
+    }
+
+    fn media_channels_snapshot(&self) -> Vec<RealtimeMediaChannelPublicState> {
+        self.media_channels
+            .lock()
+            .map(|channels| channels.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
     pub fn sidecar_quarantined(&self) -> bool {
         self.sidecar_snapshot().quarantined
     }
@@ -1246,6 +1543,12 @@ impl RealtimeWorkerManager {
         }
         if let Ok(mut recovery) = self.recovery.lock() {
             *recovery = None;
+        }
+        if let Ok(mut capture_scope) = self.capture_scope.lock() {
+            *capture_scope = None;
+        }
+        if let Ok(mut media_channels) = self.media_channels.lock() {
+            media_channels.clear();
         }
     }
 
@@ -1388,6 +1691,13 @@ fn build_context_carryover_from_state(
 }
 
 fn validate_capture_scope(input: &RealtimeWorkerStartInput) -> Result<(), RealtimeWorkerError> {
+    normalize_excluded_applications(&input.excluded_applications)
+        .map_err(|_| RealtimeWorkerError::Protocol)?;
+    if input.capture_mode == RealtimeCaptureMode::FollowForeground
+        && input.backend != RealtimeBackendKind::LocalMiniCpmO45
+    {
+        return Err(RealtimeWorkerError::Protocol);
+    }
     validate_backend_start(&BackendStartRequest {
         session_id: input.session_id.clone(),
         segment_id: "tauri-pending-segment".to_owned(),
@@ -1439,6 +1749,8 @@ fn spawn_worker(
         resource_governor,
         sidecar_supervisor,
         recovery,
+        capture_scope,
+        media_channels,
         local_omni,
     } = governance;
     if !launch.program.is_file() {
@@ -1480,6 +1792,19 @@ fn spawn_worker(
     let tick_expected_shutdown = Arc::clone(&expected_shutdown);
     let tick_terminal = Arc::clone(&terminal);
     let tick_app = app.clone();
+    let reader_capture_scope = Arc::clone(&capture_scope);
+    let reader_media_channels = Arc::clone(&media_channels);
+    let monitor_input = Arc::clone(&input);
+    let monitor_active_identity = Arc::clone(&active_identity);
+    let monitor_coordinator = Arc::clone(&coordinator);
+    let monitor_dialogue = Arc::clone(&dialogue);
+    let monitor_context = Arc::clone(&context);
+    let monitor_assistance = Arc::clone(&assistance);
+    let monitor_capture_scope = Arc::clone(&capture_scope);
+    let monitor_recovery = Arc::clone(&recovery);
+    let monitor_expected_shutdown = Arc::clone(&expected_shutdown);
+    let monitor_terminal = Arc::clone(&terminal);
+    let monitor_app = app.clone();
     thread::spawn(move || {
         let first = read_frame::<Value>(&mut reader);
         let ready = matches!(
@@ -1501,6 +1826,12 @@ fn spawn_worker(
                     if !coordinator_allows_worker_event(&value, &coordinator) {
                         continue;
                     }
+                    observe_media_projection(
+                        &value,
+                        &reader_capture_scope,
+                        &reader_media_channels,
+                        &recovery,
+                    );
                     if handle_local_sidecar_failure(
                         &value,
                         &app,
@@ -1757,6 +2088,21 @@ fn spawn_worker(
             started_at,
         );
     });
+    thread::spawn(move || {
+        run_realtime_environment_monitor(
+            monitor_app,
+            monitor_input,
+            monitor_active_identity,
+            monitor_coordinator,
+            monitor_dialogue,
+            monitor_context,
+            monitor_assistance,
+            monitor_capture_scope,
+            monitor_recovery,
+            monitor_expected_shutdown,
+            monitor_terminal,
+        );
+    });
     match ready_rx.recv_timeout(Duration::from_secs(5)) {
         Ok(true) => Ok(WorkerProcess {
             child,
@@ -1770,6 +2116,323 @@ fn spawn_worker(
             let _ = child.wait();
             Err(RealtimeWorkerError::Protocol)
         }
+    }
+}
+
+fn observe_media_projection(
+    value: &Value,
+    capture_scope: &Mutex<Option<RealtimeCaptureScopeState>>,
+    media_channels: &Mutex<BTreeMap<String, RealtimeMediaChannelPublicState>>,
+    recovery: &Mutex<Option<RealtimeRecoveryEnvelope>>,
+) {
+    match value.get("type").and_then(Value::as_str) {
+        Some("media_channel_state") => {
+            let Some(channel) = value.get("channel").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(sequence) = value.get("sequence").and_then(Value::as_u64) else {
+                return;
+            };
+            let Some(status) = value.get("status").and_then(Value::as_str) else {
+                return;
+            };
+            let Ok(mut channels) = media_channels.lock() else {
+                return;
+            };
+            if channels
+                .get(channel)
+                .is_some_and(|current| current.sequence >= sequence)
+            {
+                return;
+            }
+            channels.insert(
+                channel.to_owned(),
+                RealtimeMediaChannelPublicState {
+                    channel: channel.to_owned(),
+                    sequence,
+                    status: status.to_owned(),
+                    error_code: value
+                        .get("error_code")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                },
+            );
+        }
+        Some("capture_source_changed") => {
+            let Some(source_id) = value.get("source_id").and_then(Value::as_u64) else {
+                return;
+            };
+            let Some(source_sequence) = value.get("source_sequence").and_then(Value::as_u64) else {
+                return;
+            };
+            let status = value.get("status").and_then(Value::as_str);
+            let Ok(mut scope) = capture_scope.lock() else {
+                return;
+            };
+            let Some(scope) = scope.as_mut() else {
+                return;
+            };
+            if scope.pending_source_id != Some(source_id)
+                || scope.pending_source_sequence != Some(source_sequence)
+            {
+                return;
+            }
+            scope.pending_source_id = None;
+            scope.pending_source_sequence = None;
+            scope.source_sequence = source_sequence;
+            if status == Some("active") {
+                scope.requested_source_id = Some(source_id);
+                scope.effective_source_id = Some(source_id);
+                scope.privacy_paused = false;
+                scope.sensitive_category = None;
+                scope.error_code = None;
+                if let Ok(mut recovery) = recovery.lock() {
+                    if let Some(recovery) = recovery.as_mut() {
+                        recovery.source_id = Some(source_id);
+                        recovery.screen_enabled = scope.screen_enabled;
+                        recovery.application_audio_enabled = scope.application_audio_enabled;
+                    }
+                }
+            } else {
+                scope.effective_source_id = None;
+                scope.privacy_paused = true;
+                scope.sensitive_category = Some(RealtimeSensitiveCategory::ProtectedContent);
+                scope.error_code = Some("CAPTURE_SOURCE_UNAVAILABLE".to_owned());
+            }
+        }
+        _ => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_realtime_environment_monitor(
+    app: AppHandle,
+    input: Arc<Mutex<ChildStdin>>,
+    active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
+    coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
+    dialogue: Arc<Mutex<Option<RealtimeDialogueDirector>>>,
+    context: Arc<Mutex<RealtimeContextAuthority>>,
+    assistance: Arc<RealtimeAssistanceRouter>,
+    capture_scope: Arc<Mutex<Option<RealtimeCaptureScopeState>>>,
+    recovery: Arc<Mutex<Option<RealtimeRecoveryEnvelope>>>,
+    expected_shutdown: Arc<AtomicBool>,
+    terminal: Arc<AtomicBool>,
+) {
+    while !expected_shutdown.load(Ordering::Acquire) && !terminal.load(Ordering::Acquire) {
+        thread::sleep(Duration::from_millis(350));
+        let Some(identity) = active_identity
+            .lock()
+            .ok()
+            .and_then(|identity| identity.clone())
+        else {
+            continue;
+        };
+        let Some(scope_snapshot) = capture_scope.lock().ok().and_then(|scope| scope.clone()) else {
+            continue;
+        };
+        let ambient = crate::ambient_context::sample_ambient_device_facts();
+        if !scope_snapshot.screen_enabled {
+            if let Ok(mut director) = dialogue.lock() {
+                if let Some(director) = director.as_mut() {
+                    director.set_environment(RealtimeEnvironmentGates {
+                        locked: ambient.locked,
+                        do_not_disturb: ambient.do_not_disturb,
+                        sensitive_window: false,
+                        privacy_paused: false,
+                    });
+                }
+            }
+            continue;
+        }
+        let decision = match scope_snapshot.mode {
+            RealtimeCaptureMode::SelectedWindow => scope_snapshot
+                .requested_source_id
+                .or(scope_snapshot.pending_source_id)
+                .map(|source_id| inspect_window(source_id, &scope_snapshot.excluded_applications))
+                .unwrap_or_else(crate::realtime_privacy::RealtimeWindowDecision::unavailable),
+            RealtimeCaptureMode::FollowForeground => {
+                sample_foreground_window(&scope_snapshot.excluded_applications)
+            }
+        };
+        let sensitive = decision.sensitive.is_some();
+        if let Ok(mut director) = dialogue.lock() {
+            if let Some(director) = director.as_mut() {
+                director.set_environment(RealtimeEnvironmentGates {
+                    locked: ambient.locked,
+                    do_not_disturb: ambient.do_not_disturb,
+                    sensitive_window: sensitive,
+                    privacy_paused: scope_snapshot.privacy_paused || sensitive,
+                });
+            }
+        }
+        if sensitive {
+            let (coordinator_needs_pause, coordinator_has_pending) = coordinator
+                .lock()
+                .ok()
+                .and_then(|coordinator| {
+                    coordinator.as_ref().map(|coordinator| {
+                        (
+                            coordinator.presence_projection().state
+                                != RealtimePresenceState::PrivacyPaused,
+                            coordinator.pending_context_rotation().is_some(),
+                        )
+                    })
+                })
+                .unwrap_or((false, false));
+            let changed = capture_scope.lock().ok().is_some_and(|mut scope| {
+                let Some(scope) = scope.as_mut() else {
+                    return false;
+                };
+                let changed = (coordinator_needs_pause && !coordinator_has_pending)
+                    || !scope.privacy_paused
+                    || scope.sensitive_category != decision.sensitive;
+                scope.privacy_paused = true;
+                scope.sensitive_category = decision.sensitive;
+                scope.error_code = decision
+                    .sensitive
+                    .map(|category| category.public_code().to_owned());
+                if decision.source_id.is_none() {
+                    scope.effective_source_id = None;
+                }
+                changed
+            });
+            if changed {
+                if let Ok(mut recovery) = recovery.lock() {
+                    if let Some(recovery) = recovery.as_mut() {
+                        recovery.source_id = None;
+                        recovery.screen_enabled = false;
+                        recovery.application_audio_enabled = false;
+                    }
+                }
+                let presence = coordinator.lock().ok().and_then(|mut coordinator| {
+                    let coordinator = coordinator.as_mut()?;
+                    if coordinator_has_pending {
+                        return None;
+                    }
+                    coordinator
+                        .apply(RealtimeCoordinatorEvent::PausePrivacy)
+                        .ok()?;
+                    Some(coordinator.presence_projection())
+                });
+                let _ = send_command(
+                    &input,
+                    &HostCommand::SetMediaPrivacy {
+                        session_id: identity.session_id.clone(),
+                        segment_id: identity.segment_id.clone(),
+                        context_epoch: identity.epoch,
+                        paused: true,
+                    },
+                );
+                if let Some(presence) = presence {
+                    let _ = app.emit(REALTIME_WORKER_EVENT, presence_projection_payload(presence));
+                }
+                emit_capture_scope_projection(&app, &identity, &capture_scope);
+            }
+            continue;
+        }
+        let Some(next_source_id) = decision.source_id else {
+            continue;
+        };
+        let needs_replacement = scope_snapshot.privacy_paused
+            || (scope_snapshot.mode == RealtimeCaptureMode::FollowForeground
+                && scope_snapshot.effective_source_id != Some(next_source_id));
+        if !needs_replacement || scope_snapshot.pending_source_id.is_some() {
+            continue;
+        }
+        let pending = coordinator.lock().ok().and_then(|mut coordinator| {
+            let coordinator = coordinator.as_mut()?;
+            if coordinator.pending_context_rotation().is_some() {
+                return None;
+            }
+            if scope_snapshot.privacy_paused {
+                coordinator
+                    .apply(RealtimeCoordinatorEvent::ResumePrivacy)
+                    .ok()?;
+                coordinator.pending_context_rotation().cloned()
+            } else {
+                coordinator
+                    .prepare_context_rotation(ContextRotationReason::WindowChanged)
+                    .ok()
+            }
+        });
+        let Some(pending) = pending else {
+            continue;
+        };
+        let carryover = match build_context_carryover_from_state(
+            &context,
+            &assistance,
+            &coordinator,
+            &pending.current,
+            &pending.current.segment_id,
+            pending.next_epoch,
+        ) {
+            Ok(carryover) => carryover,
+            Err(_) => {
+                let _ = fail_context_rotation(&coordinator);
+                continue;
+            }
+        };
+        let next_source_sequence = scope_snapshot.source_sequence.saturating_add(1);
+        let command = HostCommand::ReplaceCaptureSource {
+            session_id: pending.current.session_id.clone(),
+            segment_id: pending.current.segment_id.clone(),
+            current_context_epoch: pending.current.epoch,
+            next_context_epoch: pending.next_epoch,
+            source_id: next_source_id,
+            source_sequence: next_source_sequence,
+            screen_enabled: scope_snapshot.screen_enabled,
+            application_audio_enabled: scope_snapshot.application_audio_enabled,
+            reason: pending.reason.as_str().to_owned(),
+            carryover,
+        };
+        if send_command(&input, &command).is_err() {
+            let _ = fail_context_rotation(&coordinator);
+            continue;
+        }
+        if let Ok(mut scope) = capture_scope.lock() {
+            if let Some(scope) = scope.as_mut() {
+                if scope.mode == RealtimeCaptureMode::SelectedWindow {
+                    scope.requested_source_id = Some(next_source_id);
+                }
+                scope.pending_source_id = Some(next_source_id);
+                scope.pending_source_sequence = Some(next_source_sequence);
+            }
+        }
+        if let Ok(mut active) = active_identity.lock() {
+            *active = Some(ContextEpochIdentity {
+                session_id: pending.current.session_id,
+                segment_id: pending.current.segment_id,
+                epoch: pending.next_epoch,
+            });
+        }
+    }
+}
+
+fn emit_capture_scope_projection(
+    app: &AppHandle,
+    identity: &ContextEpochIdentity,
+    capture_scope: &Mutex<Option<RealtimeCaptureScopeState>>,
+) {
+    let projection = capture_scope
+        .lock()
+        .ok()
+        .and_then(|scope| scope.as_ref().map(RealtimeCaptureScopeState::public));
+    if let Some(projection) = projection {
+        let _ = app.emit(
+            REALTIME_WORKER_EVENT,
+            serde_json::json!({
+                "type": "capture_scope_state",
+                "session_id": identity.session_id,
+                "segment_id": identity.segment_id,
+                "context_epoch": identity.epoch,
+                "mode": projection.mode,
+                "source_sequence": projection.source_sequence,
+                "source_available": projection.source_available,
+                "privacy_paused": projection.privacy_paused,
+                "sensitive_category": projection.sensitive_category,
+                "error_code": projection.error_code,
+            }),
+        );
     }
 }
 
@@ -2658,6 +3321,8 @@ mod tests {
             online_assistance_enabled: false,
             cloud_microphone_upload_consent: true,
             cloud_screen_upload_consent: true,
+            capture_mode: RealtimeCaptureMode::SelectedWindow,
+            excluded_applications: Vec::new(),
         };
         assert!(validate_capture_scope(&input).is_err());
 
@@ -2668,6 +3333,90 @@ mod tests {
 
         input.screen_enabled = true;
         assert!(validate_capture_scope(&input).is_ok());
+
+        input.capture_mode = RealtimeCaptureMode::FollowForeground;
+        assert!(validate_capture_scope(&input).is_err());
+        input.backend = RealtimeBackendKind::LocalMiniCpmO45;
+        input.cloud_provider = None;
+        assert!(validate_capture_scope(&input).is_ok());
+    }
+
+    #[test]
+    fn media_channel_projection_is_monotonic_and_content_free() {
+        let channels = Mutex::new(BTreeMap::new());
+        let scope = Mutex::new(None);
+        let recovery = Mutex::new(None);
+        observe_media_projection(
+            &serde_json::json!({
+                "type": "media_channel_state",
+                "channel": "microphone",
+                "sequence": 2,
+                "status": "unavailable",
+                "error_code": "MICROPHONE_UNAVAILABLE"
+            }),
+            &scope,
+            &channels,
+            &recovery,
+        );
+        observe_media_projection(
+            &serde_json::json!({
+                "type": "media_channel_state",
+                "channel": "microphone",
+                "sequence": 1,
+                "status": "active",
+                "error_code": null
+            }),
+            &scope,
+            &channels,
+            &recovery,
+        );
+        let channels = channels.lock().expect("channel projection");
+        let microphone = channels.get("microphone").expect("microphone");
+        assert_eq!(microphone.sequence, 2);
+        assert_eq!(microphone.status, "unavailable");
+        assert_eq!(
+            microphone.error_code.as_deref(),
+            Some("MICROPHONE_UNAVAILABLE")
+        );
+    }
+
+    #[test]
+    fn source_ack_requires_the_exact_pending_sequence() {
+        let scope = Mutex::new(Some(RealtimeCaptureScopeState {
+            mode: RealtimeCaptureMode::FollowForeground,
+            requested_source_id: Some(42),
+            effective_source_id: Some(42),
+            source_sequence: 1,
+            pending_source_id: Some(84),
+            pending_source_sequence: Some(2),
+            privacy_paused: false,
+            sensitive_category: None,
+            error_code: None,
+            excluded_applications: Vec::new(),
+            screen_enabled: true,
+            application_audio_enabled: false,
+        }));
+        let channels = Mutex::new(BTreeMap::new());
+        let recovery = Mutex::new(None);
+        for sequence in [1, 2] {
+            observe_media_projection(
+                &serde_json::json!({
+                    "type": "capture_source_changed",
+                    "source_id": 84,
+                    "source_sequence": sequence,
+                    "status": "active",
+                    "error_code": null
+                }),
+                &scope,
+                &channels,
+                &recovery,
+            );
+        }
+        let scope = scope.lock().expect("capture scope");
+        let scope = scope.as_ref().expect("active scope");
+        assert_eq!(scope.effective_source_id, Some(84));
+        assert_eq!(scope.source_sequence, 2);
+        assert!(scope.pending_source_id.is_none());
     }
 
     #[test]

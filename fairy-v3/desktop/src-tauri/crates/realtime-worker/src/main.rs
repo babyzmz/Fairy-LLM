@@ -333,6 +333,84 @@ fn main() {
                     active.command(RuntimeCommand::SetResourcePolicy { policy });
                 }
             }
+            HostCommand::SetMediaPrivacy {
+                session_id,
+                segment_id,
+                context_epoch,
+                paused,
+            } if active_identity.as_ref().is_some_and(|identity| {
+                identity.session_id == session_id
+                    && identity.segment_id == segment_id
+                    && identity.context_epoch == context_epoch
+            }) =>
+            {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::SetMediaPrivacy { paused });
+                }
+            }
+            HostCommand::ReplaceCaptureSource {
+                session_id,
+                segment_id,
+                current_context_epoch,
+                next_context_epoch,
+                source_id,
+                source_sequence,
+                screen_enabled,
+                application_audio_enabled,
+                reason,
+                carryover,
+            } if active_identity.as_ref().is_some_and(|identity| {
+                identity.session_id == session_id
+                    && identity.segment_id == segment_id
+                    && identity.context_epoch == current_context_epoch
+                    && current_context_epoch
+                        .checked_add(1)
+                        .is_some_and(|next| next == next_context_epoch)
+                    && source_id > 0
+                    && source_sequence > 0
+                    && carryover.is_valid()
+                    && carryover.session_id == identity.session_id
+                    && carryover.current_segment_id == identity.segment_id
+                    && carryover.current_context_epoch == identity.context_epoch
+                    && carryover.target_segment_id == identity.segment_id
+                    && carryover.next_context_epoch == next_context_epoch
+            }) =>
+            {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::ReplaceCaptureSource {
+                        next_context_epoch,
+                        source_id,
+                        source_sequence,
+                        screen_enabled,
+                        application_audio_enabled,
+                        reason,
+                        carryover,
+                    });
+                    if let Some(identity) = active_identity.as_mut() {
+                        identity.context_epoch = next_context_epoch;
+                    }
+                }
+            }
+            HostCommand::RetryMediaChannel {
+                session_id,
+                segment_id,
+                context_epoch,
+                channel,
+                source_sequence,
+            } if active_identity.as_ref().is_some_and(|identity| {
+                identity.session_id == session_id
+                    && identity.segment_id == segment_id
+                    && identity.context_epoch == context_epoch
+                    && source_sequence > 0
+            }) =>
+            {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::RetryMediaChannel {
+                        channel,
+                        source_sequence,
+                    });
+                }
+            }
             HostCommand::Pause { session_id }
                 if active_identity
                     .as_ref()

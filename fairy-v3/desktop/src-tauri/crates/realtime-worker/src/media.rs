@@ -33,6 +33,7 @@ impl Drop for AudioPacket {
 pub struct MicrophoneCapture {
     _stream: Stream,
     receiver: mpsc::Receiver<AudioPacket>,
+    failed: Arc<AtomicBool>,
     pub sample_rate: u32,
 }
 
@@ -108,13 +109,17 @@ impl MicrophoneCapture {
             return Err(MediaError::AudioFormatUnsupported);
         }
         let (sender, receiver) = mpsc::sync_channel(AUDIO_QUEUE_DEPTH);
+        let failed = Arc::new(AtomicBool::new(false));
+        let stream_failed = Arc::clone(&failed);
         let stream = match sample_format {
             SampleFormat::I16 => device.build_input_stream(
                 &config,
                 move |data: &[i16], _| {
                     send_audio_packet(&sender, mono_i16(data, channels), sample_rate)
                 },
-                |_| {},
+                move |_| {
+                    stream_failed.store(true, Ordering::Release);
+                },
                 None,
             ),
             SampleFormat::F32 => device.build_input_stream(
@@ -128,7 +133,9 @@ impl MicrophoneCapture {
                         .collect();
                     send_audio_packet(&sender, mono, sample_rate)
                 },
-                |_| {},
+                move |_| {
+                    stream_failed.store(true, Ordering::Release);
+                },
                 None,
             ),
             SampleFormat::U16 => device.build_input_stream(
@@ -140,7 +147,9 @@ impl MicrophoneCapture {
                         .collect::<Vec<_>>();
                     send_audio_packet(&sender, mono_i16(&converted, channels), sample_rate)
                 },
-                |_| {},
+                move |_| {
+                    stream_failed.store(true, Ordering::Release);
+                },
                 None,
             ),
             _ => return Err(MediaError::AudioFormatUnsupported),
@@ -152,12 +161,17 @@ impl MicrophoneCapture {
         Ok(Self {
             _stream: stream,
             receiver,
+            failed,
             sample_rate,
         })
     }
 
     pub fn try_recv(&self) -> Option<AudioPacket> {
         self.receiver.try_recv().ok()
+    }
+
+    pub fn is_failed(&self) -> bool {
+        self.failed.load(Ordering::Acquire)
     }
 }
 

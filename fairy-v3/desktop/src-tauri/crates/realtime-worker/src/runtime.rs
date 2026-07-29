@@ -82,6 +82,22 @@ pub enum RuntimeCommand {
     SetResourcePolicy {
         policy: RealtimeResourcePolicy,
     },
+    SetMediaPrivacy {
+        paused: bool,
+    },
+    ReplaceCaptureSource {
+        next_context_epoch: u64,
+        source_id: u64,
+        source_sequence: u64,
+        screen_enabled: bool,
+        application_audio_enabled: bool,
+        reason: String,
+        carryover: RealtimeContextCarryover,
+    },
+    RetryMediaChannel {
+        channel: String,
+        source_sequence: u64,
+    },
     RotateContext {
         next_context_epoch: u64,
         reason: String,
@@ -265,13 +281,7 @@ fn run_session(
         emit_cancelled(&events, &identity);
         return;
     }
-    let microphone = match MicrophoneCapture::start() {
-        Ok(microphone) => microphone,
-        Err(_) => {
-            emit_failed(&events, &identity, "MICROPHONE_UNAVAILABLE");
-            return;
-        }
-    };
+    let mut microphone = MicrophoneCapture::start().ok();
     let (mut fairy_reference, fairy_reference_error) =
         if voice_output != RealtimeVoiceOutput::TextOnly {
             match ProcessLoopbackCapture::start_process_tree(desktop_host_process_id) {
@@ -286,13 +296,7 @@ fn run_session(
         return;
     }
     let mut game_audio = if application_audio_enabled {
-        match source_id.and_then(|source_id| ProcessLoopbackCapture::start(source_id).ok()) {
-            Some(capture) => Some(capture),
-            None => {
-                emit_failed(&events, &identity, "PROCESS_LOOPBACK_UNAVAILABLE");
-                return;
-            }
-        }
+        source_id.and_then(|source_id| ProcessLoopbackCapture::start(source_id).ok())
     } else {
         None
     };
@@ -300,14 +304,8 @@ fn run_session(
         emit_cancelled(&events, &identity);
         return;
     }
-    let playback = if native_audio && fairy_reference.is_some() {
-        match AudioPlayback::start() {
-            Ok(playback) => Some(playback),
-            Err(_) => {
-                emit_failed(&events, &identity, "AUDIO_OUTPUT_UNAVAILABLE");
-                return;
-            }
-        }
+    let mut playback = if native_audio && fairy_reference.is_some() {
+        AudioPlayback::start().ok()
     } else {
         None
     };
@@ -315,19 +313,17 @@ fn run_session(
         emit_cancelled(&events, &identity);
         return;
     }
-    let video = if screen_enabled {
-        match source_id.and_then(|id| VideoCapture::start(id, VIDEO_CAPTURE_FPS).ok()) {
-            Some(video) => Some(video),
-            None => {
-                emit_failed(&events, &identity, "CAPTURE_SOURCE_UNAVAILABLE");
-                return;
-            }
-        }
+    let mut video = if screen_enabled {
+        source_id.and_then(|id| VideoCapture::start(id, VIDEO_CAPTURE_FPS).ok())
     } else {
         None
     };
     if startup_cancel_requested(&commands, &cancelled) {
         emit_cancelled(&events, &identity);
+        return;
+    }
+    if microphone.is_none() && video.is_none() {
+        emit_failed(&events, &identity, "REALTIME_INPUT_UNAVAILABLE");
         return;
     }
     let _ = events.send(WorkerEvent::SessionState {
@@ -339,36 +335,81 @@ fn run_session(
         cloud_provider: identity.cloud_provider,
         error_code: None,
     });
-    let _ = events.send(WorkerEvent::MediaChannelState {
-        session_id: identity.session_id.clone(),
-        segment_id: identity.segment_id.clone(),
-        context_epoch: identity.context_epoch,
-        channel: "microphone".to_owned(),
-        sequence: 1,
-        status: "active".to_owned(),
-        error_code: None,
-    });
-    let _ = events.send(WorkerEvent::MediaChannelState {
-        session_id: identity.session_id.clone(),
-        segment_id: identity.segment_id.clone(),
-        context_epoch: identity.context_epoch,
-        channel: "fairy_render_reference".to_owned(),
-        sequence: 1,
-        status: if fairy_reference.is_some() {
+    emit_media_channel(
+        &events,
+        &identity,
+        "microphone",
+        1,
+        if microphone.is_some() {
+            "active"
+        } else {
+            "unavailable"
+        },
+        microphone.is_none().then_some("MICROPHONE_UNAVAILABLE"),
+    );
+    emit_media_channel(
+        &events,
+        &identity,
+        "selected_window",
+        1,
+        if video.is_some() {
+            "active"
+        } else if screen_enabled {
+            "unavailable"
+        } else {
+            "paused"
+        },
+        (screen_enabled && video.is_none()).then_some("CAPTURE_SOURCE_UNAVAILABLE"),
+    );
+    emit_media_channel(
+        &events,
+        &identity,
+        "selected_application_audio",
+        1,
+        if game_audio.is_some() {
+            "active"
+        } else if application_audio_enabled {
+            "unavailable"
+        } else {
+            "paused"
+        },
+        (application_audio_enabled && game_audio.is_none())
+            .then_some("PROCESS_LOOPBACK_UNAVAILABLE"),
+    );
+    emit_media_channel(
+        &events,
+        &identity,
+        "fairy_render_reference",
+        1,
+        if fairy_reference.is_some() {
             "active"
         } else if fairy_reference_error.is_some() {
             "unavailable"
         } else {
             "paused"
-        }
-        .to_owned(),
-        error_code: fairy_reference_error,
-    });
+        },
+        fairy_reference_error.as_deref(),
+    );
+    emit_media_channel(
+        &events,
+        &identity,
+        "voice_output",
+        1,
+        if native_audio && playback.is_some() {
+            "active"
+        } else if native_audio {
+            "unavailable"
+        } else {
+            "paused"
+        },
+        (native_audio && playback.is_none()).then_some("AUDIO_OUTPUT_UNAVAILABLE"),
+    );
     let session_start = Instant::now();
     let mut frame_gate = FrameGate::new(identity.context_epoch);
     let mut audio_processor = RealtimeAudioProcessor::default();
     let mut last_usage_sent = Instant::now();
     let mut last_resource_sample_sent = Instant::now();
+    let mut last_media_health_checked = Instant::now();
     // User input gates remain separate from native standby ownership.
     let mut microphone_enabled = initial_microphone_enabled;
     let mut video_enabled = screen_enabled;
@@ -381,6 +422,14 @@ fn run_session(
     let mut event_sequence = 0_u64;
     let mut current_user_utterance = false;
     let mut speech_activity = SpeechActivityArbiter::default();
+    let mut active_source_id = source_id;
+    let mut source_sequence = 1_u64;
+    let mut microphone_sequence = 1_u64;
+    let mut video_sequence = 1_u64;
+    let mut application_audio_sequence = 1_u64;
+    let mut reference_sequence = 1_u64;
+    let mut media_privacy_paused = false;
+    let mut application_audio_requested = application_audio_enabled;
     let mut resource_policy = RealtimeResourcePolicy::for_level(RealtimeResourceLevel::Normal);
     let mut max_inference_latency_ms = 0_u32;
     let mut frame_processing_failures = 0_u8;
@@ -474,7 +523,9 @@ fn run_session(
                     emit_backend_failure(&events, &identity, &error, candidate_emitted);
                     return;
                 }
-                while microphone.try_recv().is_some() {}
+                if let Some(capture) = microphone.as_ref() {
+                    while capture.try_recv().is_some() {}
+                }
                 if let Some(capture) = fairy_reference.as_mut() {
                     while capture.try_recv().is_some() {}
                 }
@@ -511,7 +562,7 @@ fn run_session(
                 }
                 standby = true;
                 drain_runtime_media(
-                    &microphone,
+                    microphone.as_ref(),
                     fairy_reference.as_mut(),
                     game_audio.as_mut(),
                     video.as_ref(),
@@ -569,7 +620,7 @@ fn run_session(
                     return;
                 }
                 drain_runtime_media(
-                    &microphone,
+                    microphone.as_ref(),
                     fairy_reference.as_mut(),
                     game_audio.as_mut(),
                     video.as_ref(),
@@ -617,7 +668,7 @@ fn run_session(
                     return;
                 }
                 drain_runtime_media(
-                    &microphone,
+                    microphone.as_ref(),
                     fairy_reference.as_mut(),
                     game_audio.as_mut(),
                     video.as_ref(),
@@ -663,7 +714,7 @@ fn run_session(
                 let _ = frame_gate.apply_resource_policy(policy);
                 if policy.media_paused {
                     drain_runtime_media(
-                        &microphone,
+                        microphone.as_ref(),
                         fairy_reference.as_mut(),
                         game_audio.as_mut(),
                         video.as_ref(),
@@ -690,11 +741,296 @@ fn run_session(
                     return;
                 }
             }
+            Ok(RuntimeCommand::SetMediaPrivacy { paused }) => {
+                if paused == media_privacy_paused {
+                    continue;
+                }
+                media_privacy_paused = paused;
+                if paused {
+                    drain_runtime_media(
+                        microphone.as_ref(),
+                        fairy_reference.as_mut(),
+                        game_audio.as_mut(),
+                        video.as_ref(),
+                        playback.as_ref(),
+                        &mut audio_processor,
+                    );
+                    video = None;
+                    game_audio = None;
+                    video_sequence = video_sequence.saturating_add(1);
+                    application_audio_sequence = application_audio_sequence.saturating_add(1);
+                    emit_media_channel(
+                        &events,
+                        &identity,
+                        "selected_window",
+                        video_sequence,
+                        "paused",
+                        Some("SENSITIVE_WINDOW_BLOCKED"),
+                    );
+                    emit_media_channel(
+                        &events,
+                        &identity,
+                        "selected_application_audio",
+                        application_audio_sequence,
+                        "paused",
+                        Some("SENSITIVE_WINDOW_BLOCKED"),
+                    );
+                }
+            }
+            Ok(RuntimeCommand::ReplaceCaptureSource {
+                next_context_epoch,
+                source_id,
+                source_sequence: next_source_sequence,
+                screen_enabled: next_screen_enabled,
+                application_audio_enabled: next_application_audio_enabled,
+                reason,
+                carryover,
+            }) => {
+                let valid = identity
+                    .context_epoch
+                    .checked_add(1)
+                    .is_some_and(|next| next == next_context_epoch)
+                    && next_source_sequence > source_sequence
+                    && valid_rotation_reason(&reason)
+                    && carryover.is_valid()
+                    && carryover.session_id == identity.session_id
+                    && carryover.current_segment_id == identity.segment_id
+                    && carryover.current_context_epoch == identity.context_epoch
+                    && carryover.target_segment_id == identity.segment_id
+                    && carryover.next_context_epoch == next_context_epoch
+                    && carryover.persona_digest == identity.persona_digest
+                    && carryover.activity_profile == identity.activity_profile;
+                if !valid {
+                    identity.context_epoch = next_context_epoch;
+                    emit_failed(&events, &identity, "REALTIME_PROTOCOL_ERROR");
+                    return;
+                }
+                let next_video = next_screen_enabled
+                    .then(|| VideoCapture::start(source_id, VIDEO_CAPTURE_FPS).ok())
+                    .flatten();
+                let next_application_audio = next_application_audio_enabled
+                    .then(|| ProcessLoopbackCapture::start(source_id).ok())
+                    .flatten();
+                if let Err(error) = active_backend.rotate_context(
+                    next_context_epoch,
+                    &reason,
+                    &carryover.public_summary(),
+                ) {
+                    identity.context_epoch = next_context_epoch;
+                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
+                    return;
+                }
+                drain_runtime_media(
+                    microphone.as_ref(),
+                    fairy_reference.as_mut(),
+                    game_audio.as_mut(),
+                    video.as_ref(),
+                    playback.as_ref(),
+                    &mut audio_processor,
+                );
+                video = next_video;
+                game_audio = next_application_audio;
+                video_enabled = next_screen_enabled;
+                application_audio_requested = next_application_audio_enabled;
+                active_source_id = Some(source_id);
+                source_sequence = next_source_sequence;
+                media_privacy_paused = false;
+                identity.context_epoch = next_context_epoch;
+                frame_gate.reset(next_context_epoch);
+                current_user_utterance = false;
+                speech_activity.reset();
+                event_sequence = 0;
+                video_sequence = video_sequence.saturating_add(1);
+                application_audio_sequence = application_audio_sequence.saturating_add(1);
+                let _ = events.send(WorkerEvent::ContextRotated {
+                    session_id: identity.session_id.clone(),
+                    segment_id: identity.segment_id.clone(),
+                    context_epoch: identity.context_epoch,
+                    reason,
+                });
+                let capture_active = !video_enabled || video.is_some();
+                let _ = events.send(WorkerEvent::CaptureSourceChanged {
+                    session_id: identity.session_id.clone(),
+                    segment_id: identity.segment_id.clone(),
+                    context_epoch: identity.context_epoch,
+                    source_id,
+                    source_sequence,
+                    status: if capture_active {
+                        "active"
+                    } else {
+                        "unavailable"
+                    }
+                    .to_owned(),
+                    error_code: (!capture_active).then(|| "CAPTURE_SOURCE_UNAVAILABLE".to_owned()),
+                });
+                emit_media_channel(
+                    &events,
+                    &identity,
+                    "selected_window",
+                    video_sequence,
+                    if video.is_some() {
+                        "active"
+                    } else if video_enabled {
+                        "unavailable"
+                    } else {
+                        "paused"
+                    },
+                    (video_enabled && video.is_none()).then_some("CAPTURE_SOURCE_UNAVAILABLE"),
+                );
+                emit_media_channel(
+                    &events,
+                    &identity,
+                    "selected_application_audio",
+                    application_audio_sequence,
+                    if game_audio.is_some() {
+                        "active"
+                    } else if next_application_audio_enabled {
+                        "unavailable"
+                    } else {
+                        "paused"
+                    },
+                    (next_application_audio_enabled && game_audio.is_none())
+                        .then_some("PROCESS_LOOPBACK_UNAVAILABLE"),
+                );
+                if microphone.is_none() && video.is_none() {
+                    emit_failed(&events, &identity, "REALTIME_INPUT_UNAVAILABLE");
+                    return;
+                }
+            }
+            Ok(RuntimeCommand::RetryMediaChannel {
+                channel,
+                source_sequence: requested_source_sequence,
+            }) => {
+                if requested_source_sequence != source_sequence {
+                    continue;
+                }
+                match channel.as_str() {
+                    "microphone" if microphone.is_none() => {
+                        microphone_sequence = microphone_sequence.saturating_add(1);
+                        emit_media_channel(
+                            &events,
+                            &identity,
+                            "microphone",
+                            microphone_sequence,
+                            "recovering",
+                            None,
+                        );
+                        microphone = MicrophoneCapture::start().ok();
+                        microphone_sequence = microphone_sequence.saturating_add(1);
+                        emit_media_channel(
+                            &events,
+                            &identity,
+                            "microphone",
+                            microphone_sequence,
+                            if microphone.is_some() {
+                                "active"
+                            } else {
+                                "unavailable"
+                            },
+                            microphone.is_none().then_some("MICROPHONE_UNAVAILABLE"),
+                        );
+                    }
+                    "selected_window" if video.is_none() && !media_privacy_paused => {
+                        video_sequence = video_sequence.saturating_add(1);
+                        emit_media_channel(
+                            &events,
+                            &identity,
+                            "selected_window",
+                            video_sequence,
+                            "recovering",
+                            None,
+                        );
+                        video = active_source_id
+                            .and_then(|id| VideoCapture::start(id, VIDEO_CAPTURE_FPS).ok());
+                        video_sequence = video_sequence.saturating_add(1);
+                        emit_media_channel(
+                            &events,
+                            &identity,
+                            "selected_window",
+                            video_sequence,
+                            if video.is_some() {
+                                "active"
+                            } else {
+                                "unavailable"
+                            },
+                            video.is_none().then_some("CAPTURE_SOURCE_UNAVAILABLE"),
+                        );
+                    }
+                    "selected_application_audio"
+                        if game_audio.is_none()
+                            && application_audio_requested
+                            && !media_privacy_paused =>
+                    {
+                        application_audio_sequence = application_audio_sequence.saturating_add(1);
+                        emit_media_channel(
+                            &events,
+                            &identity,
+                            "selected_application_audio",
+                            application_audio_sequence,
+                            "recovering",
+                            None,
+                        );
+                        game_audio =
+                            active_source_id.and_then(|id| ProcessLoopbackCapture::start(id).ok());
+                        application_audio_sequence = application_audio_sequence.saturating_add(1);
+                        emit_media_channel(
+                            &events,
+                            &identity,
+                            "selected_application_audio",
+                            application_audio_sequence,
+                            if game_audio.is_some() {
+                                "active"
+                            } else {
+                                "unavailable"
+                            },
+                            game_audio
+                                .is_none()
+                                .then_some("PROCESS_LOOPBACK_UNAVAILABLE"),
+                        );
+                    }
+                    "fairy_render_reference"
+                        if fairy_reference.is_none()
+                            && voice_output != RealtimeVoiceOutput::TextOnly =>
+                    {
+                        reference_sequence = reference_sequence.saturating_add(1);
+                        emit_media_channel(
+                            &events,
+                            &identity,
+                            "fairy_render_reference",
+                            reference_sequence,
+                            "recovering",
+                            None,
+                        );
+                        fairy_reference =
+                            ProcessLoopbackCapture::start_process_tree(desktop_host_process_id)
+                                .ok();
+                        if native_audio && fairy_reference.is_some() && playback.is_none() {
+                            playback = AudioPlayback::start().ok();
+                        }
+                        reference_sequence = reference_sequence.saturating_add(1);
+                        emit_media_channel(
+                            &events,
+                            &identity,
+                            "fairy_render_reference",
+                            reference_sequence,
+                            if fairy_reference.is_some() {
+                                "active"
+                            } else {
+                                "unavailable"
+                            },
+                            fairy_reference
+                                .is_none()
+                                .then_some("AEC_REFERENCE_UNAVAILABLE"),
+                        );
+                    }
+                    _ => {}
+                }
+            }
             Err(mpsc::TryRecvError::Empty) => {}
         }
         if let Some(capture) = fairy_reference.as_mut() {
             while let Some(packet) = capture.try_recv() {
-                if standby || resource_policy.media_paused {
+                if standby || resource_policy.media_paused || media_privacy_paused {
                     drop(packet);
                     continue;
                 }
@@ -703,10 +1039,12 @@ fn run_session(
                 samples.zeroize();
             }
         }
+        let mut application_audio_failed = false;
         if let Some(capture) = game_audio.as_mut() {
             while let Some(packet) = capture.try_recv() {
                 if standby
                     || resource_policy.media_paused
+                    || media_privacy_paused
                     || (!microphone_enabled && !video_enabled)
                 {
                     drop(packet);
@@ -719,15 +1057,48 @@ fn run_session(
                 }
                 samples.zeroize();
                 frame_gate.note_audio_activity(elapsed_ms(session_start));
-                if let Err(error) = active_backend.push_application_audio(&bytes) {
+                if active_backend.push_application_audio(&bytes).is_err() {
                     bytes.zeroize();
-                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
-                    return;
+                    application_audio_failed = true;
+                    break;
                 }
                 bytes.zeroize();
             }
         }
-        while let Some(packet) = microphone.try_recv() {
+        if application_audio_failed {
+            game_audio = None;
+            application_audio_sequence = application_audio_sequence.saturating_add(1);
+            emit_media_channel(
+                &events,
+                &identity,
+                "selected_application_audio",
+                application_audio_sequence,
+                "unavailable",
+                Some("APPLICATION_AUDIO_CHANNEL_FAILED"),
+            );
+        }
+        if microphone
+            .as_ref()
+            .is_some_and(MicrophoneCapture::is_failed)
+        {
+            microphone = None;
+            audio_processor.reset();
+            speech_activity.reset();
+            microphone_sequence = microphone_sequence.saturating_add(1);
+            emit_media_channel(
+                &events,
+                &identity,
+                "microphone",
+                microphone_sequence,
+                "unavailable",
+                Some("MICROPHONE_UNAVAILABLE"),
+            );
+            if video.is_none() {
+                emit_failed(&events, &identity, "REALTIME_INPUT_UNAVAILABLE");
+                return;
+            }
+        }
+        while let Some(packet) = microphone.as_ref().and_then(MicrophoneCapture::try_recv) {
             if standby || resource_policy.media_paused || !microphone_enabled {
                 // Muted or paused: drain and discard without sending. Dropping the
                 // packet zeroizes its samples.
@@ -785,7 +1156,7 @@ fn run_session(
             }
         }
         let now_ms = elapsed_ms(session_start);
-        if resource_policy.media_paused {
+        if resource_policy.media_paused || media_privacy_paused {
             if let Some(mut frame) = video.as_ref().and_then(VideoCapture::take_latest) {
                 frame.jpeg.zeroize();
             }
@@ -807,6 +1178,39 @@ fn run_session(
                 }
                 frame.jpeg.zeroize();
             }
+        }
+        if last_media_health_checked.elapsed() >= Duration::from_secs(1) {
+            let capture_failed = video
+                .as_ref()
+                .map(VideoCapture::take_health_sample)
+                .is_some_and(|(_, failures)| failures >= VIDEO_CAPTURE_FPS as u8);
+            if capture_failed {
+                video = None;
+                game_audio = None;
+                video_sequence = video_sequence.saturating_add(1);
+                application_audio_sequence = application_audio_sequence.saturating_add(1);
+                emit_media_channel(
+                    &events,
+                    &identity,
+                    "selected_window",
+                    video_sequence,
+                    "unavailable",
+                    Some("CAPTURE_SOURCE_UNAVAILABLE"),
+                );
+                emit_media_channel(
+                    &events,
+                    &identity,
+                    "selected_application_audio",
+                    application_audio_sequence,
+                    "paused",
+                    Some("CAPTURE_SOURCE_UNAVAILABLE"),
+                );
+                if microphone.is_none() {
+                    emit_failed(&events, &identity, "REALTIME_INPUT_UNAVAILABLE");
+                    return;
+                }
+            }
+            last_media_health_checked = Instant::now();
         }
         let poll_started = Instant::now();
         let outputs = match (!standby).then(|| active_backend.poll()).transpose() {
@@ -1082,14 +1486,16 @@ impl SpeechActivityArbiter {
 }
 
 fn drain_runtime_media(
-    microphone: &MicrophoneCapture,
+    microphone: Option<&MicrophoneCapture>,
     fairy_reference: Option<&mut ProcessLoopbackCapture>,
     application_audio: Option<&mut ProcessLoopbackCapture>,
     video: Option<&VideoCapture>,
     playback: Option<&AudioPlayback>,
     audio_processor: &mut RealtimeAudioProcessor,
 ) {
-    while microphone.try_recv().is_some() {}
+    if let Some(capture) = microphone {
+        while capture.try_recv().is_some() {}
+    }
     if let Some(capture) = fairy_reference {
         while capture.try_recv().is_some() {}
     }
@@ -1103,6 +1509,25 @@ fn drain_runtime_media(
         playback.clear();
     }
     audio_processor.reset();
+}
+
+fn emit_media_channel(
+    events: &mpsc::Sender<WorkerEvent>,
+    identity: &RuntimeIdentity,
+    channel: &str,
+    sequence: u64,
+    status: &str,
+    error_code: Option<&str>,
+) {
+    let _ = events.send(WorkerEvent::MediaChannelState {
+        session_id: identity.session_id.clone(),
+        segment_id: identity.segment_id.clone(),
+        context_epoch: identity.context_epoch,
+        channel: channel.to_owned(),
+        sequence,
+        status: status.to_owned(),
+        error_code: error_code.map(str::to_owned),
+    });
 }
 
 fn application_audio_scope_supported(
@@ -1185,6 +1610,9 @@ fn startup_cancel_requested(
             | Ok(RuntimeCommand::SetInput { .. })
             | Ok(RuntimeCommand::SetProfile { .. })
             | Ok(RuntimeCommand::SetResourcePolicy { .. })
+            | Ok(RuntimeCommand::SetMediaPrivacy { .. })
+            | Ok(RuntimeCommand::ReplaceCaptureSource { .. })
+            | Ok(RuntimeCommand::RetryMediaChannel { .. })
             | Ok(RuntimeCommand::RotateContext { .. })
             | Ok(RuntimeCommand::Pause)
             | Ok(RuntimeCommand::Resume { .. })

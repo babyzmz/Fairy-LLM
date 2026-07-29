@@ -1059,6 +1059,7 @@ fn worker_presence_input(
         )),
         WorkerEvent::Ready { .. }
         | WorkerEvent::MediaChannelState { .. }
+        | WorkerEvent::CaptureSourceChanged { .. }
         | WorkerEvent::LocalSidecarFailure { .. }
         | WorkerEvent::ResourceSample { .. }
         | WorkerEvent::Usage { .. }
