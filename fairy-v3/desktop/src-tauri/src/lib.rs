@@ -1037,6 +1037,12 @@ async fn realtime_worker_wake(
     } else {
         false
     };
+    if backend == fairy_realtime_worker::RealtimeBackendKind::LocalMiniCpmO45
+        && local_backend_unloaded
+        && !local_ready
+    {
+        return Err("LOCAL_BACKEND_NOT_READY_AFTER_UNLOAD".to_owned());
+    }
     if backend == fairy_realtime_worker::RealtimeBackendKind::CloudLive {
         let preferences = DesktopPreferencesStore::new(&state.data_dir)
             .load()

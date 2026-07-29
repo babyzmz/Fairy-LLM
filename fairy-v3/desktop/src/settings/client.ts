@@ -93,6 +93,8 @@ export interface DesktopPreferences {
   realtime_interaction_intensity: "quiet" | "standard" | "active";
   realtime_voice_output: "fairy_voice" | "provider_native_voice" | "text_only";
   realtime_game_audio_default: boolean;
+  realtime_capture_mode: "selected_window" | "follow_foreground";
+  realtime_excluded_applications: string[];
   realtime_online_assistance_enabled: boolean;
   realtime_memory_enabled: boolean;
   realtime_presence_max_minutes: number;

@@ -135,8 +135,11 @@ test("Companion projects Cloud upload scope without starting a worker", async ({
     name: "Upload microphone for this Cloud session",
   }).check();
   await page.getByRole("checkbox", {
-    name: "Upload only the selected game window",
+    name: "Upload only the explicitly selected window",
   }).check();
+  await expect(page.getByRole("checkbox", {
+    name: "Application audio unavailable for this Cloud provider",
+  })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Start Realtime" })).toBeEnabled();
 
   const calls = await fixtureCalls(page);
@@ -158,6 +161,11 @@ test("Companion projects Local processing scope without Cloud credential lookup"
   await expect(page.getByRole("checkbox", {
     name: "Use microphone for this Local session",
   })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Observation scope" }))
+    .toHaveValue("selected_window");
+  await expect(page.getByRole("checkbox", {
+    name: "Process selected application audio locally",
+  })).toBeEnabled();
 
   const calls = await fixtureCalls(page);
   expect(calls.some((call) => call.method === "realtime.backend.preview")).toBe(true);
@@ -306,6 +314,47 @@ test("active Companion disables decorative motion under reduced motion", async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth))
     .toBeLessThanOrEqual(640);
 });
+
+for (const viewport of [
+  { width: 880, height: 680 },
+  { width: 640, height: 700 },
+]) {
+  test(`Companion recovery controls remain keyboard-operable at ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await page.goto(
+      "/?surface=companion&companionActive=active&companionCapture=unavailable",
+    );
+
+    await expect(page.getByText(
+      "The observed window is unavailable. Microphone conversation can continue.",
+    )).toBeVisible();
+    const retry = page.getByRole("button", { name: "Retry" });
+    await retry.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByLabel("Realtime media channels")).toContainText("active");
+
+    const replace = page.getByRole("button", { name: "Use window" });
+    await replace.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByText(
+      "The observed window is unavailable. Microphone conversation can continue.",
+    )).toHaveCount(0);
+
+    expect(await page.evaluate(() => document.documentElement.scrollWidth))
+      .toBeLessThanOrEqual(viewport.width);
+    await page.screenshot({
+      path: testInfo.outputPath(`realtime-recovery-${viewport.width}.png`),
+    });
+
+    const calls = await fixtureCalls(page);
+    expect(calls.filter((call) => call.method === "realtime_worker_retry_media"))
+      .toHaveLength(1);
+    expect(calls.filter((call) => call.method === "realtime_worker_replace_source"))
+      .toHaveLength(1);
+  });
+}
 
 async function fixtureCalls(page: import("@playwright/test").Page) {
   return page.evaluate(() => (

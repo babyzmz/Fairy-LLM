@@ -378,7 +378,7 @@ function readinessView(report: LocalReadinessReport | undefined, failed: boolean
       status: "runtime-missing",
       tone: "neutral",
       label: "Runtime required",
-      detail: "The verified model is present, but the bundled Omni runtime is not installed in Phase 1.",
+      detail: "The verified model is present, but the bundled Omni runtime is unavailable. Repair or reinstall Fairy before using Local Realtime.",
     } as const;
   }
   if (report.runtime === "failed" || report.capability.reason === "self_test_failed") {

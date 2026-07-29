@@ -31,6 +31,8 @@ describe("RealtimeCompanionWindowApp", () => {
           realtime_interaction_intensity: "standard",
           realtime_voice_output: "fairy_voice",
           realtime_game_audio_default: false,
+          realtime_capture_mode: "selected_window",
+          realtime_excluded_applications: [],
           realtime_online_assistance_enabled: false,
           realtime_memory_enabled: true,
           realtime_presence_max_minutes: 240,

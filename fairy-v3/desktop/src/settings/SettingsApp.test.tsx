@@ -75,7 +75,7 @@ describe("SettingsApp", () => {
     expect(localStorage.getItem("fairy.workspace.developer")).toBe("true");
   });
 
-  it("shows the complete schema nine Realtime Beta controls with fail-closed local readiness", async () => {
+  it("shows the complete schema ten Realtime Beta controls with fail-closed local readiness", async () => {
     const invoke = settingsInvoke();
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
     await screen.findByRole("heading", { name: "General" });
@@ -97,10 +97,39 @@ describe("SettingsApp", () => {
     )).toBeVisible();
     expect(screen.queryByText(/Local (is )?ready/i)).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /^Allow cloud fallback/ })).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /^Share application audio by default/ })).not.toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Local observation scope" })).toHaveValue("selected_window");
+    expect(screen.getByRole("textbox", { name: "Excluded applications" })).toHaveValue("");
+    expect(screen.getByRole("checkbox", { name: /^Use application audio by default/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /^Online assistance/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /^Offer companion memory/ })).toBeChecked();
     expect(screen.getByRole("combobox", { name: "Cloud daily limit" })).toHaveValue("180");
+  });
+
+  it("commits normalized Realtime exclusions only after composition finishes", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Voice/ }));
+    const input = screen.getByRole("textbox", { name: "Excluded applications" });
+
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: " OBS64.EXE, Private-App.Exe " } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(invoke.mock.calls.some(([command]) => command === "desktop_preferences_update"))
+      .toBe(false);
+
+    fireEvent.compositionEnd(input);
+    fireEvent.blur(input);
+
+    await vi.waitFor(() => {
+      const update = invoke.mock.calls.find(([command]) =>
+        command === "desktop_preferences_update"
+      )?.[1] as { input: { preferences: DesktopPreferences } } | undefined;
+      expect(update?.input.preferences.realtime_excluded_applications).toEqual([
+        "obs64.exe",
+        "private-app.exe",
+      ]);
+    });
   });
 
   it("shows native string errors instead of replacing them with a generic failure", async () => {
@@ -958,7 +987,7 @@ function rpcRequest(invoke: ReturnType<typeof settingsInvoke>, method: string) {
 
 function defaultPreferences(): DesktopPreferences {
   return {
-    schema_version: 9,
+    schema_version: 10,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -981,6 +1010,8 @@ function defaultPreferences(): DesktopPreferences {
     realtime_interaction_intensity: "standard",
     realtime_voice_output: "fairy_voice",
     realtime_game_audio_default: false,
+    realtime_capture_mode: "selected_window",
+    realtime_excluded_applications: [],
     realtime_online_assistance_enabled: false,
     realtime_memory_enabled: true,
     realtime_presence_max_minutes: 240,

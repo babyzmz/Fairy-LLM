@@ -14,6 +14,8 @@ import type {
   RealtimeProviderCredentialStatus,
   RealtimeWorkerSetInputInput,
   RealtimeWorkerSetPolicyInput,
+  RealtimeWorkerRetryMediaInput,
+  RealtimeWorkerReplaceSourceInput,
   RealtimeWorkerWakeInput,
   RealtimeWorkerExtendInput,
   RealtimeWorkerSpeechStateInput,
@@ -155,6 +157,16 @@ export class TauriCoreTransport implements CoreTransport {
 
   realtimeWorkerSetPolicy(input: RealtimeWorkerSetPolicyInput): Promise<RealtimeWorkerStatus> {
     return this.invoke("realtime_worker_set_policy", { input });
+  }
+
+  realtimeWorkerRetryMedia(input: RealtimeWorkerRetryMediaInput): Promise<RealtimeWorkerStatus> {
+    return this.invoke("realtime_worker_retry_media", { input });
+  }
+
+  realtimeWorkerReplaceSource(
+    input: RealtimeWorkerReplaceSourceInput,
+  ): Promise<RealtimeWorkerStatus> {
+    return this.invoke("realtime_worker_replace_source", { input });
   }
 
   realtimeWorkerWake(input: RealtimeWorkerWakeInput): Promise<RealtimeWorkerStatus> {

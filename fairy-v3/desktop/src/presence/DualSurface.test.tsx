@@ -92,7 +92,7 @@ function projection(overrides: Partial<PresenceProjectionState> = {}): PresenceP
 
 function preferences(): DesktopPreferences {
   return {
-    schema_version: 3,
+    schema_version: 10,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -115,6 +115,8 @@ function preferences(): DesktopPreferences {
     realtime_interaction_intensity: "standard",
     realtime_voice_output: "fairy_voice",
     realtime_game_audio_default: false,
+    realtime_capture_mode: "selected_window",
+    realtime_excluded_applications: [],
     realtime_online_assistance_enabled: false,
     realtime_memory_enabled: true,
     realtime_presence_max_minutes: 240,

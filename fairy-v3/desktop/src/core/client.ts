@@ -147,6 +147,14 @@ export interface RealtimeProviderCredentialStatus {
 }
 
 export type RealtimeWorkerProvider = "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
+export type RealtimeCaptureMode = "selected_window" | "follow_foreground";
+export type RealtimeMediaChannel =
+  | "microphone"
+  | "selected_window"
+  | "selected_application_audio"
+  | "fairy_render_reference"
+  | "voice_output";
+export type RealtimeRetryableMediaChannel = Exclude<RealtimeMediaChannel, "voice_output">;
 
 export interface RealtimeWorkerStartInput {
   session_id: string;
@@ -164,6 +172,8 @@ export interface RealtimeWorkerStartInput {
   online_assistance_enabled: boolean;
   cloud_microphone_upload_consent: boolean;
   cloud_screen_upload_consent: boolean;
+  capture_mode: RealtimeCaptureMode;
+  excluded_applications: string[];
 }
 
 export interface RealtimeBackendResolutionInput {
@@ -212,6 +222,27 @@ export interface RealtimeWorkerStatus {
     failure_count: number;
     error_code: string | null;
   };
+  capture_scope: {
+    mode: RealtimeCaptureMode;
+    source_sequence: number;
+    source_available: boolean;
+    privacy_paused: boolean;
+    sensitive_category:
+      | "secure_desktop"
+      | "fairy_owned"
+      | "credential_application"
+      | "financial_or_private"
+      | "protected_content"
+      | "user_excluded"
+      | null;
+    error_code: string | null;
+  } | null;
+  media_channels: Array<{
+    channel: RealtimeMediaChannel;
+    sequence: number;
+    status: "starting" | "active" | "paused" | "unavailable" | "recovering";
+    error_code: string | null;
+  }>;
   audio_input_ms: number;
   audio_output_ms: number;
   video_frame_count: number;
@@ -236,6 +267,16 @@ export interface RealtimeWorkerSetPolicyInput {
   session_id: string;
   activity_profile: RealtimeWorkerStartInput["activity_profile"];
   interaction_intensity: RealtimeWorkerStartInput["interaction_intensity"];
+}
+
+export interface RealtimeWorkerRetryMediaInput {
+  session_id: string;
+  channel: RealtimeRetryableMediaChannel;
+}
+
+export interface RealtimeWorkerReplaceSourceInput {
+  session_id: string;
+  source_id: number;
 }
 
 export interface RealtimeWorkerWakeInput {
@@ -294,6 +335,12 @@ export interface CoreTransport {
   realtimeWorkerToolResult?(input: RealtimeWorkerToolResultInput): Promise<void>;
   realtimeWorkerSetInput?(input: RealtimeWorkerSetInputInput): Promise<void>;
   realtimeWorkerSetPolicy?(input: RealtimeWorkerSetPolicyInput): Promise<RealtimeWorkerStatus>;
+  realtimeWorkerRetryMedia?(
+    input: RealtimeWorkerRetryMediaInput,
+  ): Promise<RealtimeWorkerStatus>;
+  realtimeWorkerReplaceSource?(
+    input: RealtimeWorkerReplaceSourceInput,
+  ): Promise<RealtimeWorkerStatus>;
   realtimeWorkerWake?(input: RealtimeWorkerWakeInput): Promise<RealtimeWorkerStatus>;
   realtimeWorkerPausePrivacy?(input: RealtimeWorkerWakeInput): Promise<RealtimeWorkerStatus>;
   realtimeWorkerResumePrivacy?(input: RealtimeWorkerWakeInput): Promise<RealtimeWorkerStatus>;
@@ -793,6 +840,18 @@ export class CoreClient {
           throw new Error("Realtime requires Fairy desktop");
         }
         return this.transport.realtimeWorkerSetPolicy(input);
+      },
+      retryMedia: (input: RealtimeWorkerRetryMediaInput) => {
+        if (!this.transport.realtimeWorkerRetryMedia) {
+          throw new Error("Realtime requires Fairy desktop");
+        }
+        return this.transport.realtimeWorkerRetryMedia(input);
+      },
+      replaceSource: (input: RealtimeWorkerReplaceSourceInput) => {
+        if (!this.transport.realtimeWorkerReplaceSource) {
+          throw new Error("Realtime requires Fairy desktop");
+        }
+        return this.transport.realtimeWorkerReplaceSource(input);
       },
       wake: (input: RealtimeWorkerWakeInput) => {
         if (!this.transport.realtimeWorkerWake) throw new Error("Realtime requires Fairy desktop");

@@ -81,6 +81,7 @@ import {
   HealthRow,
   SettingRange,
   SettingSelect,
+  SettingTextInput,
   SettingToggle,
 } from "./settingsControls";
 import "./settings-app.css";
@@ -103,6 +104,13 @@ const categories: readonly {
   { id: "pet", label: "Pet", keywords: "presence companion mute always top liquid glass renderer hover particles opacity size", icon: PawPrint },
   { id: "advanced", label: "Advanced", keywords: "developer diagnostics logs", icon: SlidersHorizontal },
 ];
+
+function excludedApplicationsFromInput(value: string): string[] {
+  return value
+    .split(/[\n,]/u)
+    .map((application) => application.trim().toLocaleLowerCase("en-US"))
+    .filter((application) => application !== "");
+}
 
 interface GeneralSettingsData {
   archivedProjects: ProjectArchivedItem[];
@@ -672,7 +680,9 @@ function SettingsCategory(props: SettingsCategoryProps) {
       <SettingSelect icon={<SlidersHorizontal size={17} />} label="Interaction intensity" detail="Game cooldowns: Quiet 90s, Standard 45s, Active 20s. Focus: Quiet/Standard 8m, Active 3m. Direct replies remain immediate." value={data.preferences.realtime_interaction_intensity} disabled={busy} onChange={(value) => void updatePreferences({ realtime_interaction_intensity: value as DesktopPreferences["realtime_interaction_intensity"] })} options={[{ value: "quiet", label: "Quiet" }, { value: "standard", label: "Standard" }, { value: "active", label: "Active" }]} />
       <SettingSelect icon={<Volume2 size={17} />} label="Voice output" detail="Fairy voice uses the local Voice Worker; text-only never starts voice playback" value={data.preferences.realtime_voice_output} disabled={busy} onChange={(value) => void updatePreferences({ realtime_voice_output: value as DesktopPreferences["realtime_voice_output"] })} options={[{ value: "fairy_voice", label: "Fairy voice" }, { value: "provider_native_voice", label: "Provider native voice" }, { value: "text_only", label: "Text only" }]} />
       <SettingToggle label="Allow cloud fallback" detail="A Local session never moves to Cloud without this explicit preference and a governed transition" checked={data.preferences.realtime_allow_cloud_fallback} disabled={busy} onChange={(value) => void updatePreferences({ realtime_allow_cloud_fallback: value })} />
-      <SettingToggle label="Share application audio by default" detail="Still requires confirmation for every session" checked={data.preferences.realtime_game_audio_default} disabled={busy} onChange={(value) => void updatePreferences({ realtime_game_audio_default: value })} />
+      <SettingSelect icon={<MonitorCog size={17} />} label="Local observation scope" detail="Follow Foreground is available only with the Local backend. Cloud sessions always remain on the explicitly selected window." value={data.preferences.realtime_capture_mode} disabled={busy} onChange={(value) => void updatePreferences({ realtime_capture_mode: value as DesktopPreferences["realtime_capture_mode"] })} options={[{ value: "selected_window", label: "Keep selected window" }, { value: "follow_foreground", label: "Follow foreground locally" }]} />
+      <SettingTextInput icon={<ShieldCheck size={17} />} label="Excluded applications" detail="Local Follow Foreground pauses observation for these executable basenames. Up to 32 entries; paths and wildcards are rejected." value={data.preferences.realtime_excluded_applications.join(", ")} placeholder="1password.exe, banking.exe" disabled={busy} onCommit={(value) => void updatePreferences({ realtime_excluded_applications: excludedApplicationsFromInput(value) })} />
+      <SettingToggle label="Use application audio by default" detail="Local sessions only. The source remains visible and still requires confirmation for every session." checked={data.preferences.realtime_game_audio_default} disabled={busy} onChange={(value) => void updatePreferences({ realtime_game_audio_default: value })} />
       <SettingToggle label="Online assistance" detail="Allows governed online assistance candidates; it does not grant tool execution" checked={data.preferences.realtime_online_assistance_enabled} disabled={busy} onChange={(value) => void updatePreferences({ realtime_online_assistance_enabled: value })} />
       <SettingToggle label="Offer companion memory" detail="Only saves a bounded summary you confirm; never saves audio, frames or full transcripts" checked={data.preferences.realtime_memory_enabled} disabled={busy} onChange={(value) => void updatePreferences({ realtime_memory_enabled: value })} />
       <SettingRange label="Presence maximum" value={data.preferences.realtime_presence_max_minutes} min={30} max={240} step={30} suffix=" min" disabled={busy} onCommit={(value) => void updatePreferences({ realtime_presence_max_minutes: value })} />
@@ -838,7 +848,7 @@ function RealtimeCredentialForm({ provider, label, status, busy, client, act, re
       <label><span>API key</span><input type="password" autoComplete="off" required value={apiKey} disabled={busy} placeholder={status.configured ? "Enter a new key to replace" : "API key"} onChange={(event) => setApiKey(event.target.value)} /></label>
       <div className="settings-form-actions"><button className="primary-command" type="submit" disabled={busy || !apiKey.trim()}><KeyRound size={14} />Save credential</button>{status.configured || status.error ? <button className="danger-icon" type="button" aria-label={`Remove ${label} credential`} disabled={busy} onClick={() => setConfirmDelete(true)}><Trash2 size={15} /></button> : null}</div>
     </form>
-    <ActionDialog open={confirmDelete} busy={busy} destructive title={`Remove ${label} credential`} description="The encrypted credential will be removed from this device. Saved session audits and game memories remain." confirmLabel="Remove" onCancel={() => setConfirmDelete(false)} onConfirm={async () => { await act(async () => { await client.providers.deleteRealtime(provider); await reload(); }); setConfirmDelete(false); }} />
+    <ActionDialog open={confirmDelete} busy={busy} destructive title={`Remove ${label} credential`} description="The encrypted credential will be removed from this device. Saved session audits and Realtime memories remain." confirmLabel="Remove" onCancel={() => setConfirmDelete(false)} onConfirm={async () => { await act(async () => { await client.providers.deleteRealtime(provider); await reload(); }); setConfirmDelete(false); }} />
   </>;
 }
 

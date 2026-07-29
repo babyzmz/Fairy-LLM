@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::realtime_privacy::{normalize_excluded_applications, RealtimeCaptureMode};
+
 const PREFERENCES_FILE: &str = "preferences/desktop.json";
-const SCHEMA_VERSION: u32 = 9;
+const SCHEMA_VERSION: u32 = 10;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -128,6 +130,10 @@ pub struct DesktopPreferences {
     #[serde(default)]
     pub realtime_game_audio_default: bool,
     #[serde(default)]
+    pub realtime_capture_mode: RealtimeCaptureMode,
+    #[serde(default)]
+    pub realtime_excluded_applications: Vec<String>,
+    #[serde(default)]
     pub realtime_online_assistance_enabled: bool,
     #[serde(default = "default_true")]
     pub realtime_memory_enabled: bool,
@@ -203,6 +209,8 @@ impl Default for DesktopPreferences {
             realtime_interaction_intensity: RealtimeInteractionIntensityPreference::Standard,
             realtime_voice_output: RealtimeVoiceOutputPreference::FairyVoice,
             realtime_game_audio_default: false,
+            realtime_capture_mode: RealtimeCaptureMode::SelectedWindow,
+            realtime_excluded_applications: Vec::new(),
             realtime_online_assistance_enabled: false,
             realtime_memory_enabled: true,
             realtime_presence_max_minutes: default_realtime_presence_minutes(),
@@ -321,6 +329,8 @@ impl LegacyRealtimePreferencesV8 {
             LegacyRealtimeVoicePreference::Fairy => RealtimeVoiceOutputPreference::FairyVoice,
         };
         preferences.realtime_game_audio_default = self.realtime_game_audio_default;
+        preferences.realtime_capture_mode = RealtimeCaptureMode::SelectedWindow;
+        preferences.realtime_excluded_applications.clear();
         preferences.realtime_online_assistance_enabled = false;
         preferences.realtime_memory_enabled = self.realtime_memory_enabled;
         preferences.realtime_presence_max_minutes = default_realtime_presence_minutes();
@@ -379,7 +389,8 @@ impl DesktopPreferencesStore {
             .get("schema_version")
             .and_then(serde_json::Value::as_u64);
         let legacy_memory_schema = matches!(schema_version, Some(1..=6));
-        let needs_schema_upgrade = matches!(schema_version, Some(1..=8));
+        let legacy_realtime_schema = matches!(schema_version, Some(1..=8));
+        let needs_schema_upgrade = matches!(schema_version, Some(1..=9));
         let retired_activation_style = value
             .get("pet_activation_style")
             .and_then(serde_json::Value::as_str)
@@ -391,11 +402,15 @@ impl DesktopPreferencesStore {
             Err(error) => return Err(error.into()),
         };
         if needs_schema_upgrade {
-            let legacy_realtime =
-                serde_json::from_value::<LegacyRealtimePreferencesV8>(value.clone())?;
-            legacy_realtime.apply_to(&mut preferences);
+            if legacy_realtime_schema {
+                let legacy_realtime =
+                    serde_json::from_value::<LegacyRealtimePreferencesV8>(value.clone())?;
+                legacy_realtime.apply_to(&mut preferences);
+            }
             preferences.schema_version = SCHEMA_VERSION;
-            if validate(&preferences).is_err() {
+            if normalize_realtime_exclusions(&mut preferences).is_err()
+                || validate(&preferences).is_err()
+            {
                 preferences = DesktopPreferences::default();
             }
             return Ok(StartupDesktopPreferences {
@@ -404,11 +419,17 @@ impl DesktopPreferencesStore {
                 migration_required: true,
             });
         }
+        let normalized_exclusions =
+            normalize_excluded_applications(&preferences.realtime_excluded_applications)
+                .map_err(|_| invalid_realtime_exclusions())?;
+        let exclusions_changed =
+            normalized_exclusions != preferences.realtime_excluded_applications;
+        preferences.realtime_excluded_applications = normalized_exclusions;
         validate(&preferences)?;
         Ok(StartupDesktopPreferences {
             preferences,
             legacy_memory: None,
-            migration_required: retired_activation_style,
+            migration_required: retired_activation_style || exclusions_changed,
         })
     }
 
@@ -431,6 +452,7 @@ impl DesktopPreferencesStore {
         let mut next = update.preferences;
         next.schema_version = SCHEMA_VERSION;
         next.revision = current.revision + 1;
+        normalize_realtime_exclusions(&mut next)?;
         validate(&next)?;
         self.write_atomic(&next)?;
         Ok(next)
@@ -491,6 +513,21 @@ impl DesktopPreferencesStore {
     }
 }
 
+fn invalid_realtime_exclusions() -> DesktopPreferencesError {
+    DesktopPreferencesError::Invalid(
+        "realtime excluded applications must be unique executable basenames".to_owned(),
+    )
+}
+
+fn normalize_realtime_exclusions(
+    preferences: &mut DesktopPreferences,
+) -> Result<(), DesktopPreferencesError> {
+    preferences.realtime_excluded_applications =
+        normalize_excluded_applications(&preferences.realtime_excluded_applications)
+            .map_err(|_| invalid_realtime_exclusions())?;
+    Ok(())
+}
+
 fn validate(preferences: &DesktopPreferences) -> Result<(), DesktopPreferencesError> {
     if preferences.schema_version != SCHEMA_VERSION {
         return Err(DesktopPreferencesError::Invalid(
@@ -527,6 +564,8 @@ fn validate(preferences: &DesktopPreferences) -> Result<(), DesktopPreferencesEr
             "realtime local keep-warm must be between 0 and 30 minutes".to_owned(),
         ));
     }
+    normalize_excluded_applications(&preferences.realtime_excluded_applications)
+        .map_err(|_| invalid_realtime_exclusions())?;
     if !(75..=150).contains(&preferences.pet_size_percent) {
         return Err(DesktopPreferencesError::Invalid(
             "pet size must be between 75 and 150 percent".to_owned(),
@@ -661,8 +700,8 @@ mod tests {
         DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore,
         DesktopPreferencesUpdate, PetActivationStyle, PetAnchorPreference, PetOpticsMode,
         PetPreferencesUpdate, RealtimeActivityProfilePreference, RealtimeBackendPreference,
-        RealtimeCloudProviderPreference, RealtimeInteractionIntensityPreference,
-        RealtimeVoiceOutputPreference,
+        RealtimeCaptureMode, RealtimeCloudProviderPreference,
+        RealtimeInteractionIntensityPreference, RealtimeVoiceOutputPreference,
     };
 
     #[test]
@@ -790,7 +829,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 9);
+        assert_eq!(migrated.schema_version, 10);
         assert!(!migrated.voice_auto_play_pet);
         assert!(!migrated.pet_always_on_top);
         assert!(migrated.pet_muted);
@@ -823,7 +862,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 9);
+        assert_eq!(migrated.schema_version, 10);
         assert_eq!(migrated.pet_target_fps, 60);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -847,7 +886,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 9);
+        assert_eq!(migrated.schema_version, 10);
         assert_eq!(migrated.pet_optics_mode, PetOpticsMode::Standard);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -875,7 +914,7 @@ mod tests {
         .expect("write stored preferences");
 
         let loaded = store.load().expect("load version seven preferences");
-        assert_eq!(loaded.schema_version, 9);
+        assert_eq!(loaded.schema_version, 10);
         assert!(loaded.pet_muted);
         assert!(loaded.ambient_dialogue_enabled);
         assert!(!loaded.ambient_dialogue_voice_enabled);
@@ -944,7 +983,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 9);
+        assert_eq!(migrated.schema_version, 10);
         assert!(!migrated.trash_auto_purge_30_days);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -977,7 +1016,7 @@ mod tests {
                 retention_days: 45,
             })
         );
-        assert_eq!(startup.preferences.schema_version, 9);
+        assert_eq!(startup.preferences.schema_version, 10);
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(
                 &std::fs::read(&path).expect("read pending migration")
@@ -993,7 +1032,7 @@ mod tests {
             &std::fs::read(&path).expect("read migrated preferences"),
         )
         .expect("parse migrated preferences");
-        assert_eq!(persisted["schema_version"], serde_json::json!(9));
+        assert_eq!(persisted["schema_version"], serde_json::json!(10));
         assert!(persisted.get("memory_enabled").is_none());
         assert!(persisted.get("memory_retention_days").is_none());
         assert!(store
@@ -1041,7 +1080,7 @@ mod tests {
         .expect("write stored preferences");
 
         let migrated = store.load().expect("migrate version eight");
-        assert_eq!(migrated.schema_version, 9);
+        assert_eq!(migrated.schema_version, 10);
         assert!(!migrated.realtime_beta_enabled);
         assert_eq!(migrated.realtime_backend, RealtimeBackendPreference::Auto);
         assert_eq!(
@@ -1060,10 +1099,10 @@ mod tests {
     }
 
     #[test]
-    fn schema_nine_defaults_are_privacy_safe_and_bounded() {
+    fn schema_ten_defaults_are_privacy_safe_and_bounded() {
         let defaults = DesktopPreferences::default();
 
-        assert_eq!(defaults.schema_version, 9);
+        assert_eq!(defaults.schema_version, 10);
         assert!(!defaults.realtime_beta_enabled);
         assert_eq!(defaults.realtime_backend, RealtimeBackendPreference::Auto);
         assert_eq!(
@@ -1081,7 +1120,94 @@ mod tests {
         assert_eq!(defaults.realtime_presence_max_minutes, 240);
         assert_eq!(defaults.realtime_cloud_daily_limit_minutes, 180);
         assert_eq!(defaults.realtime_local_keep_warm_minutes, 10);
+        assert_eq!(
+            defaults.realtime_capture_mode,
+            RealtimeCaptureMode::SelectedWindow
+        );
+        assert!(defaults.realtime_excluded_applications.is_empty());
         assert!(!defaults.realtime_allow_cloud_fallback);
         assert!(!defaults.realtime_online_assistance_enabled);
+    }
+
+    #[test]
+    fn schema_nine_migrates_capture_defaults_without_resetting_realtime_choices() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let path = directory.path().join("preferences/desktop.json");
+        std::fs::create_dir_all(path.parent().expect("preferences parent"))
+            .expect("create preferences parent");
+        let mut stored =
+            serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
+        let object = stored.as_object_mut().expect("preferences object");
+        object.insert("schema_version".to_owned(), serde_json::json!(9));
+        object.insert("realtime_beta_enabled".to_owned(), serde_json::json!(true));
+        object.insert(
+            "realtime_backend".to_owned(),
+            serde_json::json!("cloud_live"),
+        );
+        object.remove("realtime_capture_mode");
+        object.remove("realtime_excluded_applications");
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&stored).expect("stored bytes"),
+        )
+        .expect("write stored preferences");
+
+        let migrated = store.load().expect("migrate version nine");
+        assert_eq!(migrated.schema_version, 10);
+        assert!(migrated.realtime_beta_enabled);
+        assert_eq!(
+            migrated.realtime_backend,
+            RealtimeBackendPreference::CloudLive
+        );
+        assert_eq!(
+            migrated.realtime_capture_mode,
+            RealtimeCaptureMode::SelectedWindow
+        );
+        assert!(migrated.realtime_excluded_applications.is_empty());
+    }
+
+    #[test]
+    fn excluded_applications_reject_paths_wildcards_duplicates_and_oversized_lists() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        for excluded in [
+            vec!["C:\\private.exe".to_owned()],
+            vec!["*.exe".to_owned()],
+            vec!["same.exe".to_owned(), "SAME.EXE".to_owned()],
+            vec!["app.exe".to_owned(); 33],
+        ] {
+            let mut preferences = DesktopPreferences::default();
+            preferences.realtime_excluded_applications = excluded;
+            assert!(matches!(
+                store.update(DesktopPreferencesUpdate {
+                    expected_revision: 0,
+                    preferences,
+                }),
+                Err(DesktopPreferencesError::Invalid(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn excluded_applications_are_trimmed_and_normalized_before_persisting() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let mut preferences = DesktopPreferences::default();
+        preferences.realtime_excluded_applications =
+            vec![" OBS64.EXE ".to_owned(), "Private-App.Exe".to_owned()];
+
+        let saved = store
+            .update(DesktopPreferencesUpdate {
+                expected_revision: 0,
+                preferences,
+            })
+            .expect("normalize exclusions");
+
+        assert_eq!(
+            saved.realtime_excluded_applications,
+            vec!["obs64.exe", "private-app.exe"]
+        );
+        assert_eq!(store.load().expect("reload normalized"), saved);
     }
 }

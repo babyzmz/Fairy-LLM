@@ -8,7 +8,6 @@ import {
   RealtimeCompanion,
   mergeCaptionDelta,
   realtimeProviderErrorMessage,
-  todaysRealtimeMinutes,
 } from "./RealtimeCompanion";
 
 const invoke = vi.fn();
@@ -18,6 +17,9 @@ let realtimeVoiceOutput: "provider_native_voice" | "fairy_voice" = "provider_nat
 let realtimeBetaEnabled = true;
 let realtimeBackend: "auto" | "local_mini_cpm_o45" | "cloud_live" = "cloud_live";
 let localBackendReady = false;
+let realtimeApplicationAudioDefault = false;
+let realtimeCaptureMode: "selected_window" | "follow_foreground" = "selected_window";
+let realtimeExcludedApplications: string[] = [];
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -58,8 +60,12 @@ const workerStatus = (running: boolean): RealtimeWorkerStatus => ({
   session_id: running ? session("active", 2).id : null,
   segment_id: running ? "segment-1" : null,
   context_epoch: running ? 1 : null,
-  backend: running ? "cloud_live" : null,
-  cloud_provider: running ? "glm_realtime_flash" : null,
+  backend: running
+    ? realtimeBackend === "local_mini_cpm_o45" ? "local_mini_cpm_o45" : "cloud_live"
+    : null,
+  cloud_provider: running && realtimeBackend !== "local_mini_cpm_o45"
+    ? "glm_realtime_flash"
+    : null,
   action_required: false,
   presence_projection: null,
   assistance: [],
@@ -71,6 +77,20 @@ const workerStatus = (running: boolean): RealtimeWorkerStatus => ({
     failure_count: 0,
     error_code: null,
   },
+  capture_scope: running ? {
+    mode: realtimeBackend === "local_mini_cpm_o45"
+      ? realtimeCaptureMode
+      : "selected_window",
+    source_sequence: 1,
+    source_available: true,
+    privacy_paused: false,
+    sensitive_category: null,
+    error_code: null,
+  } : null,
+  media_channels: running ? [
+    { channel: "microphone", sequence: 1, status: "active", error_code: null },
+    { channel: "selected_window", sequence: 1, status: "active", error_code: null },
+  ] : [],
   audio_input_ms: 1_250,
   audio_output_ms: 400,
   video_frame_count: 8,
@@ -154,6 +174,9 @@ describe("RealtimeCompanion", () => {
     realtimeBetaEnabled = true;
     realtimeBackend = "cloud_live";
     localBackendReady = false;
+    realtimeApplicationAudioDefault = false;
+    realtimeCaptureMode = "selected_window";
+    realtimeExcludedApplications = [];
     localStorage.clear();
     localStorage.setItem("fairy.realtime.device-id", "test-device");
     invoke.mockImplementation(async (command: string) => {
@@ -165,7 +188,9 @@ describe("RealtimeCompanion", () => {
         realtime_activity_profile: "auto",
         realtime_interaction_intensity: "standard",
         realtime_voice_output: realtimeVoiceOutput,
-        realtime_game_audio_default: false,
+        realtime_game_audio_default: realtimeApplicationAudioDefault,
+        realtime_capture_mode: realtimeCaptureMode,
+        realtime_excluded_applications: realtimeExcludedApplications,
         realtime_online_assistance_enabled: false,
         realtime_memory_enabled: true,
         realtime_presence_max_minutes: 240,
@@ -386,7 +411,7 @@ describe("RealtimeCompanion", () => {
       },
     } as unknown as CoreClient["realtime"];
     render(<RealtimeCompanion client={client} openRequest={1} />);
-    await screen.findByText("Listening for the conversation and game context…");
+    await screen.findByText("Listening for the conversation and observed context…");
 
     await act(async () => eventListener?.({ payload: {
       type: "assistance_state",
@@ -868,7 +893,7 @@ describe("RealtimeCompanion", () => {
     ));
   });
 
-  it("keeps application audio as an explicit selected-app session consent", async () => {
+  it("keeps unsupported Cloud application audio visibly disabled", async () => {
     const client = {
       sessions: { list: vi.fn(async () => ({ items: [] })) },
       memories: { save: vi.fn() },
@@ -881,9 +906,11 @@ describe("RealtimeCompanion", () => {
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
     expect(screen.getAllByRole("checkbox")).toHaveLength(3);
-    expect((screen.getByRole("checkbox", {
-      name: "Upload selected application audio",
-    }) as HTMLInputElement).checked).toBe(false);
+    const applicationAudio = screen.getByRole("checkbox", {
+      name: "Application audio unavailable for this Cloud provider",
+    }) as HTMLInputElement;
+    expect(applicationAudio.checked).toBe(false);
+    expect(applicationAudio.disabled).toBe(true);
     expect(screen.getByText(/System-wide audio is never captured/)).not.toBeNull();
   });
 
@@ -904,7 +931,7 @@ describe("RealtimeCompanion", () => {
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
-    await grantMediaConsentAndStart(true);
+    await grantMediaConsentAndStart();
 
     await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
       session_id: session("starting", 1).id,
@@ -916,14 +943,138 @@ describe("RealtimeCompanion", () => {
       voice_output: "provider_native_voice",
       microphone_enabled: true,
       screen_enabled: true,
-      application_audio_enabled: true,
+      application_audio_enabled: false,
       online_assistance_enabled: false,
       cloud_microphone_upload_consent: true,
       cloud_screen_upload_consent: true,
+      capture_mode: "selected_window",
+      excluded_applications: [],
     })));
     const request = start.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(request).not.toHaveProperty("credential");
     expect(request).not.toHaveProperty("persona_snapshot");
+  });
+
+  it("applies the saved Local audio default and records the actual capture scope", async () => {
+    realtimeBackend = "local_mini_cpm_o45";
+    localBackendReady = true;
+    realtimeApplicationAudioDefault = true;
+    realtimeCaptureMode = "follow_foreground";
+    realtimeExcludedApplications = ["obs64.exe", "private-app.exe"];
+    const startSession = vi.fn(async (input: { game_audio_consent: boolean }) => ({
+      ...session("starting", 1),
+      provider: "local_mini_cpm_o45",
+      game_audio_consent: input.game_audio_consent,
+    }));
+    const startWorker = vi.fn(async () => workerStatus(true));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: startSession,
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => workerStatus(false)),
+        start: startWorker,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: "Test Game 路 1280脳720" });
+    const applicationAudio = screen.getByRole("checkbox", {
+      name: "Process selected application audio locally",
+    }) as HTMLInputElement;
+    expect(applicationAudio.checked).toBe(true);
+    expect(applicationAudio.disabled).toBe(false);
+    expect(screen.getByRole("combobox", { name: "Observation scope" })).toHaveValue(
+      "follow_foreground",
+    );
+
+    await grantMediaConsentAndStart();
+
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith(
+      expect.objectContaining({ game_audio_consent: true }),
+    ));
+    expect(startWorker).toHaveBeenCalledWith(expect.objectContaining({
+      backend: "local_mini_cpm_o45",
+      application_audio_enabled: true,
+      capture_mode: "follow_foreground",
+      excluded_applications: ["obs64.exe", "private-app.exe"],
+    }));
+  });
+
+  it("renders native channel recovery and ignores late events from another Session", async () => {
+    const degradedStatus: RealtimeWorkerStatus = {
+      ...workerStatus(true),
+      capture_scope: {
+        mode: "selected_window",
+        source_sequence: 4,
+        source_available: false,
+        privacy_paused: false,
+        sensitive_category: null,
+        error_code: "CAPTURE_SOURCE_UNAVAILABLE",
+      },
+      media_channels: [{
+        channel: "microphone",
+        sequence: 3,
+        status: "unavailable",
+        error_code: "MICROPHONE_DEVICE_LOST",
+      }],
+    };
+    const retryMedia = vi.fn(async () => degradedStatus);
+    const replaceSource = vi.fn(async () => ({
+      ...degradedStatus,
+      capture_scope: {
+        ...degradedStatus.capture_scope!,
+        source_sequence: 5,
+        source_available: true,
+        error_code: null,
+      },
+    }));
+    const activeSession = session("active", 2);
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [activeSession] })),
+        get: vi.fn(async () => activeSession),
+      },
+      memories: { save: vi.fn() },
+      transcript: { append: vi.fn(), list: vi.fn(async () => ({ items: [] })) },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => degradedStatus),
+        retryMedia,
+        replaceSource,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    expect(await screen.findByText("The observed window is unavailable. Microphone conversation can continue.")).not.toBeNull();
+    expect(screen.getByText("Microphone")).not.toBeNull();
+    expect(screen.getByText("unavailable")).not.toBeNull();
+
+    await act(async () => eventListener?.({ payload: {
+      type: "media_channel_state",
+      session_id: activeSession.id,
+      segment_id: "segment-late",
+      context_epoch: 1,
+      channel: "microphone",
+      sequence: 99,
+      status: "active",
+      error_code: null,
+    } }));
+    expect(screen.getByText("unavailable")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(retryMedia).toHaveBeenCalledWith({
+      session_id: activeSession.id,
+      channel: "microphone",
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Use window" }));
+    await waitFor(() => expect(replaceSource).toHaveBeenCalledWith({
+      session_id: activeSession.id,
+      source_id: 42,
+    }));
   });
 
   it("cancels a session that is still connecting without reporting completion", async () => {
@@ -1136,29 +1287,6 @@ describe("credentialProviderFor", () => {
   });
 });
 
-describe("todaysRealtimeMinutes", () => {
-  it("sums only today's sessions by their larger audio direction", async () => {
-    const nowIso = new Date().toISOString();
-    const yesterdayIso = new Date(Date.now() - 26 * 3_600_000).toISOString();
-    const client = {
-      sessions: {
-        list: vi.fn(async () => ({ items: [
-          { ...session("completed", 3), started_at: nowIso, audio_input_ms: 120 * 60_000, audio_output_ms: 30 * 60_000 },
-          { ...session("completed", 3), started_at: yesterdayIso, audio_input_ms: 999 * 60_000, audio_output_ms: 0 },
-        ] })),
-      },
-    } as unknown as CoreClient["realtime"];
-    expect(await todaysRealtimeMinutes(client)).toBeCloseTo(120);
-  });
-
-  it("returns zero when the usage lookup fails", async () => {
-    const client = {
-      sessions: { list: vi.fn(async () => { throw new Error("offline"); }) },
-    } as unknown as CoreClient["realtime"];
-    expect(await todaysRealtimeMinutes(client)).toBe(0);
-  });
-});
-
 describe("mergeCaptionDelta", () => {
   it("supports both cumulative provider text and token deltas", () => {
     expect(mergeCaptionDelta("Boss", "Boss incoming")).toBe("Boss incoming");
@@ -1175,6 +1303,14 @@ describe("realtimeProviderErrorMessage", () => {
       .toContain("API key");
     expect(realtimeProviderErrorMessage("REALTIME_CREDENTIAL_MISSING"))
       .toContain("Settings");
+    expect(realtimeProviderErrorMessage("REALTIME_CLOUD_DAILY_LIMIT_REACHED"))
+      .toContain("limit");
+    expect(realtimeProviderErrorMessage("REALTIME_CLOUD_USAGE_UNAVAILABLE"))
+      .toContain("blocked");
+    expect(realtimeProviderErrorMessage("LOCAL_RUNTIME_QUARANTINED"))
+      .toContain("Local Realtime");
+    expect(realtimeProviderErrorMessage("LOCAL_BACKEND_NOT_READY_AFTER_UNLOAD"))
+      .toContain("wake");
     expect(realtimeProviderErrorMessage("provider secret leaked here"))
       .toBe("Realtime session failed.");
     expect(realtimeProviderErrorMessage("UNRECOGNIZED_INTERNAL_CODE"))

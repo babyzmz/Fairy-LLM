@@ -1,5 +1,4 @@
 import type {
-  CoreClient,
   RealtimeBackendResolution,
   RealtimeCredentialProvider,
   RealtimeSessionStatus,
@@ -65,23 +64,6 @@ export function standbyMessage(reason: "inactivity" | "duration_limit" | null): 
     return "Presence duration reached. Extend explicitly before waking Fairy.";
   }
   return "Fairy paused media after three quiet minutes.";
-}
-
-export async function todaysRealtimeMinutes(
-  client: CoreClient["realtime"],
-): Promise<number> {
-  try {
-    const recent = await client.sessions.list(50);
-    const today = new Date().toDateString();
-    const totalMs = recent.items.reduce((sum, item) => {
-      if (new Date(item.started_at).toDateString() !== today) return sum;
-      return sum + Math.max(item.audio_input_ms, item.audio_output_ms);
-    }, 0);
-    return totalMs / 60_000;
-  } catch {
-    // A usage lookup failure must not block starting a session.
-    return 0;
-  }
 }
 
 export function deviceId(): string {
@@ -172,6 +154,16 @@ export function realtimeProviderErrorMessage(code?: string | null): string {
       return "The realtime provider is temporarily unavailable.";
     case "REALTIME_CREDENTIAL_MISSING":
       return "Configure the realtime provider API key in Settings before starting.";
+    case "REALTIME_CLOUD_DAILY_LIMIT_REACHED":
+      return "Today’s Cloud Realtime limit has been reached. Local Realtime remains available when its readiness checks pass.";
+    case "REALTIME_CLOUD_USAGE_UNAVAILABLE":
+      return "Fairy could not verify today’s Cloud Realtime usage, so Cloud start is blocked to protect the configured limit.";
+    case "LOCAL_MODEL_MISSING":
+    case "LOCAL_RUNTIME_MISSING":
+    case "LOCAL_SELF_TEST_FAILED":
+    case "LOCAL_RUNTIME_QUARANTINED":
+    case "LOCAL_BACKEND_NOT_READY_AFTER_UNLOAD":
+      return "Local Realtime is not ready to wake. Review and repair Local readiness in Settings.";
     default:
       return "Realtime session failed.";
   }

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CoreClient,
   RealtimeBackendResolution,
+  RealtimeRetryableMediaChannel,
   RealtimeSession,
   RealtimeSessionStatus,
   RealtimeWorkerStatus,
@@ -46,14 +47,12 @@ import {
   realtimeProviderErrorMessage,
   resolutionGuidance,
   standbyMessage,
-  todaysRealtimeMinutes,
   voiceOutputLabel,
 } from "./realtimeCompanionSupport";
 export {
   credentialProviderFor,
   mergeCaptionDelta,
   realtimeProviderErrorMessage,
-  todaysRealtimeMinutes,
 } from "./realtimeCompanionSupport";
 import "./realtime-companion.css";
 
@@ -80,6 +79,10 @@ type WorkerEvent =
       error_code: string | null;
     })
   | { type: "usage"; session_id: string; segment_id: string; context_epoch: number; audio_input_ms: number; audio_output_ms: number; video_frame_count: number; interruption_count: number; tool_call_count: number }
+  | { type: "media_channel_state"; session_id: string; segment_id: string; context_epoch: number; channel: RealtimeWorkerStatus["media_channels"][number]["channel"]; sequence: number; status: RealtimeWorkerStatus["media_channels"][number]["status"]; error_code: string | null }
+  | { type: "capture_scope_state"; session_id: string; segment_id: string; context_epoch: number; mode: "selected_window" | "follow_foreground"; source_sequence: number; source_available: boolean; privacy_paused: boolean; sensitive_category: "secure_desktop" | "fairy_owned" | "credential_application" | "financial_or_private" | "protected_content" | "user_excluded" | null; error_code: string | null }
+  | { type: "capture_source_changed"; session_id: string; segment_id: string; context_epoch: number; source_id: number; source_sequence: number; status: string; error_code: string | null }
+  | { type: "local_backend_unloaded"; session_id: string; segment_id: string; context_epoch: number }
   | { type: "sidecar_recovery"; status: "restarting" | "quarantined"; segment_id: string | null; restart_used: boolean; quarantined: boolean; context_interrupted: boolean; failure_count: number; error_code: string | null }
   | { type: "worker_interrupted"; error_code: string }
   | { type: "ready" | "pong" };
@@ -90,6 +93,12 @@ interface RealtimeUsage {
   video_frame_count: number;
   interruption_count: number;
   tool_call_count: number;
+}
+
+interface RealtimeWorkerIdentity {
+  sessionId: string;
+  segmentId: string;
+  contextEpoch: number;
 }
 
 const EMPTY_USAGE: RealtimeUsage = {
@@ -107,6 +116,29 @@ const EMPTY_SIDECAR: RealtimeWorkerStatus["sidecar"] = {
   failure_count: 0,
   error_code: null,
 };
+
+function mediaChannelLabel(
+  channel: RealtimeWorkerStatus["media_channels"][number]["channel"],
+): string {
+  switch (channel) {
+    case "microphone":
+      return "Microphone";
+    case "selected_window":
+      return "Observed window";
+    case "selected_application_audio":
+      return "Application audio";
+    case "fairy_render_reference":
+      return "Echo reference";
+    case "voice_output":
+      return "Voice output";
+  }
+}
+
+function isRetryableMediaChannel(
+  channel: RealtimeWorkerStatus["media_channels"][number]["channel"],
+): channel is RealtimeRetryableMediaChannel {
+  return channel !== "voice_output";
+}
 
 export function RealtimeCompanion({
   client,
@@ -132,11 +164,14 @@ export function RealtimeCompanion({
   const [microphoneConsent, setMicrophoneConsent] = useState(false);
   const [screenConsent, setScreenConsent] = useState(false);
   const [applicationAudioConsent, setApplicationAudioConsent] = useState(false);
+  const [captureMode, setCaptureMode] =
+    useState<DesktopPreferences["realtime_capture_mode"]>("selected_window");
   const [session, setSession] = useState<RealtimeSession | null>(null);
   const sessionRef = useRef<RealtimeSession | null>(null);
   const [presenceProjection, setPresenceProjection] =
     useState<RealtimePresenceProjection | null>(null);
   const presenceProjectionRef = useRef<RealtimePresenceProjection | null>(null);
+  const workerIdentityRef = useRef<RealtimeWorkerIdentity | null>(null);
   const presence: RealtimePresenceState = presenceProjection?.state ?? "idle";
   const [captions, setCaptions] = useState<string[]>([]);
   const [draftCaption, setDraftCaption] = useState("");
@@ -147,6 +182,10 @@ export function RealtimeCompanion({
   const [memoryNotice, setMemoryNotice] = useState<CompanionMemoryNotice | null>(null);
   const [memoryRetrySessionId, setMemoryRetrySessionId] = useState<string | null>(null);
   const [sidecar, setSidecar] = useState<RealtimeWorkerStatus["sidecar"]>(EMPTY_SIDECAR);
+  const [captureScope, setCaptureScope] =
+    useState<RealtimeWorkerStatus["capture_scope"]>(null);
+  const [mediaChannels, setMediaChannels] =
+    useState<RealtimeWorkerStatus["media_channels"]>([]);
   const usage = useRef<RealtimeUsage>({ ...EMPTY_USAGE });
   const [liveUsage, setLiveUsage] = useState<RealtimeUsage>({ ...EMPTY_USAGE });
   const [muted, setMuted] = useState(false);
@@ -177,12 +216,24 @@ export function RealtimeCompanion({
 
   const applyWorkerStatus = useCallback((status: RealtimeWorkerStatus) => {
     setActiveBackend(status.running ? status.backend : null);
+    workerIdentityRef.current = status.running
+      && status.session_id !== null
+      && status.segment_id !== null
+      && status.context_epoch !== null
+      ? {
+          sessionId: status.session_id,
+          segmentId: status.segment_id,
+          contextEpoch: status.context_epoch,
+        }
+      : null;
     setAssistance(
       Array.isArray(status.assistance)
         ? status.assistance.filter(isRealtimeAssistanceProjection).slice(-6)
         : [],
     );
     setSidecar(status.sidecar ?? EMPTY_SIDECAR);
+    setCaptureScope(status.capture_scope ?? null);
+    setMediaChannels(status.media_channels ?? []);
     if (!isPresenceProjection(status.presence_projection)) return;
     presenceProjectionRef.current = status.presence_projection;
     setPresenceProjection(status.presence_projection);
@@ -254,11 +305,53 @@ export function RealtimeCompanion({
     try {
       applyWorkerStatus(await client.worker.wake({ session_id: current.id }));
     } catch (caught) {
+      const message = messageOf(caught);
+      const errorCode = coreErrorCode(caught) ?? message;
+      setError(errorCode.startsWith("LOCAL_") || errorCode.startsWith("REALTIME_")
+        ? realtimeProviderErrorMessage(errorCode)
+        : message);
+    } finally {
+      setBusy(false);
+    }
+  }, [applyWorkerStatus, busy, client.worker]);
+
+  const retryMediaChannel = useCallback(async (
+    channel: RealtimeRetryableMediaChannel,
+  ) => {
+    const current = sessionRef.current;
+    if (current === null || isTerminal(current.status) || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      applyWorkerStatus(await client.worker.retryMedia({
+        session_id: current.id,
+        channel,
+      }));
+    } catch (caught) {
       setError(messageOf(caught));
     } finally {
       setBusy(false);
     }
   }, [applyWorkerStatus, busy, client.worker]);
+
+  const replaceObservedWindow = useCallback(async () => {
+    const current = sessionRef.current;
+    if (
+      current === null || isTerminal(current.status) || busy || sourceId === ""
+    ) return;
+    setBusy(true);
+    setError(null);
+    try {
+      applyWorkerStatus(await client.worker.replaceSource({
+        session_id: current.id,
+        source_id: Number(sourceId),
+      }));
+    } catch (caught) {
+      setError(messageOf(caught));
+    } finally {
+      setBusy(false);
+    }
+  }, [applyWorkerStatus, busy, client.worker, sourceId]);
 
   const extendPresence = useCallback(async () => {
     const current = sessionRef.current;
@@ -374,6 +467,10 @@ export function RealtimeCompanion({
       }
       const windows = captureSurfaces.filter((item) => item.kind === "window");
       setPreferences(nextPreferences);
+      setCaptureMode(nextPreferences.realtime_capture_mode);
+      if (!workerStatus.running) {
+        setApplicationAudioConsent(nextPreferences.realtime_game_audio_default);
+      }
       if (!workerStatus.running) setActiveBackend(null);
       setSurfaces(windows);
       setSourceId((current) => current || windows[0]?.source_id || "");
@@ -410,6 +507,13 @@ export function RealtimeCompanion({
       disposed = true;
     };
   }, [client.worker, microphoneConsent, open, preferences, screenConsent]);
+
+  useEffect(() => {
+    if (resolution?.backend === "cloud_live") {
+      setCaptureMode("selected_window");
+      setApplicationAudioConsent(false);
+    }
+  }, [resolution?.backend]);
 
   const report = useCallback(async (
     status: RealtimeSessionStatus,
@@ -456,6 +560,12 @@ export function RealtimeCompanion({
         return;
       }
       if (payload.type === "sidecar_recovery") {
+        const identity = workerIdentityRef.current;
+        if (
+          payload.segment_id !== null
+          && identity !== null
+          && payload.segment_id !== identity.segmentId
+        ) return;
         setSidecar({
           restart_used: payload.restart_used,
           quarantined: payload.quarantined,
@@ -467,6 +577,18 @@ export function RealtimeCompanion({
       }
       if (!("session_id" in payload) || payload.session_id !== current?.id) return;
       if (isTerminal(current.status)) return;
+      const identity = workerIdentityRef.current;
+      if (
+        payload.type !== "session_state"
+        && payload.type !== "presence_projection"
+        && "segment_id" in payload
+        && "context_epoch" in payload
+        && (
+          identity === null
+          || payload.segment_id !== identity.segmentId
+          || payload.context_epoch !== identity.contextEpoch
+        )
+      ) return;
       if (payload.type === "session_state") {
         setActiveBackend(payload.backend);
         if (payload.status === "active") void report("active");
@@ -491,6 +613,11 @@ export function RealtimeCompanion({
             )
           )
         ) return;
+        workerIdentityRef.current = {
+          sessionId: payload.session_id,
+          segmentId: payload.segment_id,
+          contextEpoch: payload.context_epoch,
+        };
         presenceProjectionRef.current = payload;
         setPresenceProjection(payload);
         setPaused(payload.state === "privacy_paused");
@@ -553,6 +680,37 @@ export function RealtimeCompanion({
           tool_call_count: payload.tool_call_count,
         };
         setLiveUsage(usage.current);
+      } else if (payload.type === "media_channel_state") {
+        setMediaChannels((current) => {
+          const existing = current.find((item) => item.channel === payload.channel);
+          if (existing !== undefined && existing.sequence >= payload.sequence) return current;
+          return [
+            ...current.filter((item) => item.channel !== payload.channel),
+            {
+              channel: payload.channel,
+              sequence: payload.sequence,
+              status: payload.status,
+              error_code: payload.error_code,
+            },
+          ];
+        });
+      } else if (payload.type === "capture_scope_state") {
+        setCaptureScope((currentScope) => {
+          if (
+            currentScope !== null
+            && currentScope.source_sequence >= payload.source_sequence
+          ) return currentScope;
+          return {
+            mode: payload.mode,
+            source_sequence: payload.source_sequence,
+            source_available: payload.source_available,
+            privacy_paused: payload.privacy_paused,
+            sensitive_category: payload.sensitive_category,
+            error_code: payload.error_code,
+          };
+        });
+      } else if (payload.type === "capture_source_changed") {
+        setSourceId(String(payload.source_id));
       } else if (
         payload.type === "assistance_state"
         && isRealtimeAssistanceStateUpdate(payload)
@@ -599,12 +757,14 @@ export function RealtimeCompanion({
     setControlsOpen(false);
     setAssistance([]);
     setAssistanceBusy(null);
+    setCaptureScope(null);
+    setMediaChannels([]);
     setMemoryNotice(null);
     setMemoryRetrySessionId(null);
+    workerIdentityRef.current = null;
     presenceProjectionRef.current = null;
     setPresenceProjection(null);
     try {
-      const priorMinutes = await todaysRealtimeMinutes(client);
       const resolution = await client.worker.preview({
         activity_profile: preferences.realtime_activity_profile,
         voice_output: preferences.realtime_voice_output,
@@ -614,15 +774,8 @@ export function RealtimeCompanion({
       if (!resolution.available || resolution.backend === null) {
         throw new Error(resolution.reason ?? "REALTIME_BACKEND_UNAVAILABLE");
       }
-      if (
-        resolution.backend === "cloud_live"
-        && priorMinutes >= preferences.realtime_cloud_daily_limit_minutes
-      ) {
-        setError(
-          `Daily realtime limit reached (${preferences.realtime_cloud_daily_limit_minutes} min). Start a new session tomorrow to control provider cost.`,
-        );
-        return;
-      }
+      const selectedApplicationAudio =
+        resolution.backend === "local_mini_cpm_o45" && applicationAudioConsent;
       const created = await client.sessions.start({
         device_id: deviceId(),
         conversation_id: null,
@@ -634,7 +787,7 @@ export function RealtimeCompanion({
         memory_mode: preferences.realtime_memory_enabled ? "progress_digest" : "none",
         microphone_consent: true,
         screen_consent: true,
-        game_audio_consent: false,
+        game_audio_consent: selectedApplicationAudio,
         idempotency_key: crypto.randomUUID(),
       });
       updateSession(created);
@@ -650,15 +803,20 @@ export function RealtimeCompanion({
         source_id: Number(sourceId),
         microphone_enabled: true,
         screen_enabled: true,
-        application_audio_enabled: applicationAudioConsent,
+        application_audio_enabled: selectedApplicationAudio,
         online_assistance_enabled: preferences.realtime_online_assistance_enabled,
         cloud_microphone_upload_consent: microphoneConsent,
         cloud_screen_upload_consent: screenConsent,
+        capture_mode: resolution.backend === "local_mini_cpm_o45"
+          ? captureMode
+          : "selected_window",
+        excluded_applications: preferences.realtime_excluded_applications,
       });
       applyWorkerStatus(worker);
     } catch (caught) {
-      setError(realtimeProviderErrorMessage(messageOf(caught)));
-      if (sessionRef.current !== null) await report("failed", "REALTIME_START_FAILED");
+      const errorCode = coreErrorCode(caught) ?? messageOf(caught);
+      setError(realtimeProviderErrorMessage(errorCode));
+      if (sessionRef.current !== null) await report("failed", errorCode);
     } finally {
       setBusy(false);
     }
@@ -833,6 +991,8 @@ export function RealtimeCompanion({
     ?? (session?.provider === "local_mini_cpm_o45" ? "local_mini_cpm_o45" : "cloud_live");
   const cloudPrivacy = resolution?.requires_cloud_upload_consent
     ?? preferences?.realtime_backend !== "local_mini_cpm_o45";
+  const resolvedLocal = resolution?.backend === "local_mini_cpm_o45";
+  const applicationAudioAvailable = resolvedLocal;
   const close = () => {
     if (windowMode) {
       onClose?.();
@@ -850,16 +1010,31 @@ export function RealtimeCompanion({
       {open ? <div className={`realtime-backdrop${windowMode ? " is-window" : ""}`} role="presentation">
         <section className="realtime-panel" role="dialog" aria-modal={!windowMode} aria-label="Realtime Companion Beta">
           <header><div><span>Fairy</span><h2>Realtime Companion Beta</h2></div><button type="button" aria-label="Close" onClick={close}><X size={17} /></button></header>
-          <div className={`realtime-privacy ${cloudPrivacy ? "is-cloud" : "is-local"}`}><ShieldCheck size={16} /><span>{cloudPrivacy ? "Cloud Live sends only this session’s enabled microphone, selected-window frames, and selected application audio to the configured provider. Raw media is transient and never stored by Fairy." : "Local MiniCPM processes enabled microphone, selected-window frames, and selected application audio on this device. Raw media stays in transient local memory."} Spoken captions remain on this device in the linked conversation.</span></div>
+          <div className={`realtime-privacy ${cloudPrivacy ? "is-cloud" : "is-local"}`}><ShieldCheck size={16} /><span>{cloudPrivacy ? "Cloud Live sends only this session’s enabled microphone and explicitly selected-window frames to the configured provider. Application audio is unavailable because the provider transport cannot preserve a separate track. Raw media is transient and never stored by Fairy." : "Local MiniCPM processes enabled microphone, observed-window frames, and optional selected-application audio on this device. Raw media stays in transient local memory."} Spoken captions remain on this device in the linked conversation.</span></div>
           {!active ? <div className="realtime-config">
-            <label><span><Monitor size={15} /> Game window</span><select value={sourceId} onChange={(event) => setSourceId(event.target.value)} disabled={busy}>{surfaces.map((surface) => <option key={surface.source_id} value={surface.source_id}>{surface.label} · {surface.width}×{surface.height}</option>)}</select></label>
+            <label><span><Monitor size={15} /> {captureMode === "follow_foreground" && resolvedLocal ? "Starting observed window" : "Observed window"}</span><select value={sourceId} onChange={(event) => setSourceId(event.target.value)} disabled={busy}>{surfaces.map((surface) => <option key={surface.source_id} value={surface.source_id}>{surface.label} · {surface.width}×{surface.height}</option>)}</select></label>
+            {resolvedLocal ? (
+              <label>
+                <span><SlidersHorizontal size={15} /> Observation scope</span>
+                <select
+                  value={captureMode}
+                  onChange={(event) => setCaptureMode(
+                    event.target.value as DesktopPreferences["realtime_capture_mode"],
+                  )}
+                  disabled={busy}
+                >
+                  <option value="selected_window">Keep selected window</option>
+                  <option value="follow_foreground">Follow foreground locally</option>
+                </select>
+              </label>
+            ) : null}
             <div className="realtime-policy realtime-backend-card"><span>Backend</span><strong>{backendLabel(resolution?.backend, resolution?.requires_cloud_upload_consent, preferences?.realtime_cloud_provider)}</strong><span>Voice</span><strong>{voiceOutputLabel(preferences?.realtime_voice_output)}</strong></div>
             {preferences?.realtime_beta_enabled === false ? <div className="realtime-error" role="alert">Enable Realtime Beta in Settings before starting.</div> : null}
             {resolution?.available === false && resolution.reason !== "REALTIME_BETA_DISABLED" ? <div className="realtime-error" role="alert">{resolutionGuidance(resolution.reason)}</div> : null}
             {resolution === null && preferences?.realtime_beta_enabled ? <div className="realtime-note" role="status">Checking backend readiness…</div> : null}
             <label className="realtime-consent"><input type="checkbox" checked={microphoneConsent} onChange={(event) => setMicrophoneConsent(event.target.checked)} /><Mic size={15} /><span>{cloudPrivacy ? "Upload microphone for this Cloud session" : "Use microphone for this Local session"}</span></label>
-            <label className="realtime-consent"><input type="checkbox" checked={screenConsent} onChange={(event) => setScreenConsent(event.target.checked)} /><Monitor size={15} /><span>{cloudPrivacy ? "Upload only the selected game window" : "Process only the selected game window locally"}</span></label>
-            <label className="realtime-consent"><input type="checkbox" checked={applicationAudioConsent} onChange={(event) => setApplicationAudioConsent(event.target.checked)} /><Volume2 size={15} /><span>{cloudPrivacy ? "Upload selected application audio" : "Process selected application audio locally"}</span></label>
+            <label className="realtime-consent"><input type="checkbox" checked={screenConsent} onChange={(event) => setScreenConsent(event.target.checked)} /><Monitor size={15} /><span>{cloudPrivacy ? "Upload only the explicitly selected window" : captureMode === "follow_foreground" ? "Observe the foreground window locally, excluding protected apps" : "Process only the selected window locally"}</span></label>
+            <label className="realtime-consent"><input type="checkbox" checked={applicationAudioConsent} disabled={!applicationAudioAvailable} onChange={(event) => setApplicationAudioConsent(event.target.checked)} /><Volume2 size={15} /><span>{applicationAudioAvailable ? "Process selected application audio locally" : "Application audio unavailable for this Cloud provider"}</span></label>
             <p className="realtime-note">System-wide audio is never captured. Each enabled source remains scoped to this session.</p>
             <button className="realtime-primary" type="button" disabled={busy || resolution?.available !== true || !microphoneConsent || !screenConsent || sourceId === ""} onClick={() => void start()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Mic size={15} />} Start Realtime</button>
           </div> : (
@@ -917,10 +1092,76 @@ export function RealtimeCompanion({
                   <span>Backend</span>
                   <strong>{authoritativeBackend === "local_mini_cpm_o45" ? "Local" : "Cloud"}</strong>
                 </div>
+                {captureScope !== null ? (
+                  <div>
+                    <span>Observation</span>
+                    <strong>{captureScope.mode === "follow_foreground"
+                      ? "Follow foreground"
+                      : captureScope.source_available
+                        ? "Selected window"
+                        : "Source unavailable"}</strong>
+                  </div>
+                ) : null}
+                {captureScope?.privacy_paused ? (
+                  <div>
+                    <span>Privacy</span>
+                    <strong>Observation paused</strong>
+                  </div>
+                ) : null}
               </div>
               <p className="realtime-policy-help">
                 {cooldownHelp(effectiveActivity, interactionIntensity)}
               </p>
+              {mediaChannels.length > 0 ? (
+                <section className="realtime-media-channels" aria-label="Realtime media channels">
+                  {mediaChannels.map((channel) => (
+                    <div key={channel.channel} data-status={channel.status}>
+                      <span>{mediaChannelLabel(channel.channel)}</span>
+                      <strong>{channel.status.replace("_", " ")}</strong>
+                      {channel.status === "unavailable"
+                      && isRetryableMediaChannel(channel.channel) ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void retryMediaChannel(channel.channel)}
+                        >
+                          <RotateCcw size={12} /> Retry
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </section>
+              ) : null}
+              {captureScope !== null && !captureScope.source_available ? (
+                <div className="realtime-source-recovery" role="status">
+                  <span>
+                    The observed window is unavailable. Microphone conversation can continue.
+                  </span>
+                  {captureScope.mode === "selected_window" ? (
+                    <div>
+                      <select
+                        aria-label="Replacement observed window"
+                        value={sourceId}
+                        onChange={(event) => setSourceId(event.target.value)}
+                        disabled={busy}
+                      >
+                        {surfaces.map((surface) => (
+                          <option key={surface.source_id} value={surface.source_id}>
+                            {surface.label} · {surface.width}×{surface.height}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={busy || sourceId === ""}
+                        onClick={() => void replaceObservedWindow()}
+                      >
+                        Use window
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {assistance.length > 0 ? (
                 <section className="realtime-assistance" aria-label="Core assistance">
                   {assistance.slice(-3).map((item) => {
@@ -983,7 +1224,7 @@ export function RealtimeCompanion({
               </div>
               <div className="realtime-captions" aria-live="polite">
                 {captions.length === 0 && draftCaption === "" ? (
-                  <span>Listening for the conversation and game context…</span>
+                  <span>Listening for the conversation and observed context…</span>
                 ) : (
                   <>
                     {captions.map((text, index) => (

@@ -205,6 +205,7 @@ async function installCoreFixture(page: Page) {
       const fixtureParams = new URLSearchParams(window.location.search);
       const companionActive = fixtureParams.get("companionActive");
       const companionAssistance = fixtureParams.get("companionAssistance");
+      const companionCapture = fixtureParams.get("companionCapture");
       const companionSessionId = "0198f4de-0114-7000-8000-000000000030";
       let companionPresenceState:
         | "listening"
@@ -226,6 +227,9 @@ async function installCoreFixture(page: Page) {
       let companionProjectionSequence = 7;
       let companionAssistanceStatus =
         companionAssistance === "approval" ? "awaiting_approval" : null;
+      let companionCaptureAvailable = companionCapture !== "unavailable";
+      let companionMicrophoneStatus: "active" | "unavailable" =
+        companionCapture === "unavailable" ? "unavailable" : "active";
       const initialTaskStatus =
         fixtureParams.get("taskStatus") === "previewing"
           ? "previewing"
@@ -761,7 +765,7 @@ async function installCoreFixture(page: Page) {
         prices: [],
       });
       let desktopPreferences = {
-        schema_version: 2,
+        schema_version: 10,
         revision: 0,
         language: "system",
         launch_at_startup: false,
@@ -786,6 +790,8 @@ async function installCoreFixture(page: Page) {
         realtime_interaction_intensity: "standard" as const,
         realtime_voice_output: "provider_native_voice" as const,
         realtime_game_audio_default: false,
+        realtime_capture_mode: "selected_window" as const,
+        realtime_excluded_applications: [],
         realtime_online_assistance_enabled: false,
         realtime_memory_enabled: true,
         realtime_presence_max_minutes: 240,
@@ -1699,6 +1705,40 @@ async function installCoreFixture(page: Page) {
                 duration_extension_required:
                   companionPresenceState === "standby" && durationLimit,
               },
+          capture_scope: companionActive === null
+            ? null
+            : {
+                mode: "selected_window",
+                source_sequence: 1,
+                source_available: companionCaptureAvailable,
+                privacy_paused: companionPresenceState === "privacy_paused",
+                sensitive_category: null,
+                error_code: companionCaptureAvailable
+                  ? null
+                  : "CAPTURE_SOURCE_UNAVAILABLE",
+              },
+          media_channels: companionActive === null
+            ? []
+            : [
+                {
+                  channel: "microphone",
+                  sequence: 1,
+                  status: companionPresenceState === "privacy_paused"
+                    ? "paused"
+                    : companionMicrophoneStatus,
+                  error_code: companionMicrophoneStatus === "unavailable"
+                    ? "MICROPHONE_DEVICE_LOST"
+                    : null,
+                },
+                {
+                  channel: "selected_window",
+                  sequence: 1,
+                  status: companionPresenceState === "privacy_paused"
+                    ? "paused"
+                    : "active",
+                  error_code: null,
+                },
+              ],
           audio_input_ms: companionSession.audio_input_ms,
           audio_output_ms: companionSession.audio_output_ms,
           video_frame_count: companionSession.video_frame_count,
@@ -1909,6 +1949,21 @@ async function installCoreFixture(page: Page) {
               input.activity_profile === "focus" ? "focus" : "game";
             companionInteractionIntensity = input.interaction_intensity;
             companionProjectionSequence += 1;
+            return companionWorkerStatus();
+          }
+          if (
+            command === "realtime_worker_retry_media"
+            || command === "realtime_worker_replace_source"
+          ) {
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: command,
+              params: args.input as Record<string, unknown>,
+            });
+            if (command === "realtime_worker_retry_media") {
+              companionMicrophoneStatus = "active";
+            } else {
+              companionCaptureAvailable = true;
+            }
             return companionWorkerStatus();
           }
           if (command === "realtime_worker_wake") {

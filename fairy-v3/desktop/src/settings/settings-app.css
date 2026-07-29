@@ -176,6 +176,9 @@ select {
 .settings-row-copy { grid-template-columns: 22px minmax(0, 1fr); align-items: center; }
 .settings-row-copy svg { color: #80bddc; }
 .settings-select-row select { width: 170px; height: 31px; border: 1px solid #414642; border-radius: 4px; background: #222523; color: #e3e7e4; padding: 0 8px; }
+.settings-text-row input { width: min(270px, 46%); height: 31px; border: 1px solid #414642; border-radius: 4px; outline: 0; background: #222523; color: #e3e7e4; padding: 0 9px; }
+.settings-text-row input::placeholder { color: #707873; }
+.settings-text-row input:focus { border-color: #5c9fc6; box-shadow: 0 0 0 2px rgb(92 159 198 / 14%); }
 
 .settings-switch,
 .compact-switch { position: relative; width: 34px; height: 19px; flex: 0 0 auto; }
@@ -1102,6 +1105,8 @@ button:disabled { cursor: default; opacity: .48; }
 @media (max-width: 800px) {
   .settings-shell { grid-template-columns: 190px minmax(0, 1fr); }
   .settings-category { width: calc(100% - 36px); padding-top: 28px; }
+  .settings-text-row { align-items: flex-start; flex-direction: column; gap: 9px; }
+  .settings-text-row input { width: 100%; }
   .settings-provider-list > button { grid-template-columns: 10px minmax(0, 1fr) 18px; }
   .settings-provider-list > button > span:nth-child(3) { display: none; }
   .settings-form { grid-template-columns: 1fr; }

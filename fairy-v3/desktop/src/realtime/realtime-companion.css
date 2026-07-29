@@ -34,6 +34,22 @@
 .realtime-session-policy select { width: 100%; min-width: 0; height: 30px; padding: 4px 7px; border: 1px solid #3a4743; background: #171d1b; color: #e4eeeb; }
 .realtime-session-policy select:disabled { opacity: .55; }
 .realtime-policy-help { margin: -4px 1px 0; color: #84908c; font-size: 11px; line-height: 1.45; }
+.realtime-media-channels { min-width: 0; display: grid; gap: 1px; border: 1px solid #303936; background: #303936; }
+.realtime-media-channels > div { min-width: 0; min-height: 34px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 9px; padding: 6px 9px; background: #101412; }
+.realtime-media-channels span { overflow: hidden; color: #aebbb7; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.realtime-media-channels strong { color: #83cdbc; font: 600 10px/1.2 monospace; text-transform: capitalize; }
+.realtime-media-channels [data-status="paused"] strong,
+.realtime-media-channels [data-status="recovering"] strong { color: #d0b774; }
+.realtime-media-channels [data-status="unavailable"] strong { color: #d99083; }
+.realtime-media-channels button,
+.realtime-source-recovery button { min-height: 27px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid #42675f; background: #1b302b; color: #ccebe4; font-size: 10px; }
+.realtime-media-channels button:hover:not(:disabled),
+.realtime-source-recovery button:hover:not(:disabled) { border-color: #62aa9d; background: #223d37; }
+.realtime-media-channels button:disabled,
+.realtime-source-recovery button:disabled { opacity: .5; }
+.realtime-source-recovery { min-width: 0; display: grid; gap: 9px; padding: 10px 11px; border-left: 2px solid #d0aa61; background: #242016; color: #dfcd9c; font-size: 11px; line-height: 1.45; }
+.realtime-source-recovery > div { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.realtime-source-recovery select { min-width: 0; height: 30px; border: 1px solid #554e37; background: #17160f; color: #eee5cb; padding: 3px 7px; }
 .realtime-sidecar-state { min-width: 0; display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 9px; margin: 0 20px 20px; padding: 10px 11px; border-left: 2px solid #72b9aa; background: #13201c; color: #a8dcd2; }
 .realtime-sidecar-state.is-quarantined { border-left-color: #ce8b65; background: #2a2119; color: #e6b28f; }
 .realtime-sidecar-state > span { min-width: 0; display: grid; gap: 3px; }
@@ -97,6 +113,10 @@
 @media (prefers-reduced-motion: reduce) { .realtime-pulse, .realtime-controls-cluster { animation: none; } }
 @media (max-width: 430px) {
   .realtime-session-policy { grid-template-columns: minmax(0, 1fr); }
+  .realtime-media-channels > div { grid-template-columns: minmax(0, 1fr) auto; }
+  .realtime-media-channels button { grid-column: 1 / -1; justify-self: start; }
+  .realtime-source-recovery > div { grid-template-columns: minmax(0, 1fr); }
+  .realtime-source-recovery button { justify-self: start; }
   .realtime-standby { align-items: stretch; flex-direction: column; }
   .realtime-assistance-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
   .realtime-memory-notice { grid-template-columns: 18px minmax(0, 1fr); }
