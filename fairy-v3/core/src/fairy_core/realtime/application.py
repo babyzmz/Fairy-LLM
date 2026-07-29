@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
 from fairy_core.commanding import EventVisibility
@@ -9,6 +9,7 @@ from fairy_core.contracts.realtime import (
     CompanionDigestCreateInput,
     GameMemorySaveInput,
     RealtimeAssistanceRequestInput,
+    RealtimeCloudUsageInput,
     RealtimeMemoryProposalActionInput,
     RealtimeProviderSelection,
     RealtimeSessionReportInput,
@@ -95,6 +96,14 @@ class RealtimeApplication:
     def list(self, *, limit: int) -> tuple[RealtimeSession, ...]:
         with self._unit_of_work_factory() as unit_of_work:
             return unit_of_work.realtime.list_sessions(limit=limit)
+
+    def cloud_usage(self, request: RealtimeCloudUsageInput) -> int:
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.realtime.cloud_wall_time_ms(
+                day_start=datetime.fromtimestamp(request.day_start_ms / 1_000, tz=UTC),
+                day_end=datetime.fromtimestamp(request.day_end_ms / 1_000, tz=UTC),
+                observed_at=datetime.now(UTC),
+            )
 
     def request_assistance(
         self,

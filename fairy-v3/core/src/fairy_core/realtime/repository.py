@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 
@@ -114,6 +115,41 @@ class SqlAlchemyRealtimeRepository:
             .limit(limit)
         ).mappings()
         return tuple(_session_from_row(row) for row in rows)
+
+    def cloud_wall_time_ms(
+        self,
+        *,
+        day_start: datetime,
+        day_end: datetime,
+        observed_at: datetime,
+    ) -> int:
+        start = _as_utc(day_start)
+        end = _as_utc(day_end)
+        observed = _as_utc(observed_at)
+        if end <= start or (end - start).total_seconds() > 26 * 60 * 60:
+            raise ValueError("cloud usage bounds must describe one local day")
+        rows = self._connection.execute(
+            select(
+                realtime_sessions.c.started_at,
+                realtime_sessions.c.ended_at,
+            ).where(
+                realtime_sessions.c.tenant_id == self._tenant_id,
+                realtime_sessions.c.provider != RealtimeProvider.LOCAL_MINI_CPM_O45.value,
+                realtime_sessions.c.started_at < end,
+                or_(
+                    realtime_sessions.c.ended_at.is_(None),
+                    realtime_sessions.c.ended_at > start,
+                ),
+            )
+        ).mappings()
+        total_ms = 0
+        for row in rows:
+            session_start = max(_as_utc(row["started_at"]), start)
+            raw_end = row["ended_at"]
+            session_end = min(_as_utc(raw_end) if raw_end is not None else observed, end)
+            if session_end > session_start:
+                total_ms += int((session_end - session_start).total_seconds() * 1_000)
+        return total_ms
 
     def add_assistance(self, assistance: RealtimeAssistance) -> RealtimeAssistance:
         try:
@@ -555,6 +591,14 @@ class SqlAlchemyRealtimeRepository:
             )
         ).scalar_one()
         return int(current) + 1
+
+
+def _as_utc(value: object) -> datetime:
+    if not isinstance(value, datetime):
+        raise ValueError("realtime session timestamp is invalid")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _session_values(tenant_id: str, session: RealtimeSession) -> dict[str, object]:

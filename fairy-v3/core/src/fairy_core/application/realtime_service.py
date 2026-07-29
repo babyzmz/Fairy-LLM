@@ -31,6 +31,7 @@ from fairy_core.contracts.realtime import (
     RealtimeAssistanceCancelInput,
     RealtimeAssistanceGetInput,
     RealtimeAssistanceRequestInput,
+    RealtimeCloudUsageInput,
     RealtimeMemoryProposalActionInput,
     RealtimeMemoryProposalListInput,
     RealtimeSessionIdInput,
@@ -106,6 +107,7 @@ class RealtimeService:
                 "realtime.sessions.start": self.start,
                 "realtime.sessions.get": self.get,
                 "realtime.sessions.list": self.list,
+                "realtime.sessions.cloud-usage": self.cloud_usage,
                 "realtime.sessions.report": self.report,
                 "realtime.sessions.stop": self.stop,
                 "realtime.memories.save": self.save_memory,
@@ -386,6 +388,10 @@ class RealtimeService:
     def list(self, request: BaseModel):
         validated = cast(RealtimeSessionListInput, request)
         return {"items": self._application.list(limit=validated.limit)}
+
+    def cloud_usage(self, request: BaseModel):
+        validated = cast(RealtimeCloudUsageInput, request)
+        return {"wall_time_ms": self._application.cloud_usage(validated)}
 
     def report(self, request: BaseModel):
         return self._application.report(cast(RealtimeSessionReportInput, request))

@@ -314,6 +314,11 @@ pub enum HostCommand {
         channel: String,
         source_sequence: u64,
     },
+    UnloadLocalBackend {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+    },
     RecoverLocal {
         session_id: String,
         current_segment_id: String,
@@ -331,6 +336,8 @@ pub enum HostCommand {
         screen_enabled: bool,
         application_audio_enabled: bool,
         online_assistance_enabled: bool,
+        standby_wake: bool,
+        carryover: Option<RealtimeContextCarryover>,
     },
     RotateContext {
         session_id: String,
@@ -504,6 +511,11 @@ pub enum WorkerEvent {
         context_epoch: u64,
         error_code: String,
         candidate_emitted: bool,
+    },
+    LocalBackendUnloaded {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
     },
     ContextRotated {
         session_id: String,
@@ -731,6 +743,8 @@ mod tests {
             screen_enabled: true,
             application_audio_enabled: false,
             online_assistance_enabled: true,
+            standby_wake: false,
+            carryover: None,
         };
         let debug = format!("{command:?}");
         assert!(!debug.contains("persona-secret-marker"));
@@ -954,6 +968,11 @@ mod tests {
                 context_epoch: 1,
                 error_code: "LOCAL_SIDECAR_PROCESS_EXIT".to_owned(),
                 candidate_emitted: true,
+            },
+            WorkerEvent::LocalBackendUnloaded {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
             },
             WorkerEvent::ContextRotated {
                 session_id: identity().0,

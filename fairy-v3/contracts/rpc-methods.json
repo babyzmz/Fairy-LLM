@@ -865,6 +865,12 @@
       "transport": "local_only"
     },
     {
+      "name": "realtime.sessions.cloud-usage",
+      "request_model": "RealtimeCloudUsageInput",
+      "response_model": "RealtimeCloudUsageModel",
+      "transport": "local_only"
+    },
+    {
       "name": "realtime.sessions.get",
       "request_model": "RealtimeSessionIdInput",
       "response_model": "RealtimeSessionModel",

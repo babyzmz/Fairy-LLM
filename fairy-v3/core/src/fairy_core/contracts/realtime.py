@@ -62,6 +62,22 @@ class RealtimeSessionListInput(ContractModel):
     limit: int = Field(default=50, ge=1, le=200)
 
 
+class RealtimeCloudUsageInput(ContractModel):
+    day_start_ms: int = Field(ge=0)
+    day_end_ms: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_window(self) -> RealtimeCloudUsageInput:
+        duration_ms = self.day_end_ms - self.day_start_ms
+        if duration_ms <= 0 or duration_ms > 26 * 60 * 60 * 1_000:
+            raise ValueError("cloud usage bounds must describe one local day")
+        return self
+
+
+class RealtimeCloudUsageModel(ContractModel):
+    wall_time_ms: int = Field(ge=0)
+
+
 class RealtimeSessionReportInput(ContractModel):
     session_id: UUID
     status: RealtimeSessionStatus
@@ -342,6 +358,8 @@ __all__ = [
     "RealtimeMemoryProposalModel",
     "RealtimeMemoryProposalPageModel",
     "RealtimeProviderSelection",
+    "RealtimeCloudUsageInput",
+    "RealtimeCloudUsageModel",
     "RealtimeSessionIdInput",
     "RealtimeSessionListInput",
     "RealtimeSessionModel",

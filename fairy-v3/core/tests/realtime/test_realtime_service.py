@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -13,7 +13,14 @@ from fairy_core.domain.errors import (
     VersionConflictError,
 )
 from fairy_core.persistence import SqlAlchemyUnitOfWorkFactory, create_sqlite_core_engine
-from fairy_core.realtime.models import RealtimeAssistance
+from fairy_core.realtime.models import (
+    RealtimeAssistance,
+    RealtimeMemoryMode,
+    RealtimeProvider,
+    RealtimeSession,
+    RealtimeSessionStatus,
+    RealtimeVoiceMode,
+)
 from fairy_core.realtime.repository import SqlAlchemyRealtimeRepository
 from fairy_core.transports.stdio import build_local_service
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
@@ -142,6 +149,74 @@ def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
         )
     finally:
         service.close()
+
+
+def test_cloud_usage_counts_all_overlapping_wall_time_and_excludes_local(tmp_path) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "cloud-usage.db")
+    day_start = datetime(2026, 7, 28, tzinfo=UTC)
+    day_end = day_start + timedelta(days=1)
+    observed_at = day_start + timedelta(hours=12)
+
+    def session(index: int, provider: RealtimeProvider, started_at: datetime) -> RealtimeSession:
+        return RealtimeSession.create(
+            device_id="desktop-1",
+            idempotency_key=f"usage-{index}",
+            conversation_id=None,
+            provider=provider,
+            model_id="test-model",
+            voice_mode=RealtimeVoiceMode.NATIVE,
+            memory_mode=RealtimeMemoryMode.NONE,
+            microphone_consent=True,
+            screen_consent=False,
+            game_audio_consent=False,
+            now=started_at,
+        )
+
+    try:
+        with engine.begin() as connection:
+            repository = SqlAlchemyRealtimeRepository(connection, tenant_id="local")
+            for index in range(55):
+                started_at = day_start + timedelta(minutes=index)
+                ended = (
+                    session(index, RealtimeProvider.GLM_REALTIME_FLASH, started_at)
+                    .transition_to(RealtimeSessionStatus.ACTIVE)
+                    .transition_to(
+                        RealtimeSessionStatus.INTERRUPTED,
+                        ended_at=started_at + timedelta(minutes=1),
+                    )
+                )
+                repository.add_session(ended)
+            crossing = (
+                session(60, RealtimeProvider.GEMINI_LIVE, day_start - timedelta(minutes=5))
+                .transition_to(RealtimeSessionStatus.ACTIVE)
+                .transition_to(
+                    RealtimeSessionStatus.INTERRUPTED, ended_at=day_start + timedelta(minutes=5)
+                )
+            )
+            repository.add_session(crossing)
+            active = session(
+                61,
+                RealtimeProvider.GLM_REALTIME_AIR,
+                observed_at - timedelta(minutes=10),
+            ).transition_to(RealtimeSessionStatus.ACTIVE)
+            repository.add_session(active)
+            local = (
+                session(62, RealtimeProvider.LOCAL_MINI_CPM_O45, day_start)
+                .transition_to(RealtimeSessionStatus.ACTIVE)
+                .transition_to(RealtimeSessionStatus.INTERRUPTED, ended_at=day_end)
+            )
+            repository.add_session(local)
+
+            assert (
+                repository.cloud_wall_time_ms(
+                    day_start=day_start,
+                    day_end=day_end,
+                    observed_at=observed_at,
+                )
+                == 70 * 60 * 1_000
+            )
+    finally:
+        engine.dispose()
 
 
 def test_companion_digest_is_stable_only_idempotent_and_session_scoped(tmp_path) -> None:

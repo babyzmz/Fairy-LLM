@@ -24,6 +24,8 @@ from fairy_core.contracts.realtime import (
     RealtimeAssistanceGetInput,
     RealtimeAssistanceModel,
     RealtimeAssistanceRequestInput,
+    RealtimeCloudUsageInput,
+    RealtimeCloudUsageModel,
     RealtimeMemoryProposalActionInput,
     RealtimeMemoryProposalListInput,
     RealtimeMemoryProposalModel,
@@ -122,6 +124,12 @@ REALTIME_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "realtime.sessions.get",
             RealtimeSessionIdInput,
             RealtimeSessionModel,
+        ),
+        "realtime.sessions.cloud-usage": CoreMethod(
+            "realtime.sessions.cloud-usage",
+            RealtimeCloudUsageInput,
+            RealtimeCloudUsageModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "realtime.sessions.list": CoreMethod(
             "realtime.sessions.list",

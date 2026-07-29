@@ -98,6 +98,7 @@ pub mod realtime_assistance;
 pub mod realtime_backend_resolver;
 pub mod realtime_context;
 pub mod realtime_coordinator;
+pub mod realtime_daily_budget;
 pub mod realtime_dialogue;
 pub mod realtime_privacy;
 pub mod realtime_resource_governor;
@@ -428,6 +429,7 @@ pub fn companion_core_method_allowed(method: &str) -> bool {
         method,
         "realtime.sessions.start"
             | "realtime.sessions.get"
+            | "realtime.sessions.cloud-usage"
             | "realtime.sessions.list"
             | "realtime.sessions.report"
             | "realtime.sessions.stop"
@@ -732,6 +734,29 @@ fn validate_realtime_activation(
     Ok(())
 }
 
+async fn enforce_realtime_cloud_daily_limit(
+    state: &DesktopState,
+    limit_minutes: u16,
+) -> Result<(), String> {
+    let bounds = realtime_daily_budget::current_local_day_utc_bounds().map_err(str::to_owned)?;
+    let response = call_core(
+        state,
+        json!({
+            "jsonrpc": "2.0",
+            "id": "realtime-cloud-daily-usage",
+            "method": "realtime.sessions.cloud-usage",
+            "params": {
+                "day_start_ms": bounds.start_ms,
+                "day_end_ms": bounds.end_ms
+            }
+        }),
+    )
+    .await;
+    let used_ms =
+        realtime_daily_budget::parse_cloud_usage_response(&response).map_err(str::to_owned)?;
+    realtime_daily_budget::enforce_daily_limit(used_ms, limit_minutes).map_err(str::to_owned)
+}
+
 #[tauri::command]
 async fn realtime_worker_start(
     window: WebviewWindow,
@@ -788,6 +813,10 @@ async fn realtime_worker_start_segment(
             false
         };
     validate_realtime_activation(&preferences, &input, local_ready).map_err(str::to_owned)?;
+    if input.backend == fairy_realtime_worker::RealtimeBackendKind::CloudLive {
+        enforce_realtime_cloud_daily_limit(state, preferences.realtime_cloud_daily_limit_minutes)
+            .await?;
+    }
     let persona_response = call_core(
         state,
         json!({
@@ -826,6 +855,7 @@ async fn realtime_worker_start_segment(
             credential,
             persona_snapshot,
             preferences.realtime_presence_max_minutes,
+            preferences.realtime_local_keep_warm_minutes,
         )
     } else {
         state.realtime.start(
@@ -834,6 +864,7 @@ async fn realtime_worker_start_segment(
             credential,
             persona_snapshot,
             preferences.realtime_presence_max_minutes,
+            preferences.realtime_local_keep_warm_minutes,
         )
     }
     .map_err(|error| error.to_string())
@@ -991,9 +1022,31 @@ async fn realtime_worker_wake(
     input: RealtimeWorkerWakeInput,
 ) -> Result<RealtimeWorkerStatus, String> {
     authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let (backend, profile, local_backend_unloaded) = state
+        .realtime
+        .wake_requirements()
+        .ok_or_else(|| "realtime worker is unavailable".to_owned())?;
+    let local_ready = if backend == fairy_realtime_worker::RealtimeBackendKind::LocalMiniCpmO45
+        && local_backend_unloaded
+    {
+        state
+            .local_model
+            .readiness(profile, false)?
+            .capability
+            .local_beta_eligible
+    } else {
+        false
+    };
+    if backend == fairy_realtime_worker::RealtimeBackendKind::CloudLive {
+        let preferences = DesktopPreferencesStore::new(&state.data_dir)
+            .load()
+            .map_err(|error| error.to_string())?;
+        enforce_realtime_cloud_daily_limit(&state, preferences.realtime_cloud_daily_limit_minutes)
+            .await?;
+    }
     state
         .realtime
-        .wake(&app, input)
+        .wake(&app, input, local_ready)
         .map_err(|error| error.to_string())
 }
 
@@ -5766,6 +5819,7 @@ mod companion_window_scope_tests {
         for allowed in [
             "realtime.sessions.start",
             "realtime.sessions.get",
+            "realtime.sessions.cloud-usage",
             "realtime.sessions.list",
             "realtime.sessions.report",
             "realtime.sessions.stop",

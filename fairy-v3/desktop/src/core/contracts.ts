@@ -720,6 +720,10 @@ export interface CoreMethodMap {
   "voice.transcribe": { params: VoiceTranscribeInput; result: VoiceTranscript };
   "realtime.sessions.start": { params: RealtimeSessionStartInput; result: RealtimeSession };
   "realtime.sessions.get": { params: { session_id: string }; result: RealtimeSession };
+  "realtime.sessions.cloud-usage": {
+    params: { day_start_ms: number; day_end_ms: number };
+    result: { wall_time_ms: number };
+  };
   "realtime.sessions.list": { params: { limit?: number }; result: RealtimeSessionPage };
   "realtime.sessions.report": { params: RealtimeSessionReportInput; result: RealtimeSession };
   "realtime.sessions.stop": { params: RealtimeSessionStopInput; result: RealtimeSession };

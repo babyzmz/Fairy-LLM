@@ -144,6 +144,7 @@ export const CORE_METHOD_TRANSPORT = {
   "realtime.memory-proposals.list": "local_only",
   "realtime.memory-proposals.reject": "local_only",
   "realtime.persona.snapshot": "local_only",
+  "realtime.sessions.cloud-usage": "local_only",
   "realtime.sessions.get": "local_and_cloud",
   "realtime.sessions.list": "local_and_cloud",
   "realtime.sessions.report": "local_and_cloud",
@@ -227,6 +228,7 @@ export const LOCAL_ONLY_CORE_METHODS = [
   "realtime.memory-proposals.list",
   "realtime.memory-proposals.reject",
   "realtime.persona.snapshot",
+  "realtime.sessions.cloud-usage",
   "realtime.transcript.append",
   "realtime.transcript.list",
 ] as const;

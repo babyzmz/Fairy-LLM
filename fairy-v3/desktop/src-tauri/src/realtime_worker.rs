@@ -410,6 +410,18 @@ impl RealtimeWorkerManager {
         }
     }
 
+    pub fn wake_requirements(
+        &self,
+    ) -> Option<(RealtimeBackendKind, RealtimeActivityProfile, bool)> {
+        self.coordinator.lock().ok()?.as_ref().map(|coordinator| {
+            (
+                coordinator.backend(),
+                coordinator.requested_activity_profile(),
+                coordinator.local_backend_unloaded(),
+            )
+        })
+    }
+
     pub fn start(
         &self,
         app: &AppHandle,
@@ -417,6 +429,7 @@ impl RealtimeWorkerManager {
         credential: Option<Zeroizing<String>>,
         persona_snapshot: Zeroizing<String>,
         presence_max_minutes: u16,
+        local_keep_warm_minutes: u8,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
         self.start_segment(
             app,
@@ -424,6 +437,7 @@ impl RealtimeWorkerManager {
             credential,
             persona_snapshot,
             presence_max_minutes,
+            local_keep_warm_minutes,
             false,
         )
     }
@@ -435,6 +449,7 @@ impl RealtimeWorkerManager {
         credential: Option<Zeroizing<String>>,
         persona_snapshot: Zeroizing<String>,
         presence_max_minutes: u16,
+        local_keep_warm_minutes: u8,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
         self.start_segment(
             app,
@@ -442,6 +457,7 @@ impl RealtimeWorkerManager {
             credential,
             persona_snapshot,
             presence_max_minutes,
+            local_keep_warm_minutes,
             true,
         )
     }
@@ -453,6 +469,7 @@ impl RealtimeWorkerManager {
         credential: Option<Zeroizing<String>>,
         persona_snapshot: Zeroizing<String>,
         presence_max_minutes: u16,
+        local_keep_warm_minutes: u8,
         continuation_approved: bool,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
         validate_capture_scope(&input)?;
@@ -531,6 +548,7 @@ impl RealtimeWorkerManager {
                 activity_profile: input.activity_profile,
                 interaction_intensity: input.interaction_intensity,
                 presence_max_minutes,
+                local_keep_warm_minutes,
             })
             .map_err(|_| RealtimeWorkerError::Protocol)?
         };
@@ -988,15 +1006,54 @@ impl RealtimeWorkerManager {
                 coordinator
                     .apply(RealtimeCoordinatorEvent::ResumePrivacy)
                     .map_err(|_| RealtimeWorkerError::Protocol)?;
-                coordinator
-                    .pending_context_rotation()
-                    .cloned()
-                    .ok_or(RealtimeWorkerError::Protocol)?
+                if let Some(pending) = coordinator.pending_context_rotation().cloned() {
+                    Some(pending)
+                } else if coordinator.local_backend_unloaded() {
+                    None
+                } else {
+                    Some(
+                        coordinator
+                            .prepare_standby_context_rotation(ContextRotationReason::WindowChanged)
+                            .map_err(|_| RealtimeWorkerError::Protocol)?,
+                    )
+                }
             } else {
-                coordinator
-                    .prepare_context_rotation(ContextRotationReason::WindowChanged)
-                    .map_err(|_| RealtimeWorkerError::Protocol)?
+                Some(
+                    coordinator
+                        .prepare_context_rotation(ContextRotationReason::WindowChanged)
+                        .map_err(|_| RealtimeWorkerError::Protocol)?,
+                )
             }
+        };
+        let Some(pending) = pending else {
+            let restored_media = if let Ok(mut scope) = self.capture_scope.lock() {
+                if let Some(scope) = scope.as_mut() {
+                    scope.requested_source_id = Some(input.source_id);
+                    scope.effective_source_id = Some(input.source_id);
+                    scope.source_sequence = scope.source_sequence.saturating_add(1);
+                    scope.pending_source_id = None;
+                    scope.pending_source_sequence = None;
+                    scope.privacy_paused = false;
+                    scope.sensitive_category = None;
+                    scope.error_code = None;
+                    Some((scope.screen_enabled, scope.application_audio_enabled))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Ok(mut recovery) = self.recovery.lock() {
+                if let Some(recovery) = recovery.as_mut() {
+                    recovery.source_id = Some(input.source_id);
+                    if let Some((screen_enabled, application_audio_enabled)) = restored_media {
+                        recovery.screen_enabled = screen_enabled;
+                        recovery.application_audio_enabled = application_audio_enabled;
+                    }
+                }
+            }
+            drop(guard);
+            return Ok(self.status());
         };
         let carryover = self.build_context_carryover(
             &pending.current,
@@ -1156,6 +1213,7 @@ impl RealtimeWorkerManager {
         &self,
         app: &AppHandle,
         input: RealtimeWorkerWakeInput,
+        local_ready: bool,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
         let guard = self
             .process
@@ -1173,8 +1231,15 @@ impl RealtimeWorkerManager {
             let coordinator = coordinator
                 .as_mut()
                 .ok_or(RealtimeWorkerError::Unavailable)?;
-            let next_segment = (coordinator.backend() == RealtimeBackendKind::CloudLive)
-                .then(|| Uuid::new_v4().to_string());
+            if coordinator.backend() == RealtimeBackendKind::LocalMiniCpmO45
+                && coordinator.local_backend_unloaded()
+                && !local_ready
+            {
+                return Err(RealtimeWorkerError::Unavailable);
+            }
+            let next_segment = (coordinator.backend() == RealtimeBackendKind::CloudLive
+                || coordinator.local_backend_unloaded())
+            .then(|| Uuid::new_v4().to_string());
             coordinator
                 .prepare_wake(next_segment)
                 .map_err(|_| RealtimeWorkerError::Protocol)?
@@ -1203,6 +1268,57 @@ impl RealtimeWorkerManager {
                         session_id: pending.current.session_id,
                         segment_id: pending.current.segment_id,
                         epoch: pending.next_epoch,
+                    },
+                )
+            }
+            RealtimeWakeTransition::LocalSegment(pending) => {
+                let carryover = match self.build_context_carryover(
+                    &pending.current,
+                    &pending.next_segment_id,
+                    1,
+                ) {
+                    Ok(carryover) => carryover,
+                    Err(error) => {
+                        if let Some(projection) = fail_context_rotation(&self.coordinator) {
+                            let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                        }
+                        return Err(error);
+                    }
+                };
+                let envelope = self
+                    .recovery
+                    .lock()
+                    .map_err(|_| RealtimeWorkerError::Protocol)?
+                    .clone()
+                    .ok_or(RealtimeWorkerError::Unavailable)?;
+                if let Ok(mut governor) = self.resource_governor.lock() {
+                    *governor = Some(RealtimeResourceGovernor::new(0));
+                }
+                (
+                    HostCommand::RecoverLocal {
+                        session_id: pending.current.session_id.clone(),
+                        current_segment_id: pending.current.segment_id.clone(),
+                        current_context_epoch: pending.current.epoch,
+                        next_segment_id: pending.next_segment_id.clone(),
+                        local_omni: Box::new(self.launch.local_omni.clone()),
+                        persona_snapshot: SecretString::from(envelope.persona_snapshot),
+                        locale: envelope.locale,
+                        activity_profile: envelope.activity_profile,
+                        interaction_intensity: envelope.interaction_intensity,
+                        voice_output: envelope.voice_output,
+                        desktop_host_process_id: envelope.desktop_host_process_id,
+                        source_id: envelope.source_id,
+                        microphone_enabled: envelope.microphone_enabled,
+                        screen_enabled: envelope.screen_enabled,
+                        application_audio_enabled: envelope.application_audio_enabled,
+                        online_assistance_enabled: envelope.online_assistance_enabled,
+                        standby_wake: true,
+                        carryover: Some(carryover),
+                    },
+                    ContextEpochIdentity {
+                        session_id: pending.current.session_id,
+                        segment_id: pending.next_segment_id,
+                        epoch: 1,
                     },
                 )
             }
@@ -1327,7 +1443,7 @@ impl RealtimeWorkerManager {
         if process.session_id.as_deref() != Some(input.session_id.as_str()) {
             return Err(RealtimeWorkerError::Protocol);
         }
-        let pending = {
+        let (pending, resumed_projection, resumed_identity) = {
             let mut coordinator = self
                 .coordinator
                 .lock()
@@ -1338,10 +1454,29 @@ impl RealtimeWorkerManager {
             coordinator
                 .apply(RealtimeCoordinatorEvent::ResumePrivacy)
                 .map_err(|_| RealtimeWorkerError::Protocol)?;
-            coordinator
-                .pending_context_rotation()
-                .cloned()
-                .ok_or(RealtimeWorkerError::Protocol)?
+            (
+                coordinator.pending_context_rotation().cloned(),
+                coordinator.presence_projection(),
+                coordinator.active_identity().clone(),
+            )
+        };
+        let Some(pending) = pending else {
+            send_command(
+                &process.input,
+                &HostCommand::SetMediaPrivacy {
+                    session_id: resumed_identity.session_id,
+                    segment_id: resumed_identity.segment_id,
+                    context_epoch: resumed_identity.epoch,
+                    paused: false,
+                },
+            )
+            .map_err(|_| RealtimeWorkerError::Protocol)?;
+            let _ = app.emit(
+                REALTIME_WORKER_EVENT,
+                presence_projection_payload(resumed_projection),
+            );
+            drop(guard);
+            return Ok(self.status());
         };
         let carryover = match self.build_context_carryover(
             &pending.current,
@@ -1846,6 +1981,9 @@ fn spawn_worker(
                     ) {
                         continue;
                     }
+                    if handle_local_backend_unloaded(&value, &app, &coordinator) {
+                        continue;
+                    }
                     if let Ok(mut context) = context.lock() {
                         context.observe_worker_event(&value);
                     }
@@ -1882,7 +2020,7 @@ fn spawn_worker(
                         continue;
                     }
                     if value.get("type").and_then(Value::as_str) == Some("segment_woken") {
-                        if let Some(projection) = commit_cloud_wake_event(
+                        if let Some(projection) = commit_segment_wake_event(
                             &value,
                             &coordinator,
                             &dialogue,
@@ -2274,7 +2412,9 @@ fn run_realtime_environment_monitor(
                         (
                             coordinator.presence_projection().state
                                 != RealtimePresenceState::PrivacyPaused,
-                            coordinator.pending_context_rotation().is_some(),
+                            coordinator.pending_context_rotation().is_some()
+                                || coordinator.pending_local_wake().is_some()
+                                || coordinator.pending_cloud_wake().is_some(),
                         )
                     })
                 })
@@ -2339,22 +2479,65 @@ fn run_realtime_environment_monitor(
         if !needs_replacement || scope_snapshot.pending_source_id.is_some() {
             continue;
         }
+        let mut unloaded_resume = None;
         let pending = coordinator.lock().ok().and_then(|mut coordinator| {
             let coordinator = coordinator.as_mut()?;
-            if coordinator.pending_context_rotation().is_some() {
+            if coordinator.pending_context_rotation().is_some()
+                || coordinator.pending_local_wake().is_some()
+                || coordinator.pending_cloud_wake().is_some()
+            {
                 return None;
             }
             if scope_snapshot.privacy_paused {
                 coordinator
                     .apply(RealtimeCoordinatorEvent::ResumePrivacy)
                     .ok()?;
-                coordinator.pending_context_rotation().cloned()
+                if let Some(pending) = coordinator.pending_context_rotation().cloned() {
+                    Some(pending)
+                } else if coordinator.local_backend_unloaded() {
+                    unloaded_resume = Some((
+                        coordinator.active_identity().clone(),
+                        coordinator.presence_projection(),
+                    ));
+                    None
+                } else {
+                    coordinator
+                        .prepare_standby_context_rotation(ContextRotationReason::WindowChanged)
+                        .ok()
+                }
             } else {
                 coordinator
                     .prepare_context_rotation(ContextRotationReason::WindowChanged)
                     .ok()
             }
         });
+        if let Some((identity, projection)) = unloaded_resume {
+            if let Ok(mut scope) = capture_scope.lock() {
+                if let Some(scope) = scope.as_mut() {
+                    scope.requested_source_id = Some(next_source_id);
+                    scope.effective_source_id = Some(next_source_id);
+                    scope.source_sequence = scope.source_sequence.saturating_add(1);
+                    scope.pending_source_id = None;
+                    scope.pending_source_sequence = None;
+                    scope.privacy_paused = false;
+                    scope.sensitive_category = None;
+                    scope.error_code = None;
+                }
+            }
+            if let Ok(mut recovery) = recovery.lock() {
+                if let Some(recovery) = recovery.as_mut() {
+                    recovery.source_id = Some(next_source_id);
+                    recovery.screen_enabled = scope_snapshot.screen_enabled;
+                    recovery.application_audio_enabled = scope_snapshot.application_audio_enabled;
+                }
+            }
+            let _ = app.emit(
+                REALTIME_WORKER_EVENT,
+                presence_projection_payload(projection),
+            );
+            emit_capture_scope_projection(&app, &identity, &capture_scope);
+            continue;
+        }
         let Some(pending) = pending else {
             continue;
         };
@@ -2459,6 +2642,28 @@ fn handle_local_sidecar_failure(
     else {
         return false;
     };
+
+    let pending_wake_failure = coordinator.lock().ok().and_then(|mut coordinator| {
+        let coordinator = coordinator.as_mut()?;
+        let pending = coordinator.pending_local_wake()?;
+        if pending.current.session_id != session_id || pending.next_segment_id != segment_id {
+            return None;
+        }
+        let previous = pending.current.clone();
+        coordinator.fail_context_rotation().ok()?;
+        Some((previous, coordinator.presence_projection()))
+    });
+    if let Some((previous, projection)) = pending_wake_failure {
+        if let Ok(mut active) = active_identity.lock() {
+            *active = Some(previous);
+        }
+        let _ = app.emit(
+            REALTIME_WORKER_EVENT,
+            presence_projection_payload(projection),
+        );
+        let _ = app.emit(REALTIME_WORKER_EVENT, value.clone());
+        return true;
+    }
 
     let failure_projection = {
         let Ok(mut coordinator) = coordinator.lock() else {
@@ -2577,6 +2782,8 @@ fn handle_local_sidecar_failure(
         screen_enabled: envelope.screen_enabled,
         application_audio_enabled: envelope.application_audio_enabled,
         online_assistance_enabled: envelope.online_assistance_enabled,
+        standby_wake: false,
+        carryover: None,
     };
     if send_command(input, &command).is_err() {
         quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
@@ -2587,6 +2794,43 @@ fn handle_local_sidecar_failure(
         presence_projection_payload(recovery_projection),
     );
     emit_sidecar_state(app, sidecar_supervisor, "restarting", Some(next_segment_id));
+    true
+}
+
+fn handle_local_backend_unloaded(
+    value: &Value,
+    app: &AppHandle,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+) -> bool {
+    let Ok(WorkerEvent::LocalBackendUnloaded {
+        session_id,
+        segment_id,
+        context_epoch,
+    }) = serde_json::from_value::<WorkerEvent>(value.clone())
+    else {
+        return false;
+    };
+    let projection = coordinator.lock().ok().and_then(|mut coordinator| {
+        let coordinator = coordinator.as_mut()?;
+        let identity = coordinator.active_identity();
+        if identity.session_id != session_id
+            || identity.segment_id != segment_id
+            || identity.epoch != context_epoch
+            || coordinator
+                .apply(RealtimeCoordinatorEvent::LocalBackendUnloaded)
+                .is_err()
+        {
+            return None;
+        }
+        Some(coordinator.presence_projection())
+    });
+    if let Some(projection) = projection {
+        let _ = app.emit(
+            REALTIME_WORKER_EVENT,
+            presence_projection_payload(projection),
+        );
+        let _ = app.emit(REALTIME_WORKER_EVENT, value.clone());
+    }
     true
 }
 
@@ -2766,16 +3010,21 @@ fn run_coordinator_ticker(
                     }
                 }
                 RealtimeCoordinatorAction::RequestLocalUnload => {
-                    let _ = app.emit(
-                        REALTIME_WORKER_EVENT,
-                        serde_json::json!({
-                            "type": "resource_pressure",
-                            "session_id": identity.session_id,
-                            "segment_id": identity.segment_id,
-                            "context_epoch": identity.epoch,
-                            "code": "LOCAL_UNLOAD_ELIGIBLE"
-                        }),
-                    );
+                    if send_command(
+                        &input,
+                        &HostCommand::UnloadLocalBackend {
+                            session_id: identity.session_id.clone(),
+                            segment_id: identity.segment_id.clone(),
+                            context_epoch: identity.epoch,
+                        },
+                    )
+                    .is_err()
+                    {
+                        if let Some(projection) = fail_context_rotation(&coordinator) {
+                            let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+                        }
+                        return;
+                    }
                 }
             }
         }
@@ -2912,7 +3161,7 @@ fn commit_context_rotation_event(
     Some(presence_projection_payload(projection))
 }
 
-fn commit_cloud_wake_event(
+fn commit_segment_wake_event(
     value: &Value,
     coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
     dialogue: &Mutex<Option<RealtimeDialogueDirector>>,
@@ -2933,8 +3182,12 @@ fn commit_cloud_wake_event(
     {
         let coordinator = coordinator.lock().ok()?;
         let coordinator = coordinator.as_ref()?;
-        let pending = coordinator.pending_cloud_wake()?;
-        if pending.current.session_id != session_id || pending.next_segment_id != segment_id {
+        let pending_matches = coordinator.pending_cloud_wake().is_some_and(|pending| {
+            pending.current.session_id == session_id && pending.next_segment_id == segment_id
+        }) || coordinator.pending_local_wake().is_some_and(|pending| {
+            pending.current.session_id == session_id && pending.next_segment_id == segment_id
+        });
+        if !pending_matches {
             return None;
         }
     }
@@ -2948,7 +3201,11 @@ fn commit_cloud_wake_event(
     let projection = {
         let mut coordinator = coordinator.lock().ok()?;
         let coordinator = coordinator.as_mut()?;
-        coordinator.commit_cloud_wake(&segment_id, now_ms).ok()?;
+        if coordinator.pending_local_wake().is_some() {
+            coordinator.commit_local_wake(&segment_id, now_ms).ok()?;
+        } else {
+            coordinator.commit_cloud_wake(&segment_id, now_ms).ok()?;
+        }
         coordinator.presence_projection()
     };
     Some(presence_projection_payload(projection))
@@ -2973,6 +3230,7 @@ fn coordinator_has_pending_transition(
         .and_then(|coordinator| {
             coordinator.as_ref().map(|coordinator| {
                 coordinator.pending_context_rotation().is_some()
+                    || coordinator.pending_local_wake().is_some()
                     || coordinator.pending_cloud_wake().is_some()
             })
         })
@@ -3136,7 +3394,14 @@ fn worker_event_matches_active_identity(
     let event_type = value.get("type").and_then(Value::as_str);
     if matches!(
         event_type,
-        Some("ready" | "pong" | "worker_interrupted" | "context_rotated" | "segment_woken")
+        Some(
+            "ready"
+                | "pong"
+                | "worker_interrupted"
+                | "context_rotated"
+                | "segment_woken"
+                | "local_backend_unloaded"
+        )
     ) {
         return true;
     }
@@ -3165,6 +3430,7 @@ fn coordinator_allows_worker_event(
                 | "context_rotated"
                 | "segment_woken"
                 | "local_sidecar_failure"
+                | "local_backend_unloaded"
         )
     ) || (event_type == Some("session_state")
         && value.get("status").and_then(Value::as_str) == Some("failed"))
@@ -3502,6 +3768,7 @@ mod tests {
                 activity_profile,
                 interaction_intensity: RealtimeInteractionIntensity::Standard,
                 presence_max_minutes: 240,
+                local_keep_warm_minutes: 10,
             })
             .expect("coordinator"),
         ))

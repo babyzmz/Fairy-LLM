@@ -10,7 +10,6 @@ use crate::realtime_activity::{ActivityObservation, RealtimeActivityClassifier};
 const DEFAULT_PRESENCE_MAX_MINUTES: u16 = 240;
 const MINUTE_MS: u64 = 60_000;
 const STANDBY_AFTER_MS: u64 = 3 * MINUTE_MS;
-const LOCAL_UNLOAD_ELIGIBLE_AFTER_MS: u64 = 10 * MINUTE_MS;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RealtimeCoordinatorStart {
@@ -22,6 +21,7 @@ pub struct RealtimeCoordinatorStart {
     pub activity_profile: RealtimeActivityProfile,
     pub interaction_intensity: RealtimeInteractionIntensity,
     pub presence_max_minutes: u16,
+    pub local_keep_warm_minutes: u8,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -129,6 +129,12 @@ pub struct PendingCloudWake {
     pub next_segment_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingLocalWake {
+    pub current: ContextEpochIdentity,
+    pub next_segment_id: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RealtimeCoordinatorAction {
     EnterLocalStandby,
@@ -140,6 +146,7 @@ pub enum RealtimeCoordinatorAction {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RealtimeWakeTransition {
     Local(PendingContextRotation),
+    LocalSegment(PendingLocalWake),
     Cloud(PendingCloudWake),
 }
 
@@ -159,6 +166,7 @@ pub enum RealtimeCoordinatorEvent {
         segment_id: String,
         persona_digest: String,
     },
+    LocalBackendUnloaded,
     SetPolicy {
         profile: RealtimeActivityProfile,
         interaction_intensity: RealtimeInteractionIntensity,
@@ -206,6 +214,7 @@ pub struct RealtimeCoordinatorState {
     activity_classifier: RealtimeActivityClassifier,
     interaction_intensity: RealtimeInteractionIntensity,
     presence_max_minutes: u16,
+    local_keep_warm_minutes: u8,
     status: RealtimeCoordinatorStatus,
     media_generation_enabled: bool,
     action_required: bool,
@@ -216,10 +225,13 @@ pub struct RealtimeCoordinatorState {
     background_presence_level: Option<u8>,
     fairy_speech_active: bool,
     pending_context_rotation: Option<PendingContextRotation>,
+    pending_local_wake: Option<PendingLocalWake>,
     pending_cloud_wake: Option<PendingCloudWake>,
     started_at_ms: u64,
     last_activity_at_ms: u64,
     local_unload_requested: bool,
+    local_backend_unloaded: bool,
+    privacy_resume_to_standby: bool,
     duration_extension_required: bool,
     standby_reason: Option<RealtimeStandbyReason>,
 }
@@ -230,6 +242,7 @@ impl RealtimeCoordinatorState {
             || !valid_identifier(&request.segment_id)
             || !valid_digest(&request.persona_digest)
             || !backend_provider_valid(request.backend, request.cloud_provider)
+            || request.local_keep_warm_minutes > 30
         {
             return Err(RealtimeCoordinatorError::InvalidStart);
         }
@@ -260,6 +273,7 @@ impl RealtimeCoordinatorState {
             } else {
                 request.presence_max_minutes
             },
+            local_keep_warm_minutes: request.local_keep_warm_minutes,
             status: RealtimeCoordinatorStatus::Active,
             media_generation_enabled: true,
             action_required: false,
@@ -270,10 +284,13 @@ impl RealtimeCoordinatorState {
             background_presence_level: None,
             fairy_speech_active: false,
             pending_context_rotation: None,
+            pending_local_wake: None,
             pending_cloud_wake: None,
             started_at_ms: 0,
             last_activity_at_ms: 0,
             local_unload_requested: false,
+            local_backend_unloaded: false,
+            privacy_resume_to_standby: false,
             duration_extension_required: false,
             standby_reason: None,
         })
@@ -311,6 +328,7 @@ impl RealtimeCoordinatorState {
                 self.identity.segment_id = segment_id;
                 self.identity.epoch = 1;
                 self.pending_context_rotation = None;
+                self.pending_local_wake = None;
                 self.pending_cloud_wake = None;
                 self.backend = backend;
                 self.segment = BackendSegmentState {
@@ -329,6 +347,8 @@ impl RealtimeCoordinatorState {
                 self.media_generation_enabled = true;
                 self.status = RealtimeCoordinatorStatus::Active;
                 self.local_unload_requested = false;
+                self.local_backend_unloaded = false;
+                self.privacy_resume_to_standby = false;
                 self.standby_reason = None;
                 self.set_authoritative_presence(RealtimePresenceState::Preparing, None)?;
                 Ok(())
@@ -353,6 +373,7 @@ impl RealtimeCoordinatorState {
                 self.identity.segment_id = segment_id;
                 self.identity.epoch = 1;
                 self.pending_context_rotation = None;
+                self.pending_local_wake = None;
                 self.pending_cloud_wake = None;
                 self.segment = BackendSegmentState {
                     segment_id: self.identity.segment_id.clone(),
@@ -369,8 +390,22 @@ impl RealtimeCoordinatorState {
                 self.action_required = false;
                 self.media_generation_enabled = true;
                 self.local_unload_requested = false;
+                self.local_backend_unloaded = false;
+                self.privacy_resume_to_standby = false;
                 self.standby_reason = None;
                 self.set_authoritative_presence(RealtimePresenceState::Preparing, None)?;
+                Ok(())
+            }
+            RealtimeCoordinatorEvent::LocalBackendUnloaded => {
+                if self.backend != RealtimeBackendKind::LocalMiniCpmO45
+                    || self.status != RealtimeCoordinatorStatus::Standby
+                    || !self.local_unload_requested
+                    || self.local_backend_unloaded
+                {
+                    return Err(RealtimeCoordinatorError::InvalidTransition);
+                }
+                self.local_backend_unloaded = true;
+                self.media_generation_enabled = false;
                 Ok(())
             }
             RealtimeCoordinatorEvent::SetPolicy {
@@ -397,9 +432,11 @@ impl RealtimeCoordinatorState {
                 ) {
                     return Err(RealtimeCoordinatorError::InvalidTransition);
                 }
+                self.privacy_resume_to_standby = self.status == RealtimeCoordinatorStatus::Standby;
                 self.status = RealtimeCoordinatorStatus::PrivacyPaused;
                 self.media_generation_enabled = false;
                 self.pending_context_rotation = None;
+                self.pending_local_wake = None;
                 self.pending_cloud_wake = None;
                 self.standby_reason = None;
                 self.set_authoritative_presence(RealtimePresenceState::PrivacyPaused, None)?;
@@ -408,6 +445,13 @@ impl RealtimeCoordinatorState {
             RealtimeCoordinatorEvent::ResumePrivacy => {
                 if self.status != RealtimeCoordinatorStatus::PrivacyPaused {
                     return Err(RealtimeCoordinatorError::InvalidTransition);
+                }
+                if self.privacy_resume_to_standby {
+                    self.privacy_resume_to_standby = false;
+                    self.status = RealtimeCoordinatorStatus::Standby;
+                    self.media_generation_enabled = false;
+                    self.set_authoritative_presence(RealtimePresenceState::Standby, None)?;
+                    return Ok(());
                 }
                 self.status = RealtimeCoordinatorStatus::Active;
                 self.prepare_context_rotation(ContextRotationReason::PrivacyResume)
@@ -431,8 +475,10 @@ impl RealtimeCoordinatorState {
                 self.status = RealtimeCoordinatorStatus::Ended;
                 self.media_generation_enabled = false;
                 self.pending_context_rotation = None;
+                self.pending_local_wake = None;
                 self.pending_cloud_wake = None;
                 self.standby_reason = None;
+                self.privacy_resume_to_standby = false;
                 self.set_authoritative_presence(RealtimePresenceState::Idle, None)?;
                 Ok(())
             }
@@ -495,6 +541,7 @@ impl RealtimeCoordinatorState {
         if self.status != RealtimeCoordinatorStatus::Active
             || self.action_required
             || self.pending_context_rotation.is_some()
+            || self.pending_local_wake.is_some()
             || self.pending_cloud_wake.is_some()
             || now_ms < self.last_activity_at_ms
         {
@@ -508,6 +555,7 @@ impl RealtimeCoordinatorState {
         if self.status == RealtimeCoordinatorStatus::Ended
             || self.status == RealtimeCoordinatorStatus::PrivacyPaused
             || self.pending_context_rotation.is_some()
+            || self.pending_local_wake.is_some()
             || self.pending_cloud_wake.is_some()
         {
             return Vec::new();
@@ -533,18 +581,31 @@ impl RealtimeCoordinatorState {
             self.media_generation_enabled = false;
             self.standby_reason = Some(RealtimeStandbyReason::Inactivity);
             self.local_unload_requested = false;
+            self.local_backend_unloaded = false;
+            self.privacy_resume_to_standby = false;
             let _ = self.set_authoritative_presence(RealtimePresenceState::Standby, None);
-            return vec![match self.backend {
-                RealtimeBackendKind::LocalMiniCpmO45 => {
-                    RealtimeCoordinatorAction::EnterLocalStandby
+            return match self.backend {
+                RealtimeBackendKind::LocalMiniCpmO45 if self.local_keep_warm_minutes == 0 => {
+                    self.local_unload_requested = true;
+                    vec![
+                        RealtimeCoordinatorAction::EnterLocalStandby,
+                        RealtimeCoordinatorAction::RequestLocalUnload,
+                    ]
                 }
-                RealtimeBackendKind::CloudLive => RealtimeCoordinatorAction::EnterCloudStandby,
-            }];
+                RealtimeBackendKind::LocalMiniCpmO45 => {
+                    vec![RealtimeCoordinatorAction::EnterLocalStandby]
+                }
+                RealtimeBackendKind::CloudLive => {
+                    vec![RealtimeCoordinatorAction::EnterCloudStandby]
+                }
+            };
         }
         if self.status == RealtimeCoordinatorStatus::Standby
             && self.backend == RealtimeBackendKind::LocalMiniCpmO45
             && !self.local_unload_requested
-            && idle_ms >= LOCAL_UNLOAD_ELIGIBLE_AFTER_MS
+            && idle_ms
+                >= STANDBY_AFTER_MS
+                    .saturating_add(u64::from(self.local_keep_warm_minutes) * MINUTE_MS)
         {
             self.local_unload_requested = true;
             return vec![RealtimeCoordinatorAction::RequestLocalUnload];
@@ -554,18 +615,34 @@ impl RealtimeCoordinatorState {
 
     pub fn prepare_wake(
         &mut self,
-        next_cloud_segment_id: Option<String>,
+        next_segment_id: Option<String>,
     ) -> Result<RealtimeWakeTransition, RealtimeCoordinatorError> {
         if self.status != RealtimeCoordinatorStatus::Standby
             || self.action_required
             || self.pending_context_rotation.is_some()
+            || self.pending_local_wake.is_some()
             || self.pending_cloud_wake.is_some()
         {
             return Err(RealtimeCoordinatorError::InvalidTransition);
         }
         match self.backend {
             RealtimeBackendKind::LocalMiniCpmO45 => {
-                if next_cloud_segment_id.is_some() {
+                if self.local_backend_unloaded {
+                    let next_segment_id =
+                        next_segment_id.ok_or(RealtimeCoordinatorError::InvalidTransition)?;
+                    if !valid_identifier(&next_segment_id)
+                        || next_segment_id == self.identity.segment_id
+                    {
+                        return Err(RealtimeCoordinatorError::InvalidTransition);
+                    }
+                    let pending = PendingLocalWake {
+                        current: self.identity.clone(),
+                        next_segment_id,
+                    };
+                    self.pending_local_wake = Some(pending.clone());
+                    return Ok(RealtimeWakeTransition::LocalSegment(pending));
+                }
+                if next_segment_id.is_some() {
                     return Err(RealtimeCoordinatorError::InvalidTransition);
                 }
                 let next_epoch = self
@@ -583,7 +660,7 @@ impl RealtimeCoordinatorState {
             }
             RealtimeBackendKind::CloudLive => {
                 let next_segment_id =
-                    next_cloud_segment_id.ok_or(RealtimeCoordinatorError::InvalidTransition)?;
+                    next_segment_id.ok_or(RealtimeCoordinatorError::InvalidTransition)?;
                 if !valid_identifier(&next_segment_id)
                     || next_segment_id == self.identity.segment_id
                 {
@@ -605,6 +682,33 @@ impl RealtimeCoordinatorState {
     ) -> Result<PendingContextRotation, RealtimeCoordinatorError> {
         self.require_active()?;
         if self.pending_context_rotation.is_some() {
+            return Err(RealtimeCoordinatorError::InvalidTransition);
+        }
+        let next_epoch = self
+            .identity
+            .epoch
+            .checked_add(1)
+            .ok_or(RealtimeCoordinatorError::EpochOverflow)?;
+        let pending = PendingContextRotation {
+            current: self.identity.clone(),
+            next_epoch,
+            reason,
+        };
+        self.pending_context_rotation = Some(pending.clone());
+        self.media_generation_enabled = false;
+        Ok(pending)
+    }
+
+    pub fn prepare_standby_context_rotation(
+        &mut self,
+        reason: ContextRotationReason,
+    ) -> Result<PendingContextRotation, RealtimeCoordinatorError> {
+        if self.status != RealtimeCoordinatorStatus::Standby
+            || self.local_backend_unloaded
+            || self.pending_context_rotation.is_some()
+            || self.pending_local_wake.is_some()
+            || self.pending_cloud_wake.is_some()
+        {
             return Err(RealtimeCoordinatorError::InvalidTransition);
         }
         let next_epoch = self
@@ -657,9 +761,11 @@ impl RealtimeCoordinatorState {
             }
             self.last_activity_at_ms = now_ms.max(self.last_activity_at_ms);
             self.local_unload_requested = false;
+            self.local_backend_unloaded = false;
+            self.privacy_resume_to_standby = false;
             self.standby_reason = None;
         }
-        self.media_generation_enabled = true;
+        self.media_generation_enabled = self.status == RealtimeCoordinatorStatus::Active;
         self.set_authoritative_presence(RealtimePresenceState::Standby, None)?;
         Ok(())
     }
@@ -696,6 +802,47 @@ impl RealtimeCoordinatorState {
         self.last_activity_at_ms = now_ms.max(self.last_activity_at_ms);
         self.media_generation_enabled = true;
         self.local_unload_requested = false;
+        self.local_backend_unloaded = false;
+        self.privacy_resume_to_standby = false;
+        self.standby_reason = None;
+        self.set_authoritative_presence(RealtimePresenceState::Standby, None)?;
+        Ok(())
+    }
+
+    pub fn commit_local_wake(
+        &mut self,
+        next_segment_id: &str,
+        now_ms: u64,
+    ) -> Result<(), RealtimeCoordinatorError> {
+        let pending = self
+            .pending_local_wake
+            .take()
+            .ok_or(RealtimeCoordinatorError::InvalidTransition)?;
+        if pending.current != self.identity || pending.next_segment_id != next_segment_id {
+            self.pending_local_wake = Some(pending);
+            return Err(RealtimeCoordinatorError::InvalidTransition);
+        }
+        self.identity.segment_id = next_segment_id.to_owned();
+        self.identity.epoch = 1;
+        self.segment = BackendSegmentState {
+            segment_id: next_segment_id.to_owned(),
+            ordinal: self
+                .segment
+                .ordinal
+                .checked_add(1)
+                .ok_or(RealtimeCoordinatorError::InvalidTransition)?,
+            backend: RealtimeBackendKind::LocalMiniCpmO45,
+            cloud_provider: None,
+            persona_digest: self.persona_digest.clone(),
+            creation_reason: BackendSegmentCreationReason::StandbyWake,
+        };
+        self.activity_classifier.reset_epoch();
+        self.status = RealtimeCoordinatorStatus::Active;
+        self.last_activity_at_ms = now_ms.max(self.last_activity_at_ms);
+        self.media_generation_enabled = true;
+        self.local_unload_requested = false;
+        self.local_backend_unloaded = false;
+        self.privacy_resume_to_standby = false;
         self.standby_reason = None;
         self.set_authoritative_presence(RealtimePresenceState::Standby, None)?;
         Ok(())
@@ -703,6 +850,7 @@ impl RealtimeCoordinatorState {
 
     pub fn fail_context_rotation(&mut self) -> Result<(), RealtimeCoordinatorError> {
         self.pending_context_rotation = None;
+        self.pending_local_wake = None;
         self.pending_cloud_wake = None;
         self.action_required = true;
         self.media_generation_enabled = false;
@@ -719,6 +867,10 @@ impl RealtimeCoordinatorState {
         self.pending_cloud_wake.as_ref()
     }
 
+    pub fn pending_local_wake(&self) -> Option<&PendingLocalWake> {
+        self.pending_local_wake.as_ref()
+    }
+
     pub fn is_standby(&self) -> bool {
         self.status == RealtimeCoordinatorStatus::Standby
     }
@@ -729,6 +881,10 @@ impl RealtimeCoordinatorState {
 
     pub fn local_unload_requested(&self) -> bool {
         self.local_unload_requested
+    }
+
+    pub fn local_backend_unloaded(&self) -> bool {
+        self.local_backend_unloaded
     }
 
     pub fn presence_max_minutes(&self) -> u16 {
@@ -765,6 +921,7 @@ impl RealtimeCoordinatorState {
         let (session_id, segment_id, context_epoch, state, level) = worker_presence_input(event)?;
         if self.status == RealtimeCoordinatorStatus::Ended
             || self.pending_context_rotation.is_some()
+            || self.pending_local_wake.is_some()
             || self.pending_cloud_wake.is_some()
             || session_id != self.identity.session_id
             || segment_id != self.identity.segment_id
@@ -826,6 +983,7 @@ impl RealtimeCoordinatorState {
         self.status == RealtimeCoordinatorStatus::Active
             && !self.action_required
             && self.pending_context_rotation.is_none()
+            && self.pending_local_wake.is_none()
             && self.pending_cloud_wake.is_none()
             && self.identity.session_id == session_id
             && self.identity.segment_id == segment_id
@@ -1061,6 +1219,7 @@ fn worker_presence_input(
         | WorkerEvent::MediaChannelState { .. }
         | WorkerEvent::CaptureSourceChanged { .. }
         | WorkerEvent::LocalSidecarFailure { .. }
+        | WorkerEvent::LocalBackendUnloaded { .. }
         | WorkerEvent::ResourceSample { .. }
         | WorkerEvent::Usage { .. }
         | WorkerEvent::Diagnostic { .. }
@@ -1140,6 +1299,7 @@ mod tests {
             activity_profile: RealtimeActivityProfile::Auto,
             interaction_intensity: RealtimeInteractionIntensity::Standard,
             presence_max_minutes: 240,
+            local_keep_warm_minutes: 10,
         }
     }
 
@@ -1397,13 +1557,67 @@ mod tests {
             state.tick(300_000),
             vec![RealtimeCoordinatorAction::EnterLocalStandby]
         );
-        assert!(state.tick(719_999).is_empty());
+        assert!(state.tick(899_999).is_empty());
         assert_eq!(
-            state.tick(720_000),
+            state.tick(900_000),
             vec![RealtimeCoordinatorAction::RequestLocalUnload]
         );
         assert!(state.local_unload_requested());
-        assert!(state.tick(900_000).is_empty());
+        assert!(state.tick(1_200_000).is_empty());
+    }
+
+    #[test]
+    fn zero_keep_warm_requests_one_immediate_unload_and_wakes_as_a_new_segment() {
+        let mut request = local_start_request();
+        request.local_keep_warm_minutes = 0;
+        let mut state = RealtimeCoordinatorState::start(request).expect("local start");
+        assert_eq!(
+            state.tick(STANDBY_AFTER_MS),
+            vec![
+                RealtimeCoordinatorAction::EnterLocalStandby,
+                RealtimeCoordinatorAction::RequestLocalUnload,
+            ]
+        );
+        assert!(state.tick(STANDBY_AFTER_MS + MINUTE_MS).is_empty());
+        state
+            .apply(RealtimeCoordinatorEvent::LocalBackendUnloaded)
+            .expect("unload acknowledgement");
+        assert!(state.local_backend_unloaded());
+
+        let RealtimeWakeTransition::LocalSegment(wake) = state
+            .prepare_wake(Some("segment-2".to_owned()))
+            .expect("local segment wake")
+        else {
+            panic!("local segment wake")
+        };
+        assert_eq!(wake.current.segment_id, "segment-1");
+        state
+            .commit_local_wake("segment-2", STANDBY_AFTER_MS + MINUTE_MS)
+            .expect("local wake acknowledgement");
+        assert_eq!(state.active_identity().segment_id, "segment-2");
+        assert_eq!(state.active_identity().epoch, 1);
+        assert_eq!(
+            state.active_segment().creation_reason,
+            BackendSegmentCreationReason::StandbyWake
+        );
+        assert!(!state.local_backend_unloaded());
+        assert!(!state.is_standby());
+    }
+
+    #[test]
+    fn late_tick_honors_additional_keep_warm_before_requesting_unload() {
+        let mut request = local_start_request();
+        request.local_keep_warm_minutes = 5;
+        let mut state = RealtimeCoordinatorState::start(request).expect("local start");
+        assert_eq!(
+            state.tick(STANDBY_AFTER_MS + 5 * MINUTE_MS + 1),
+            vec![RealtimeCoordinatorAction::EnterLocalStandby]
+        );
+        assert_eq!(
+            state.tick(STANDBY_AFTER_MS + 5 * MINUTE_MS + 2),
+            vec![RealtimeCoordinatorAction::RequestLocalUnload]
+        );
+        assert!(state.tick(STANDBY_AFTER_MS + 20 * MINUTE_MS).is_empty());
     }
 
     #[test]

@@ -45,6 +45,8 @@ pub struct RuntimeLaunch {
     pub screen_enabled: bool,
     pub application_audio_enabled: bool,
     pub voice_output: RealtimeVoiceOutput,
+    pub segment_woken_on_start: bool,
+    pub initial_context_summary: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +62,7 @@ pub(super) struct RuntimeIdentity {
 
 pub enum RuntimeCommand {
     Stop,
+    UnloadLocalBackend,
     Text {
         text: String,
     },
@@ -148,6 +151,21 @@ impl RealtimeRuntime {
     pub fn take_events(&mut self) -> Option<mpsc::Receiver<WorkerEvent>> {
         self.events.take()
     }
+
+    pub fn unload_local_backend(&mut self) -> bool {
+        if self
+            .commands
+            .send(RuntimeCommand::UnloadLocalBackend)
+            .is_err()
+        {
+            return false;
+        }
+        if let Some(worker) = self.worker.take() {
+            worker.join().is_ok()
+        } else {
+            false
+        }
+    }
 }
 
 impl Drop for RealtimeRuntime {
@@ -182,6 +200,8 @@ fn run_session(
         screen_enabled,
         application_audio_enabled,
         voice_output,
+        segment_woken_on_start,
+        initial_context_summary,
     } = launch;
     let mut identity = RuntimeIdentity {
         session_id,
@@ -223,16 +243,22 @@ fn run_session(
                     _ => Err(crate::backend::BackendError::LocalProtocol),
                 },
                 RealtimeBackendKind::LocalMiniCpmO45 => match local_omni {
-                    Some(launch) => LocalOmniBackend::connect(
-                        launch,
-                        connect_session_id,
-                        connect_segment_id,
-                        context_epoch,
-                        persona.instruction(),
-                        activity_profile,
-                        persona.digest().to_owned(),
-                    )
-                    .map(|backend| Box::new(backend) as Box<dyn RealtimeBackend>),
+                    Some(launch) => {
+                        let instruction = instruction_with_carryover(
+                            persona.instruction(),
+                            initial_context_summary.as_deref(),
+                        );
+                        LocalOmniBackend::connect(
+                            launch,
+                            connect_session_id,
+                            connect_segment_id,
+                            context_epoch,
+                            &instruction,
+                            activity_profile,
+                            persona.digest().to_owned(),
+                        )
+                        .map(|backend| Box::new(backend) as Box<dyn RealtimeBackend>)
+                    }
                     None => Err(crate::backend::BackendError::LocalUnavailable),
                 },
             };
@@ -335,6 +361,13 @@ fn run_session(
         cloud_provider: identity.cloud_provider,
         error_code: None,
     });
+    if segment_woken_on_start {
+        let _ = events.send(WorkerEvent::SegmentWoken {
+            session_id: identity.session_id.clone(),
+            segment_id: identity.segment_id.clone(),
+            context_epoch: identity.context_epoch,
+        });
+    }
     emit_media_channel(
         &events,
         &identity,
@@ -433,6 +466,7 @@ fn run_session(
     let mut resource_policy = RealtimeResourcePolicy::for_level(RealtimeResourceLevel::Normal);
     let mut max_inference_latency_ms = 0_u32;
     let mut frame_processing_failures = 0_u8;
+    let mut local_backend_unloaded = false;
     loop {
         if cancelled.load(Ordering::Acquire) {
             break;
@@ -442,6 +476,14 @@ fn run_session(
         }
         match commands.try_recv() {
             Ok(RuntimeCommand::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
+            Ok(RuntimeCommand::UnloadLocalBackend) => {
+                if identity.backend != RealtimeBackendKind::LocalMiniCpmO45 || !standby {
+                    emit_failed(&events, &identity, "REALTIME_PROTOCOL_ERROR");
+                    return;
+                }
+                local_backend_unloaded = true;
+                break;
+            }
             Ok(RuntimeCommand::Text { text }) => {
                 if standby {
                     continue;
@@ -1420,19 +1462,35 @@ fn run_session(
         interruption_count,
         tool_call_count,
     );
-    let _ = events.send(WorkerEvent::SessionState {
-        session_id: identity.session_id,
-        segment_id: identity.segment_id,
-        context_epoch: identity.context_epoch,
-        status: "completed".to_owned(),
-        backend: identity.backend,
-        cloud_provider: identity.cloud_provider,
-        error_code: None,
-    });
+    if local_backend_unloaded {
+        let _ = events.send(WorkerEvent::LocalBackendUnloaded {
+            session_id: identity.session_id,
+            segment_id: identity.segment_id,
+            context_epoch: identity.context_epoch,
+        });
+    } else {
+        let _ = events.send(WorkerEvent::SessionState {
+            session_id: identity.session_id,
+            segment_id: identity.segment_id,
+            context_epoch: identity.context_epoch,
+            status: "completed".to_owned(),
+            backend: identity.backend,
+            cloud_provider: identity.cloud_provider,
+            error_code: None,
+        });
+    }
 }
 
 fn elapsed_ms(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn instruction_with_carryover(base: &str, public_summary: Option<&str>) -> String {
+    let summary = public_summary.unwrap_or_default().trim();
+    if summary.is_empty() {
+        return base.to_owned();
+    }
+    format!("{base}\n\nBounded prior-session context:\n{summary}")
 }
 
 #[derive(Default)]
@@ -1605,6 +1663,7 @@ fn startup_cancel_requested(
                 return true;
             }
             Ok(RuntimeCommand::Text { .. })
+            | Ok(RuntimeCommand::UnloadLocalBackend)
             | Ok(RuntimeCommand::ToolResult { .. })
             | Ok(RuntimeCommand::AssistanceResult { .. })
             | Ok(RuntimeCommand::SetInput { .. })

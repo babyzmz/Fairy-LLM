@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -27,6 +28,14 @@ class RealtimeRepository(Protocol):
     ) -> RealtimeSession: ...
 
     def list_sessions(self, *, limit: int = 50) -> tuple[RealtimeSession, ...]: ...
+
+    def cloud_wall_time_ms(
+        self,
+        *,
+        day_start: datetime,
+        day_end: datetime,
+        observed_at: datetime,
+    ) -> int: ...
 
     def add_assistance(self, assistance: RealtimeAssistance) -> RealtimeAssistance: ...
 

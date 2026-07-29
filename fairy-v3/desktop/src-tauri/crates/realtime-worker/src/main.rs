@@ -3,8 +3,8 @@ use std::thread;
 
 use fairy_realtime_worker::{
     read_frame, validate_backend_start, validate_persona_snapshot, write_frame,
-    BackendStartRequest, HostCommand, RealtimeBackendKind, RealtimeRuntime, RuntimeCommand,
-    RuntimeLaunch, WorkerEvent,
+    BackendStartRequest, HostCommand, RealtimeBackendKind, RealtimeContextCarryover,
+    RealtimeRuntime, RuntimeCommand, RuntimeLaunch, WorkerEvent,
 };
 
 const WORKER_PROTOCOL: &str = "fairy-realtime-worker-v2";
@@ -136,6 +136,8 @@ fn main() {
                     screen_enabled,
                     application_audio_enabled,
                     voice_output,
+                    segment_woken_on_start: false,
+                    initial_context_summary: None,
                 }) else {
                     return;
                 };
@@ -165,6 +167,8 @@ fn main() {
                 screen_enabled,
                 application_audio_enabled,
                 online_assistance_enabled,
+                standby_wake,
+                carryover,
             } if active_identity.as_ref().is_some_and(|identity| {
                 identity.session_id == session_id
                     && identity.segment_id == current_segment_id
@@ -173,6 +177,15 @@ fn main() {
                     && !next_segment_id.trim().is_empty()
                     && next_segment_id != current_segment_id
                     && next_segment_id.len() <= 128
+                    && carryover.as_ref().is_none_or(|carryover| {
+                        carryover.is_valid()
+                            && carryover.session_id == identity.session_id
+                            && carryover.current_segment_id == identity.segment_id
+                            && carryover.current_context_epoch == identity.context_epoch
+                            && carryover.target_segment_id == next_segment_id
+                            && carryover.next_context_epoch == 1
+                    })
+                    && (!standby_wake || carryover.is_some())
             }) =>
             {
                 let persona = validate_persona_snapshot(
@@ -229,6 +242,10 @@ fn main() {
                     screen_enabled,
                     application_audio_enabled,
                     voice_output,
+                    segment_woken_on_start: standby_wake,
+                    initial_context_summary: carryover
+                        .as_ref()
+                        .map(RealtimeContextCarryover::public_summary),
                 }) else {
                     emit_recovery_failure(
                         &session_id,
@@ -245,6 +262,31 @@ fn main() {
                     backend: RealtimeBackendKind::LocalMiniCpmO45,
                 });
                 runtime = Some(started);
+            }
+            HostCommand::UnloadLocalBackend {
+                session_id,
+                segment_id,
+                context_epoch,
+            } if active_identity.as_ref().is_some_and(|identity| {
+                identity.session_id == session_id
+                    && identity.segment_id == segment_id
+                    && identity.context_epoch == context_epoch
+                    && identity.backend == RealtimeBackendKind::LocalMiniCpmO45
+                    && runtime.is_some()
+            }) =>
+            {
+                if let Some(mut active) = runtime.take() {
+                    if !active.unload_local_backend() {
+                        emit_recovery_failure(
+                            &session_id,
+                            &segment_id,
+                            "LOCAL_BACKEND_UNLOAD_FAILED",
+                        );
+                    }
+                }
+                if let Some(writer) = event_writer.take() {
+                    let _ = writer.join();
+                }
             }
             HostCommand::Stop { session_id }
                 if active_identity
