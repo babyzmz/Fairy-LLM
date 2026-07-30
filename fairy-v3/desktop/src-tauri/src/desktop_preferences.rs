@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::realtime_privacy::{normalize_excluded_applications, RealtimeCaptureMode};
 
 const PREFERENCES_FILE: &str = "preferences/desktop.json";
-const SCHEMA_VERSION: u32 = 10;
+const SCHEMA_VERSION: u32 = 11;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -107,14 +107,12 @@ pub struct DesktopPreferences {
     pub reduced_motion: bool,
     pub compact_density: bool,
     pub selected_profile_id: Option<String>,
-    pub voice_auto_play_chat: bool,
-    pub voice_auto_play_pet: bool,
+    #[serde(default = "default_true")]
+    pub voice_replies_enabled: bool,
     pub voice_volume_percent: u8,
     pub voice_rate_percent: u8,
     pub permission_cloud_profile: String,
     pub analytics_enabled: bool,
-    #[serde(default)]
-    pub realtime_beta_enabled: bool,
     #[serde(default)]
     pub realtime_backend: RealtimeBackendPreference,
     #[serde(default)]
@@ -195,13 +193,11 @@ impl Default for DesktopPreferences {
             reduced_motion: false,
             compact_density: false,
             selected_profile_id: None,
-            voice_auto_play_chat: false,
-            voice_auto_play_pet: true,
+            voice_replies_enabled: true,
             voice_volume_percent: 80,
             voice_rate_percent: 100,
             permission_cloud_profile: "standard".to_owned(),
             analytics_enabled: false,
-            realtime_beta_enabled: false,
             realtime_backend: RealtimeBackendPreference::Auto,
             realtime_cloud_provider: RealtimeCloudProviderPreference::GlmRealtimeFlash,
             realtime_allow_cloud_fallback: false,
@@ -262,7 +258,7 @@ pub struct DesktopPreferencesUpdate {
 #[derive(Debug, Deserialize)]
 pub struct PetPreferencesUpdate {
     pub expected_revision: u64,
-    pub voice_auto_play_pet: Option<bool>,
+    pub voice_replies_enabled: Option<bool>,
     pub pet_muted: Option<bool>,
     pub pet_always_on_top: Option<bool>,
     pub pet_anchor: Option<PetAnchorPreference>,
@@ -304,7 +300,6 @@ struct LegacyRealtimePreferencesV8 {
 
 impl LegacyRealtimePreferencesV8 {
     fn apply_to(self, preferences: &mut DesktopPreferences) {
-        preferences.realtime_beta_enabled = false;
         preferences.realtime_backend = RealtimeBackendPreference::Auto;
         preferences.realtime_cloud_provider = match self.realtime_provider {
             LegacyRealtimeProviderPreference::Auto
@@ -390,7 +385,24 @@ impl DesktopPreferencesStore {
             .and_then(serde_json::Value::as_u64);
         let legacy_memory_schema = matches!(schema_version, Some(1..=6));
         let legacy_realtime_schema = matches!(schema_version, Some(1..=8));
-        let needs_schema_upgrade = matches!(schema_version, Some(1..=9));
+        let needs_schema_upgrade = matches!(schema_version, Some(1..=10));
+        let legacy_voice_replies = if matches!(schema_version, Some(1..=10)) {
+            match (
+                value
+                    .get("voice_auto_play_chat")
+                    .and_then(serde_json::Value::as_bool),
+                value
+                    .get("voice_auto_play_pet")
+                    .and_then(serde_json::Value::as_bool),
+            ) {
+                (Some(chat), Some(pet)) => Some(chat || pet),
+                (Some(chat), None) => Some(chat),
+                (None, Some(pet)) => Some(pet),
+                (None, None) => Some(DesktopPreferences::default().voice_replies_enabled),
+            }
+        } else {
+            None
+        };
         let retired_activation_style = value
             .get("pet_activation_style")
             .and_then(serde_json::Value::as_str)
@@ -402,6 +414,9 @@ impl DesktopPreferencesStore {
             Err(error) => return Err(error.into()),
         };
         if needs_schema_upgrade {
+            if let Some(enabled) = legacy_voice_replies {
+                preferences.voice_replies_enabled = enabled;
+            }
             if legacy_realtime_schema {
                 let legacy_realtime =
                     serde_json::from_value::<LegacyRealtimePreferencesV8>(value.clone())?;
@@ -467,8 +482,8 @@ impl DesktopPreferencesStore {
             return Err(DesktopPreferencesError::RevisionConflict);
         }
         let mut next = current;
-        if let Some(value) = update.voice_auto_play_pet {
-            next.voice_auto_play_pet = value;
+        if let Some(value) = update.voice_replies_enabled {
+            next.voice_replies_enabled = value;
         }
         if let Some(value) = update.pet_muted {
             next.pet_muted = value;
@@ -740,7 +755,7 @@ mod tests {
         let saved = store
             .update_pet(PetPreferencesUpdate {
                 expected_revision: 0,
-                voice_auto_play_pet: Some(false),
+                voice_replies_enabled: Some(false),
                 pet_muted: Some(true),
                 pet_always_on_top: Some(false),
                 pet_anchor: Some(PetAnchorPreference {
@@ -753,7 +768,7 @@ mod tests {
             .expect("save pet preferences");
 
         assert_eq!(saved.revision, 1);
-        assert!(!saved.voice_auto_play_pet);
+        assert!(!saved.voice_replies_enabled);
         assert!(saved.pet_muted);
         assert!(!saved.pet_always_on_top);
         assert_eq!(
@@ -762,6 +777,45 @@ mod tests {
         );
         assert!(!saved.developer_mode);
         assert_eq!(saved.permission_cloud_profile, "standard");
+    }
+
+    #[test]
+    fn schema_ten_migrates_legacy_voice_preferences_with_logical_or() {
+        for (chat, pet, expected) in [
+            (false, false, false),
+            (false, true, true),
+            (true, false, true),
+            (true, true, true),
+        ] {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            let store = DesktopPreferencesStore::new(directory.path());
+            let path = directory.path().join("preferences/desktop.json");
+            std::fs::create_dir_all(path.parent().expect("preferences parent"))
+                .expect("create preferences parent");
+            let mut stored =
+                serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
+            let object = stored.as_object_mut().expect("preferences object");
+            object.insert("schema_version".to_owned(), serde_json::json!(10));
+            object.remove("voice_replies_enabled");
+            object.insert("voice_auto_play_chat".to_owned(), serde_json::json!(chat));
+            object.insert("voice_auto_play_pet".to_owned(), serde_json::json!(pet));
+            std::fs::write(
+                &path,
+                serde_json::to_vec_pretty(&stored).expect("stored bytes"),
+            )
+            .expect("write stored preferences");
+
+            let migrated = store.load().expect("migrate voice preferences");
+
+            assert_eq!(migrated.schema_version, 11);
+            assert_eq!(migrated.voice_replies_enabled, expected);
+            let persisted =
+                serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).expect("read"))
+                    .expect("parse persisted preferences");
+            assert_eq!(persisted["voice_replies_enabled"], expected);
+            assert!(persisted.get("voice_auto_play_chat").is_none());
+            assert!(persisted.get("voice_auto_play_pet").is_none());
+        }
     }
 
     #[test]
@@ -802,6 +856,7 @@ mod tests {
             serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
         let object = legacy.as_object_mut().expect("preferences object");
         object.insert("schema_version".to_owned(), serde_json::json!(1));
+        object.insert("voice_auto_play_chat".to_owned(), serde_json::json!(false));
         object.insert("voice_auto_play_pet".to_owned(), serde_json::json!(false));
         object.insert("pet_always_on_top".to_owned(), serde_json::json!(false));
         object.insert("pet_muted".to_owned(), serde_json::json!(true));
@@ -829,8 +884,8 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 10);
-        assert!(!migrated.voice_auto_play_pet);
+        assert_eq!(migrated.schema_version, 11);
+        assert!(!migrated.voice_replies_enabled);
         assert!(!migrated.pet_always_on_top);
         assert!(migrated.pet_muted);
         assert_eq!(migrated.pet_size_percent, 100);
@@ -862,7 +917,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 10);
+        assert_eq!(migrated.schema_version, 11);
         assert_eq!(migrated.pet_target_fps, 60);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -886,7 +941,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 10);
+        assert_eq!(migrated.schema_version, 11);
         assert_eq!(migrated.pet_optics_mode, PetOpticsMode::Standard);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -914,7 +969,7 @@ mod tests {
         .expect("write stored preferences");
 
         let loaded = store.load().expect("load version seven preferences");
-        assert_eq!(loaded.schema_version, 10);
+        assert_eq!(loaded.schema_version, 11);
         assert!(loaded.pet_muted);
         assert!(loaded.ambient_dialogue_enabled);
         assert!(!loaded.ambient_dialogue_voice_enabled);
@@ -983,7 +1038,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 10);
+        assert_eq!(migrated.schema_version, 11);
         assert!(!migrated.trash_auto_purge_30_days);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -1016,7 +1071,7 @@ mod tests {
                 retention_days: 45,
             })
         );
-        assert_eq!(startup.preferences.schema_version, 10);
+        assert_eq!(startup.preferences.schema_version, 11);
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(
                 &std::fs::read(&path).expect("read pending migration")
@@ -1032,7 +1087,7 @@ mod tests {
             &std::fs::read(&path).expect("read migrated preferences"),
         )
         .expect("parse migrated preferences");
-        assert_eq!(persisted["schema_version"], serde_json::json!(10));
+        assert_eq!(persisted["schema_version"], serde_json::json!(11));
         assert!(persisted.get("memory_enabled").is_none());
         assert!(persisted.get("memory_retention_days").is_none());
         assert!(store
@@ -1080,8 +1135,7 @@ mod tests {
         .expect("write stored preferences");
 
         let migrated = store.load().expect("migrate version eight");
-        assert_eq!(migrated.schema_version, 10);
-        assert!(!migrated.realtime_beta_enabled);
+        assert_eq!(migrated.schema_version, 11);
         assert_eq!(migrated.realtime_backend, RealtimeBackendPreference::Auto);
         assert_eq!(
             migrated.realtime_cloud_provider,
@@ -1099,11 +1153,10 @@ mod tests {
     }
 
     #[test]
-    fn schema_ten_defaults_are_privacy_safe_and_bounded() {
+    fn schema_eleven_defaults_are_privacy_safe_and_bounded() {
         let defaults = DesktopPreferences::default();
 
-        assert_eq!(defaults.schema_version, 10);
-        assert!(!defaults.realtime_beta_enabled);
+        assert_eq!(defaults.schema_version, 11);
         assert_eq!(defaults.realtime_backend, RealtimeBackendPreference::Auto);
         assert_eq!(
             defaults.realtime_activity_profile,
@@ -1154,8 +1207,7 @@ mod tests {
         .expect("write stored preferences");
 
         let migrated = store.load().expect("migrate version nine");
-        assert_eq!(migrated.schema_version, 10);
-        assert!(migrated.realtime_beta_enabled);
+        assert_eq!(migrated.schema_version, 11);
         assert_eq!(
             migrated.realtime_backend,
             RealtimeBackendPreference::CloudLive
@@ -1165,6 +1217,8 @@ mod tests {
             RealtimeCaptureMode::SelectedWindow
         );
         assert!(migrated.realtime_excluded_applications.is_empty());
+        let persisted = std::fs::read_to_string(path).expect("read migrated preferences");
+        assert!(!persisted.contains("realtime_beta_enabled"));
     }
 
     #[test]

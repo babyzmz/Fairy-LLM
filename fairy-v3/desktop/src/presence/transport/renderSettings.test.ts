@@ -91,7 +91,7 @@ describe("presence render settings", () => {
 
 function preferences(): DesktopPreferences {
   return {
-    schema_version: 10,
+    schema_version: 11,
     revision: 7,
     language: "system",
     launch_at_startup: false,
@@ -100,13 +100,11 @@ function preferences(): DesktopPreferences {
     reduced_motion: false,
     compact_density: false,
     selected_profile_id: "private-provider",
-    voice_auto_play_chat: false,
-    voice_auto_play_pet: true,
+    voice_replies_enabled: true,
     voice_volume_percent: 80,
     voice_rate_percent: 100,
     permission_cloud_profile: "standard",
     analytics_enabled: false,
-    realtime_beta_enabled: false,
     realtime_backend: "auto",
     realtime_cloud_provider: "glm_realtime_flash",
     realtime_allow_cloud_fallback: false,

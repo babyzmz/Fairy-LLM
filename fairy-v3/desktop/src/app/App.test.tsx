@@ -819,7 +819,7 @@ describe("App", () => {
 
 function appSettingsInvoke() {
   const preferences: DesktopPreferences = {
-    schema_version: 10,
+    schema_version: 11,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -828,13 +828,11 @@ function appSettingsInvoke() {
     reduced_motion: false,
     compact_density: false,
     selected_profile_id: "openrouter",
-    voice_auto_play_chat: false,
-    voice_auto_play_pet: true,
+    voice_replies_enabled: true,
     voice_volume_percent: 80,
     voice_rate_percent: 100,
     permission_cloud_profile: "standard",
     analytics_enabled: false,
-    realtime_beta_enabled: false,
     realtime_backend: "auto",
     realtime_cloud_provider: "glm_realtime_flash",
     realtime_allow_cloud_fallback: false,

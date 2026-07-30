@@ -30,6 +30,7 @@ import type {
   PresenceReply,
   PresenceView,
 } from "../domain/projection";
+import type { VoiceWorkerHealth } from "../../settings/client";
 
 export interface PresencePanelActions {
   cancelTurn(): void;
@@ -43,6 +44,7 @@ export interface PresencePanelActions {
   openCompanion(): void;
   openReview(): void;
   openSettings(): void;
+  prepareVoice(): void;
   requestInputFocus(): void;
   resetPosition(): void;
   retrySubmission(): void;
@@ -68,6 +70,7 @@ interface PresencePanelProps {
   actions: PresencePanelActions;
   alwaysOnTop: boolean;
   autoPlay: boolean;
+  voiceStatus?: VoiceWorkerHealth["status"];
   focusRequest?: number;
   inputOpen: boolean;
   interactive?: boolean;
@@ -94,6 +97,7 @@ export function PresencePanel({
   actions,
   alwaysOnTop,
   autoPlay,
+  voiceStatus = "idle",
   focusRequest = 0,
   inputOpen,
   interactive = true,
@@ -421,7 +425,7 @@ export function PresencePanel({
           />
           <MenuButton
             icon={<Gamepad2 size={15} />}
-            label="Realtime Companion Beta"
+            label="Start Realtime Companion"
             onClick={() => {
               actions.openCompanion();
               actions.setMenuOpen(false);
@@ -430,9 +434,16 @@ export function PresencePanel({
           <MenuToggle
             checked={autoPlay}
             icon={<Volume2 size={15} />}
-            label="Auto-play replies"
+            label="Fairy voice replies"
             onClick={actions.toggleAutoPlay}
           />
+          {autoPlay && voiceStatus !== "ready" ? (
+            <MenuButton
+              icon={<Volume2 size={15} />}
+              label="Prepare voice replies"
+              onClick={actions.prepareVoice}
+            />
+          ) : null}
           <MenuToggle
             checked={muted}
             icon={muted ? <VolumeX size={15} /> : <Volume2 size={15} />}

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CoreClient, RealtimeWorkerStatus } from "../core/client";
 import type { RealtimeSession } from "../core/contracts";
+import type { InvokeFunction } from "../core/tauriTransport";
 import {
   credentialProviderFor,
   RealtimeCompanion,
@@ -14,7 +15,6 @@ const invoke = vi.fn();
 const voiceMocks = vi.hoisted(() => ({ startRealtimeVoice: vi.fn() }));
 let eventListener: ((event: { payload: Record<string, unknown> }) => void) | null = null;
 let realtimeVoiceOutput: "provider_native_voice" | "fairy_voice" = "provider_native_voice";
-let realtimeBetaEnabled = true;
 let realtimeBackend: "auto" | "local_mini_cpm_o45" | "cloud_live" = "cloud_live";
 let localBackendReady = false;
 let realtimeApplicationAudioDefault = false;
@@ -127,7 +127,7 @@ const backendPreview = async (input: {
   const consented = input.cloud_microphone_upload_consent
     && input.cloud_screen_upload_consent;
   const local = realtimeBackend === "local_mini_cpm_o45";
-  const available = realtimeBetaEnabled && (local ? localBackendReady : consented);
+  const available = local ? localBackendReady : consented;
   return {
     schema_version: 1 as const,
     resolution_token: "a".repeat(64),
@@ -136,13 +136,11 @@ const backendPreview = async (input: {
     cloud_provider: available && !local
       ? "glm_realtime_flash" as const
       : null,
-    reason: !realtimeBetaEnabled
-      ? "REALTIME_BETA_DISABLED"
-      : local
-        ? localBackendReady ? null : "LOCAL_MODEL_MISSING"
-        : consented
-          ? null
-          : "CLOUD_UPLOAD_CONSENT_REQUIRED",
+    reason: local
+      ? localBackendReady ? null : "LOCAL_MODEL_MISSING"
+      : consented
+        ? null
+        : "CLOUD_UPLOAD_CONSENT_REQUIRED",
     requires_cloud_upload_consent: !local,
     preference_revision: 1,
   };
@@ -171,7 +169,6 @@ describe("RealtimeCompanion", () => {
       stop: vi.fn(),
     });
     realtimeVoiceOutput = "provider_native_voice";
-    realtimeBetaEnabled = true;
     realtimeBackend = "cloud_live";
     localBackendReady = false;
     realtimeApplicationAudioDefault = false;
@@ -181,7 +178,6 @@ describe("RealtimeCompanion", () => {
     localStorage.setItem("fairy.realtime.device-id", "test-device");
     invoke.mockImplementation(async (command: string) => {
       if (command === "desktop_preferences_get") return {
-        realtime_beta_enabled: realtimeBetaEnabled,
         realtime_backend: realtimeBackend,
         realtime_cloud_provider: "glm_realtime_flash",
         realtime_allow_cloud_fallback: false,
@@ -202,6 +198,7 @@ describe("RealtimeCompanion", () => {
       }];
       if (command === "provider_realtime_status") return { provider: "zhipu", configured: true };
       if (command === "open_realtime_main_chat") return undefined;
+      if (command === "voice_worker_prepare") return { status: "ready" };
       throw new Error(`unexpected invoke: ${command}`);
     });
   });
@@ -304,8 +301,7 @@ describe("RealtimeCompanion", () => {
     expect(screen.queryByRole("button", { name: /restart|recover/i })).toBeNull();
   });
 
-  it("cannot start while Realtime Beta is disabled", async () => {
-    realtimeBetaEnabled = false;
+  it("does not preserve the retired beta preference as a hidden start gate", async () => {
     const start = vi.fn();
     const client = {
       sessions: { list: vi.fn(async () => ({ items: [] })) },
@@ -322,10 +318,45 @@ describe("RealtimeCompanion", () => {
     fireEvent.click(screen.getAllByRole("checkbox")[0]);
     fireEvent.click(screen.getAllByRole("checkbox")[1]);
 
-    expect(screen.getByText("Enable Realtime Beta in Settings before starting.")).not.toBeNull();
-    expect((screen.getByRole("button", { name: "Start Realtime" }) as HTMLButtonElement).disabled)
-      .toBe(true);
+    expect(screen.queryByText("Enable Realtime Beta in Settings before starting.")).toBeNull();
+    await waitFor(() => {
+      expect((screen.getByRole("button", { name: "Start Realtime" }) as HTMLButtonElement).disabled)
+        .toBe(false);
+    });
     expect(start).not.toHaveBeenCalled();
+  });
+
+  it("prepares Fairy voice before capture startup and preserves a preflight failure", async () => {
+    realtimeVoiceOutput = "fairy_voice";
+    const start = vi.fn();
+    const report = vi.fn(async () => session("failed", 2));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        report,
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => workerStatus(false)),
+        start,
+      },
+    } as unknown as CoreClient["realtime"];
+    const hostInvoke: InvokeFunction = (command, args) => command === "voice_worker_prepare"
+      ? Promise.reject("VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE")
+      : invoke(command, args);
+
+    render(<RealtimeCompanion client={client} hostInvoke={hostInvoke} openRequest={1} />);
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+    await grantMediaConsentAndStart();
+
+    expect(await screen.findByText(/ONNX Runtime CUDA provider/)).not.toBeNull();
+    expect(start).not.toHaveBeenCalled();
+    await waitFor(() => expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      error_code: "VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE",
+      status: "failed",
+    })));
   });
 
   it("restores bounded Assistance state and keeps approval in the main chat", async () => {

@@ -23,7 +23,6 @@ describe("RealtimeCompanionWindowApp", () => {
     ) => {
       if (command === "desktop_preferences_get") {
         return {
-          realtime_beta_enabled: false,
           realtime_backend: "auto",
           realtime_cloud_provider: "glm_realtime_flash",
           realtime_allow_cloud_fallback: false,
@@ -61,7 +60,7 @@ describe("RealtimeCompanionWindowApp", () => {
           available: false,
           backend: null,
           cloud_provider: null,
-          reason: "REALTIME_BETA_DISABLED",
+          reason: "AUTO_CLOUD_FALLBACK_DISABLED",
           requires_cloud_upload_consent: false,
           preference_revision: 1,
         })),

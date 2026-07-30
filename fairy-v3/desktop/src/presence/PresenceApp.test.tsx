@@ -81,7 +81,7 @@ function windowPort(): PresenceWindowPort {
 
 function preferences(): DesktopPreferences {
   return {
-    schema_version: 10,
+    schema_version: 11,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -90,13 +90,11 @@ function preferences(): DesktopPreferences {
     reduced_motion: false,
     compact_density: false,
     selected_profile_id: null,
-    voice_auto_play_chat: false,
-    voice_auto_play_pet: true,
+    voice_replies_enabled: true,
     voice_volume_percent: 80,
     voice_rate_percent: 100,
     permission_cloud_profile: "standard",
     analytics_enabled: false,
-    realtime_beta_enabled: false,
     realtime_backend: "auto",
     realtime_cloud_provider: "glm_realtime_flash",
     realtime_allow_cloud_fallback: false,
@@ -160,6 +158,9 @@ function petHost(): PetHost {
       revision: input.revision,
     })),
     resetPosition: vi.fn(async () => current),
+    getVoiceHealth: vi.fn(async () => ({ status: "idle" }) as Awaited<ReturnType<PetHost["getVoiceHealth"]>>),
+    prepareVoice: vi.fn(async () => ({ status: "ready" }) as Awaited<ReturnType<PetHost["prepareVoice"]>>),
+    stopVoice: vi.fn(async () => ({ status: "idle" }) as Awaited<ReturnType<PetHost["stopVoice"]>>),
     openMain: vi.fn(async () => undefined),
     openCompanion: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),

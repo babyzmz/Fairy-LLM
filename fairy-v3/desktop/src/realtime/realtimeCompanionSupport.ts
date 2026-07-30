@@ -166,6 +166,11 @@ export function realtimeProviderErrorMessage(code?: string | null): string {
       return "Local Realtime is not ready to wake. Review and repair Local readiness in Settings.";
     case "REALTIME_PERSONA_UNAVAILABLE":
       return "Fairy Persona could not be loaded. Wait for Core to recover, then retry.";
+    case "VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE":
+      return "Fairy voice needs the ONNX Runtime CUDA provider. Repair the voice runtime or select text-only output.";
+    case "VOICE_CUDA_UNAVAILABLE":
+    case "VOICE_TRT_UNAVAILABLE":
+      return "Fairy voice GPU acceleration is unavailable. Repair the voice runtime or select text-only output.";
     default:
       return code !== null
         && code !== undefined

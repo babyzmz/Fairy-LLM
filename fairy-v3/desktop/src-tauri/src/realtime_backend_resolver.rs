@@ -66,36 +66,32 @@ pub fn resolve_realtime_backend(
     let upload_consented =
         input.cloud_microphone_upload_consent && input.cloud_screen_upload_consent;
 
-    let outcome = if !preferences.realtime_beta_enabled {
-        unavailable("REALTIME_BETA_DISABLED", false)
-    } else {
-        match preferences.realtime_backend {
-            RealtimeBackendPreference::LocalMiniCpmO45 => {
-                if !local_voice_compatible {
-                    unavailable("LOCAL_VOICE_OUTPUT_INCOMPATIBLE", false)
-                } else if facts.local_ready {
-                    available(RealtimeBackendKind::LocalMiniCpmO45, None, false)
-                } else {
-                    unavailable(local_reason_code(facts.local_reason), false)
-                }
+    let outcome = match preferences.realtime_backend {
+        RealtimeBackendPreference::LocalMiniCpmO45 => {
+            if !local_voice_compatible {
+                unavailable("LOCAL_VOICE_OUTPUT_INCOMPATIBLE", false)
+            } else if facts.local_ready {
+                available(RealtimeBackendKind::LocalMiniCpmO45, None, false)
+            } else {
+                unavailable(local_reason_code(facts.local_reason), false)
             }
-            RealtimeBackendPreference::CloudLive => resolve_cloud(
-                cloud_provider,
-                facts.cloud_credential_ready,
-                upload_consented,
-            ),
-            RealtimeBackendPreference::Auto => {
-                if local_voice_compatible && facts.local_ready {
-                    available(RealtimeBackendKind::LocalMiniCpmO45, None, false)
-                } else if !preferences.realtime_allow_cloud_fallback {
-                    unavailable("AUTO_CLOUD_FALLBACK_DISABLED", false)
-                } else {
-                    resolve_cloud(
-                        cloud_provider,
-                        facts.cloud_credential_ready,
-                        upload_consented,
-                    )
-                }
+        }
+        RealtimeBackendPreference::CloudLive => resolve_cloud(
+            cloud_provider,
+            facts.cloud_credential_ready,
+            upload_consented,
+        ),
+        RealtimeBackendPreference::Auto => {
+            if local_voice_compatible && facts.local_ready {
+                available(RealtimeBackendKind::LocalMiniCpmO45, None, false)
+            } else if !preferences.realtime_allow_cloud_fallback {
+                unavailable("AUTO_CLOUD_FALLBACK_DISABLED", false)
+            } else {
+                resolve_cloud(
+                    cloud_provider,
+                    facts.cloud_credential_ready,
+                    upload_consented,
+                )
             }
         }
     };
@@ -204,7 +200,6 @@ mod tests {
     fn preferences(preference: RealtimeBackendPreference) -> DesktopPreferences {
         DesktopPreferences {
             revision: 7,
-            realtime_beta_enabled: true,
             realtime_backend: preference,
             ..DesktopPreferences::default()
         }

@@ -110,8 +110,7 @@ export function VoiceController({
   const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
   const [recordingStatusMessage, setRecordingStatusMessage] = useState<string | null>(null);
-  const [autoPlayChat, setAutoPlayChat] = useState(false);
-  const [autoPlayPet, setAutoPlayPet] = useState(true);
+  const [voiceRepliesEnabled, setVoiceRepliesEnabled] = useState(true);
   const [petMuted, setPetMuted] = useState(false);
   const recordingRef = useRef<RecordingSession | null>(null);
   const transcriptRef = useRef<((text: string) => void) | null>(null);
@@ -163,8 +162,7 @@ export function VoiceController({
   useEffect(() => {
     const update = (event: Event) => {
       const preferences = (event as CustomEvent<DesktopPreferences>).detail;
-      setAutoPlayChat(preferences.voice_auto_play_chat);
-      setAutoPlayPet(preferences.voice_auto_play_pet);
+      setVoiceRepliesEnabled(preferences.voice_replies_enabled);
       setPetMuted(preferences.pet_muted);
     };
     window.addEventListener(DESKTOP_PREFERENCES_EVENT, update);
@@ -374,9 +372,8 @@ export function VoiceController({
 
   useEffect(() => {
     const autoPlay =
-      turn !== null && turn.task_id === petTaskId
-        ? autoPlayPet && !petMuted
-        : autoPlayChat;
+      voiceRepliesEnabled &&
+      (turn === null || turn.task_id !== petTaskId || !petMuted);
     if (!autoPlay || environment.startNativePlayback === undefined || turn === null) return;
     if (autoTurnRef.current !== turn.id) {
       if (autoTurnRef.current !== null) stopSpeaking();
@@ -462,7 +459,7 @@ export function VoiceController({
         }
       });
     }
-  }, [autoPlayChat, autoPlayPet, environment, events, petMuted, petTaskId, stopSpeaking, turn]);
+  }, [environment, events, petMuted, petTaskId, stopSpeaking, turn, voiceRepliesEnabled]);
 
   useEffect(
     () => () => {

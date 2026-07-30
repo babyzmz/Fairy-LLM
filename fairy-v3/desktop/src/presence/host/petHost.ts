@@ -4,11 +4,12 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   DesktopPreferences,
   PetAnchorPreference,
+  VoiceWorkerHealth,
 } from "../../settings/client";
 
 export interface PetPreferencePatch {
   expected_revision: number;
-  voice_auto_play_pet?: boolean;
+  voice_replies_enabled?: boolean;
   pet_muted?: boolean;
   pet_always_on_top?: boolean;
   pet_anchor?: PetAnchorPreference;
@@ -33,6 +34,9 @@ export interface PetHost {
     input: PetInputPresentationApply,
   ): Promise<PetInputPresentationCommit>;
   resetPosition(expectedRevision: number): Promise<DesktopPreferences>;
+  getVoiceHealth(): Promise<VoiceWorkerHealth>;
+  prepareVoice(): Promise<VoiceWorkerHealth>;
+  stopVoice(): Promise<VoiceWorkerHealth>;
   openMain(): Promise<void>;
   openCompanion(): Promise<void>;
   openSettings(): Promise<void>;
@@ -97,6 +101,9 @@ export function createDefaultPetHost(): PetHost {
       invoke<PetInputPresentationCommit>("pet_input_presentation_apply", { input }),
     resetPosition: (expectedRevision) =>
       invoke("pet_window_group_reset_position", { expectedRevision }),
+    getVoiceHealth: () => invoke("voice_worker_health"),
+    prepareVoice: () => invoke("voice_worker_prepare"),
+    stopVoice: () => invoke("voice_worker_stop"),
     openMain: () => invoke("open_main_window"),
     openCompanion: () => invoke("open_companion_window"),
     openSettings: () => invoke("open_settings_window"),
@@ -118,9 +125,9 @@ function createBrowserPetHost(): PetHost {
       preferences = {
         ...preferences,
         revision: preferences.revision + 1,
-        ...(input.voice_auto_play_pet === undefined
+        ...(input.voice_replies_enabled === undefined
           ? {}
-          : { voice_auto_play_pet: input.voice_auto_play_pet }),
+          : { voice_replies_enabled: input.voice_replies_enabled }),
         ...(input.pet_muted === undefined ? {} : { pet_muted: input.pet_muted }),
         ...(input.pet_always_on_top === undefined
           ? {}
@@ -177,6 +184,15 @@ function createBrowserPetHost(): PetHost {
       };
       return preferences;
     },
+    async getVoiceHealth() {
+      return browserVoiceHealth("idle");
+    },
+    async prepareVoice() {
+      return browserVoiceHealth("ready");
+    },
+    async stopVoice() {
+      return browserVoiceHealth("idle");
+    },
     async openMain() {},
     async openCompanion() {},
     async openSettings() {},
@@ -184,9 +200,27 @@ function createBrowserPetHost(): PetHost {
   };
 }
 
+function browserVoiceHealth(status: "idle" | "ready"): VoiceWorkerHealth {
+  return {
+    status,
+    model_repository: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+    model_installed: true,
+    model_ready: status === "ready",
+    model_digest: null,
+    prompt_ready: true,
+    cuda_available: status === "ready",
+    tensorrt_available: status === "ready",
+    onnx_cuda_available: status === "ready",
+    backend: status === "ready" ? "tensorrt" : null,
+    device_name: status === "ready" ? "Browser fixture GPU" : null,
+    sample_rate: 24_000,
+    error_code: null,
+  };
+}
+
 function browserPreferences(): DesktopPreferences {
   return {
-    schema_version: 10,
+    schema_version: 11,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -195,13 +229,11 @@ function browserPreferences(): DesktopPreferences {
     reduced_motion: false,
     compact_density: false,
     selected_profile_id: null,
-    voice_auto_play_chat: false,
-    voice_auto_play_pet: true,
+    voice_replies_enabled: true,
     voice_volume_percent: 80,
     voice_rate_percent: 100,
     permission_cloud_profile: "standard",
     analytics_enabled: false,
-    realtime_beta_enabled: false,
     realtime_backend: "auto",
     realtime_cloud_provider: "glm_realtime_flash",
     realtime_allow_cloud_fallback: false,

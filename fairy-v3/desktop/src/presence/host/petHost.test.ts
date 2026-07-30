@@ -24,4 +24,15 @@ describe("PetHost", () => {
     expect(invoke).toHaveBeenCalledWith("open_companion_window");
     expect(invoke).not.toHaveBeenCalledWith("open_main_window");
   });
+
+  it("prepares ordinary voice replies without opening Realtime or capture", async () => {
+    invoke.mockResolvedValue({ status: "ready" });
+    const host = createDefaultPetHost();
+
+    await host.prepareVoice();
+
+    expect(invoke).toHaveBeenCalledWith("voice_worker_prepare");
+    expect(invoke).not.toHaveBeenCalledWith("open_companion_window");
+    expect(invoke.mock.calls.some(([command]) => String(command).includes("capture"))).toBe(false);
+  });
 });

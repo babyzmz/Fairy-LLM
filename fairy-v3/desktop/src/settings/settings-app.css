@@ -1076,6 +1076,26 @@ select {
 .secondary-command { min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 4px; padding: 0 11px; cursor: pointer; }
 .primary-command { border: 1px solid #65b4dd; background: #3e8db5; color: #fff; }
 .secondary-command { border: 1px solid #434945; background: #262a27; color: #dce0dd; }
+.settings-advanced {
+  border-bottom: 1px solid #2c302e;
+}
+.settings-advanced > summary {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  color: #aeb6b1;
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.settings-advanced > summary::after {
+  content: "+";
+  margin-left: auto;
+  color: #727d77;
+  font-size: 16px;
+}
+.settings-advanced[open] > summary::after { content: "−"; }
+.settings-advanced > summary::-webkit-details-marker { display: none; }
 .danger-icon { width: 31px; height: 31px; display: grid; place-items: center; border: 1px solid #59413e; border-radius: 4px; background: #2b2321; color: #ec8e84; cursor: pointer; }
 button:disabled { cursor: default; opacity: .48; }
 

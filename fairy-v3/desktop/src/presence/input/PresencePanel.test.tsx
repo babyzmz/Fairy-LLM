@@ -33,7 +33,7 @@ const view: PresenceView = {
 };
 
 describe("PresencePanel optical boundary", () => {
-  it("routes Realtime Companion Beta exclusively through the Fairy menu action", () => {
+  it("routes Realtime Companion exclusively through the explicit Fairy menu action", () => {
     const openCompanion = vi.fn();
     const setMenuOpen = vi.fn();
     const menuActions = {
@@ -56,10 +56,59 @@ describe("PresencePanel optical boundary", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("menuitem", { name: "Realtime Companion Beta" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Start Realtime Companion" }));
 
     expect(openCompanion).toHaveBeenCalledOnce();
     expect(setMenuOpen).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps ordinary voice replies separate from Realtime capture", () => {
+    const toggleAutoPlay = vi.fn();
+    const openCompanion = vi.fn();
+    render(
+      <PresencePanel
+        actions={{ ...actions, toggleAutoPlay, openCompanion }}
+        alwaysOnTop
+        autoPlay={false}
+        inputOpen={false}
+        menuOpen
+        muted={false}
+        reply={null}
+        submission={null}
+        view={view}
+        visible
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Fairy voice replies" }));
+
+    expect(toggleAutoPlay).toHaveBeenCalledOnce();
+    expect(openCompanion).not.toHaveBeenCalled();
+  });
+
+  it("offers an explicit prepare action when voice replies are enabled but cold", () => {
+    const prepareVoice = vi.fn();
+    const openCompanion = vi.fn();
+    render(
+      <PresencePanel
+        actions={{ ...actions, prepareVoice, openCompanion }}
+        alwaysOnTop
+        autoPlay
+        inputOpen={false}
+        menuOpen
+        muted={false}
+        reply={null}
+        submission={null}
+        view={view}
+        visible
+        voiceStatus="idle"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Prepare voice replies" }));
+
+    expect(prepareVoice).toHaveBeenCalledOnce();
+    expect(openCompanion).not.toHaveBeenCalled();
   });
 
   it("keeps text and controls as a transparent DOM overlay without a renderer", () => {

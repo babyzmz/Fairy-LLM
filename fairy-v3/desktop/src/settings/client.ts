@@ -79,13 +79,11 @@ export interface DesktopPreferences {
   reduced_motion: boolean;
   compact_density: boolean;
   selected_profile_id: string | null;
-  voice_auto_play_chat: boolean;
-  voice_auto_play_pet: boolean;
+  voice_replies_enabled: boolean;
   voice_volume_percent: number;
   voice_rate_percent: number;
   permission_cloud_profile: "observe" | "standard" | "autonomous";
   analytics_enabled: boolean;
-  realtime_beta_enabled: boolean;
   realtime_backend: "auto" | "local_mini_cpm_o45" | "cloud_live";
   realtime_cloud_provider: "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
   realtime_allow_cloud_fallback: boolean;
@@ -438,6 +436,10 @@ export class SettingsClient {
     cancel: () => this.invoke<OmniModelInstallState>("omni_model_install_cancel"),
     verify: () => this.invoke<OmniModelInstallState>("omni_model_verify"),
     remove: () => this.invoke<OmniModelInstallState>("omni_model_remove"),
+  };
+
+  readonly realtimeCompanion = {
+    open: () => this.invoke<void>("open_companion_window"),
   };
 
   readonly realtimeMemory = {

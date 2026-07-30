@@ -76,17 +76,23 @@ describe("SettingsApp", () => {
     expect(localStorage.getItem("fairy.workspace.developer")).toBe("true");
   });
 
-  it("shows the complete schema ten Realtime Beta controls with fail-closed local readiness", async () => {
+  it("shows one explicit Companion start action with fail-closed local readiness", async () => {
     const invoke = settingsInvoke();
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
     await screen.findByRole("heading", { name: "General" });
 
     await userEvent.click(screen.getByRole("button", { name: /Voice/ }));
 
+    expect(screen.getByRole("checkbox", { name: /^Fairy voice replies/ })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Auto-play in main chat" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Auto-play pet replies" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Realtime Companion Beta" })).toBeVisible();
     expect(await screen.findByRole("status", { name: "Local readiness status" }))
       .toHaveTextContent("Runtime required");
-    expect(screen.getByRole("checkbox", { name: /^Enable Realtime Beta/ })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /^Enable Realtime Beta/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start Realtime Companion" }));
+    expect(invoke.mock.calls.some(([command]) => command === "open_companion_window")).toBe(true);
+    await userEvent.click(screen.getByText("Advanced Realtime settings"));
     expect(screen.getByRole("combobox", { name: "Backend" })).toHaveValue("auto");
     expect(screen.getByRole("option", { name: "Local MiniCPM-o 4.5 Beta" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Cloud provider" })).toHaveValue("glm_realtime_flash");
@@ -126,6 +132,7 @@ describe("SettingsApp", () => {
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
     await screen.findByRole("heading", { name: "General" });
     await userEvent.click(screen.getByRole("button", { name: /Voice/ }));
+    await userEvent.click(screen.getByText("Advanced Realtime settings"));
     const input = screen.getByRole("textbox", { name: "Excluded applications" });
 
     fireEvent.compositionStart(input);
@@ -734,6 +741,7 @@ function settingsInvoke(options: {
       voiceHealth = { ...voiceHealth, status: "idle", model_ready: false, backend: null };
       return voiceHealth;
     }
+    if (command === "open_companion_window") return undefined;
     if (command === "settings_rpc") {
       const request = args?.request as { id: number; method: CoreMethodName; params: Record<string, unknown> };
       const result = request.method === "projects.archived.list"
@@ -1042,7 +1050,7 @@ function rpcRequest(invoke: ReturnType<typeof settingsInvoke>, method: string) {
 
 function defaultPreferences(): DesktopPreferences {
   return {
-    schema_version: 10,
+    schema_version: 11,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -1051,13 +1059,11 @@ function defaultPreferences(): DesktopPreferences {
     reduced_motion: false,
     compact_density: false,
     selected_profile_id: "openrouter",
-    voice_auto_play_chat: false,
-    voice_auto_play_pet: true,
+    voice_replies_enabled: true,
     voice_volume_percent: 80,
     voice_rate_percent: 100,
     permission_cloud_profile: "standard",
     analytics_enabled: false,
-    realtime_beta_enabled: false,
     realtime_backend: "auto",
     realtime_cloud_provider: "glm_realtime_flash",
     realtime_allow_cloud_fallback: false,

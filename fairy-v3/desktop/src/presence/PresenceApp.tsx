@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import { type DesktopPreferences } from "../settings/client";
+import type { VoiceWorkerHealth } from "../settings/client";
 import {
   derivePresenceView,
   PresenceProjection,
@@ -67,6 +68,7 @@ export function PresenceApp({
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceWorkerHealth["status"]>("idle");
   const [projection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
   );
@@ -106,6 +108,9 @@ export function PresenceApp({
     let stop: (() => void) | undefined;
     void host.getPreferences().then((value) => {
       if (!disposed) setPreferences(value);
+    }).catch(() => undefined);
+    void host.getVoiceHealth().then((value) => {
+      if (!disposed) setVoiceStatus(value.status);
     }).catch(() => undefined);
     void host.onPreferences((value) => {
       if (!disposed) setPreferences(value);
@@ -257,7 +262,7 @@ export function PresenceApp({
   }
 
   const muted = preferences?.pet_muted ?? false;
-  const autoPlay = preferences?.voice_auto_play_pet ?? true;
+  const autoPlay = preferences?.voice_replies_enabled ?? true;
   const alwaysOnTop = preferences?.pet_always_on_top ?? true;
 
   return (
@@ -302,6 +307,10 @@ export function PresenceApp({
             void host.openMain().catch(() => undefined);
           },
           openSettings: () => void host.openSettings(),
+          prepareVoice: () => {
+            void host.prepareVoice().then((health) => setVoiceStatus(health.status))
+              .catch(() => setVoiceStatus("error"));
+          },
           requestInputFocus: () => void host.requestInputFocus(),
           resetPosition: () => void resetPosition(windowPort, settingsRef.current),
           retrySubmission: () => undefined,
@@ -310,8 +319,14 @@ export function PresenceApp({
           setMenuOpen,
           toggleAlwaysOnTop: () =>
             void updatePetPreferences({ pet_always_on_top: !alwaysOnTop }),
-          toggleAutoPlay: () =>
-            void updatePetPreferences({ voice_auto_play_pet: !autoPlay }),
+          toggleAutoPlay: () => {
+            const enabled = !autoPlay;
+            if (!enabled) channel.requestVoiceStop();
+            void updatePetPreferences({ voice_replies_enabled: enabled }).then(() =>
+              enabled ? host.prepareVoice() : host.stopVoice(),
+            ).then((health) => setVoiceStatus(health.status))
+              .catch(() => setVoiceStatus("error"));
+          },
           toggleMuted: () => {
             if (!muted) channel.requestVoiceStop();
             void updatePetPreferences({ pet_muted: !muted });
@@ -321,6 +336,7 @@ export function PresenceApp({
         alwaysOnTop={alwaysOnTop}
         ambientDialogue={null}
         autoPlay={autoPlay}
+        voiceStatus={voiceStatus}
         inputOpen={inputOpen}
         menuOpen={menuOpen}
         muted={muted}

@@ -240,7 +240,7 @@ describe("VoiceController", () => {
     fireEvent(
       window,
       new CustomEvent<DesktopPreferences>(DESKTOP_PREFERENCES_EVENT, {
-        detail: { voice_auto_play_chat: true } as DesktopPreferences,
+        detail: { voice_replies_enabled: true } as DesktopPreferences,
       }),
     );
 
@@ -297,8 +297,7 @@ describe("VoiceController", () => {
       window,
       new CustomEvent<DesktopPreferences>(DESKTOP_PREFERENCES_EVENT, {
         detail: {
-          voice_auto_play_chat: false,
-          voice_auto_play_pet: true,
+          voice_replies_enabled: true,
           pet_muted: true,
         } as DesktopPreferences,
       }),

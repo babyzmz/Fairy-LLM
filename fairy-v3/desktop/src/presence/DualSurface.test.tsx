@@ -92,7 +92,7 @@ function projection(overrides: Partial<PresenceProjectionState> = {}): PresenceP
 
 function preferences(): DesktopPreferences {
   return {
-    schema_version: 10,
+    schema_version: 11,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -101,13 +101,11 @@ function preferences(): DesktopPreferences {
     reduced_motion: false,
     compact_density: false,
     selected_profile_id: null,
-    voice_auto_play_chat: false,
-    voice_auto_play_pet: true,
+    voice_replies_enabled: true,
     voice_volume_percent: 80,
     voice_rate_percent: 100,
     permission_cloud_profile: "standard",
     analytics_enabled: false,
-    realtime_beta_enabled: false,
     realtime_backend: "auto",
     realtime_cloud_provider: "glm_realtime_flash",
     realtime_allow_cloud_fallback: false,
@@ -207,6 +205,9 @@ function hostHarness() {
       return { session_id: input.session_id, revision: input.revision };
     }),
     resetPosition: vi.fn(async () => preferences()),
+    getVoiceHealth: vi.fn(async () => ({ status: "idle" }) as Awaited<ReturnType<PetHost["getVoiceHealth"]>>),
+    prepareVoice: vi.fn(async () => ({ status: "ready" }) as Awaited<ReturnType<PetHost["prepareVoice"]>>),
+    stopVoice: vi.fn(async () => ({ status: "idle" }) as Awaited<ReturnType<PetHost["stopVoice"]>>),
     openMain: vi.fn(async () => undefined),
     openCompanion: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
@@ -979,7 +980,7 @@ describe("dual presence surfaces", () => {
     );
   });
 
-  it("opens Realtime Companion Beta as its own secondary window without waking the workspace", async () => {
+  it("opens Realtime Companion as its own secondary window without waking the workspace", async () => {
     const channel = channelHarness();
     const host = hostHarness();
     render(
@@ -993,12 +994,43 @@ describe("dual presence surfaces", () => {
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
     fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
     fireEvent.click(
-      await screen.findByRole("menuitem", { name: "Realtime Companion Beta" }),
+      await screen.findByRole("menuitem", { name: "Start Realtime Companion" }),
     );
 
     expect(host.host.openCompanion).toHaveBeenCalledOnce();
     expect(host.host.openMain).not.toHaveBeenCalled();
     expect(channel.channel.requestWorkspaceOpen).not.toHaveBeenCalled();
+  });
+
+  it("enables and prepares ordinary voice replies without opening Realtime", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    const disabled = { ...preferences(), voice_replies_enabled: false };
+    vi.mocked(host.host.getPreferences).mockResolvedValue(disabled);
+    vi.mocked(host.host.updatePreferences).mockImplementation(async (input) => ({
+      ...disabled,
+      ...input,
+      revision: disabled.revision + 1,
+    }));
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
+    fireEvent.click(
+      await screen.findByRole("menuitemcheckbox", { name: "Fairy voice replies" }),
+    );
+
+    await waitFor(() => expect(host.host.prepareVoice).toHaveBeenCalledOnce());
+    expect(host.host.updatePreferences).toHaveBeenCalledWith(expect.objectContaining({
+      voice_replies_enabled: true,
+    }));
+    expect(host.host.openCompanion).not.toHaveBeenCalled();
   });
 
   it("gates materialization at 300ms, content at 430ms, and clicks at 520ms", async () => {

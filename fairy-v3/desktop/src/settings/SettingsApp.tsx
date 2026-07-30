@@ -97,7 +97,7 @@ const categories: readonly {
   { id: "general", label: "General", keywords: "startup tray language", icon: MonitorCog },
   { id: "appearance", label: "Appearance", keywords: "theme motion density animation", icon: Palette },
   { id: "models", label: "Models", keywords: "provider openrouter api key model", icon: Bot },
-  { id: "voice", label: "Voice", keywords: "tts speech volume rate autoplay", icon: Mic2 },
+  { id: "voice", label: "Voice & Realtime", keywords: "tts speech volume rate replies realtime companion", icon: Mic2 },
   { id: "permissions", label: "Execution permissions", keywords: "observe standard autonomous sandbox capability cloud", icon: ShieldCheck },
   { id: "extensions", label: "Skills / MCP", keywords: "skills tools servers extension", icon: Sparkles },
   { id: "knowledge", label: "Knowledge & privacy", keywords: "memory retention analytics privacy", icon: Brain },
@@ -638,9 +638,14 @@ function SettingsCategory(props: SettingsCategoryProps) {
       <SettingToggle label="Compact density" checked={data.preferences.compact_density} disabled={busy} onChange={(value) => void updatePreferences({ compact_density: value })} />
     </Category>;
     case "models": return <ModelsPanel {...props} />;
-    case "voice": return <Category title="Voice" subtitle="Playback and speech output">
-      <SettingToggle label="Auto-play in main chat" checked={data.preferences.voice_auto_play_chat} disabled={busy} onChange={(value) => void updatePreferences({ voice_auto_play_chat: value })} />
-      <SettingToggle label="Auto-play pet replies" checked={data.preferences.voice_auto_play_pet} disabled={busy} onChange={(value) => void updatePreferences({ voice_auto_play_pet: value })} />
+    case "voice": return <Category title="Voice & Realtime" subtitle="Fairy replies and live companion">
+      <SettingToggle
+        label="Fairy voice replies"
+        detail="Speak eligible new Fairy replies in both the main chat and pet."
+        checked={data.preferences.voice_replies_enabled}
+        disabled={busy}
+        onChange={(value) => void updatePreferences({ voice_replies_enabled: value })}
+      />
       <SettingRange label="Volume" value={data.preferences.voice_volume_percent} min={0} max={100} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ voice_volume_percent: value })} />
       <SettingRange label="Speech rate" value={data.preferences.voice_rate_percent} min={50} max={200} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ voice_rate_percent: value })} />
       <HealthRow
@@ -725,13 +730,22 @@ function SettingsCategory(props: SettingsCategoryProps) {
         )}
       </div>
       <h2 className="settings-section-title">Realtime Companion Beta</h2>
-      <SettingToggle label="Enable Realtime Beta" detail="Off by default. Starting a session still requires explicit microphone and screen consent." checked={data.preferences.realtime_beta_enabled} disabled={busy} onChange={(value) => void updatePreferences({ realtime_beta_enabled: value })} />
+      <div className="settings-section-command">
+        <span>Open the consent surface to choose a window, microphone, and optional application audio for this session.</span>
+        <button className="secondary-command" type="button" disabled={busy} onClick={() => void props.act(async () => {
+          await props.client.realtimeCompanion.open();
+        })}>
+          <Gamepad2 size={14} /> Start Realtime Companion
+        </button>
+      </div>
       <RealtimeReadinessCard
         client={props.client}
         profile={data.preferences.realtime_activity_profile}
         disabled={busy}
         onReadinessChange={setLocalReady}
       />
+      <details className="settings-advanced">
+        <summary>Advanced Realtime settings</summary>
       <SettingSelect icon={<Gamepad2 size={17} />} label="Backend" detail="Local Beta is selectable only after the complete readiness report passes. Cloud Live remains available." value={data.preferences.realtime_backend} disabled={busy} onChange={(value) => void updatePreferences({ realtime_backend: value as DesktopPreferences["realtime_backend"] })} options={[{ value: "auto", label: "Auto" }, { value: "local_mini_cpm_o45", label: "Local MiniCPM-o 4.5 Beta", disabled: !localReady }, { value: "cloud_live", label: "Cloud Live" }]} />
       <SettingSelect icon={<MonitorCog size={17} />} label="Cloud provider" detail="Used only by Cloud Live or an approved cloud fallback" value={data.preferences.realtime_cloud_provider} disabled={busy} onChange={(value) => void updatePreferences({ realtime_cloud_provider: value as DesktopPreferences["realtime_cloud_provider"] })} options={[{ value: "gemini_live", label: "Gemini Live" }, { value: "glm_realtime_flash", label: "GLM Realtime Flash" }, { value: "glm_realtime_air", label: "GLM Realtime Air" }]} />
       <SettingSelect icon={<Gauge size={17} />} label="Activity profile" detail="Default for new sessions. Auto starts in Focus and switches only after three consistent grounded observations; use the active Companion panel to change a running session." value={data.preferences.realtime_activity_profile} disabled={busy} onChange={(value) => void updatePreferences({ realtime_activity_profile: value as DesktopPreferences["realtime_activity_profile"] })} options={[{ value: "auto", label: "Auto" }, { value: "game", label: "Game" }, { value: "focus", label: "Focus" }]} />
@@ -746,6 +760,7 @@ function SettingsCategory(props: SettingsCategoryProps) {
       <SettingRange label="Presence maximum" value={data.preferences.realtime_presence_max_minutes} min={30} max={240} step={30} suffix=" min" disabled={busy} onCommit={(value) => void updatePreferences({ realtime_presence_max_minutes: value })} />
       <SettingSelect icon={<Gauge size={17} />} label="Cloud daily limit" value={String(data.preferences.realtime_cloud_daily_limit_minutes)} disabled={busy} onChange={(value) => void updatePreferences({ realtime_cloud_daily_limit_minutes: Number(value) })} options={[{ value: "30", label: "30 minutes" }, { value: "60", label: "60 minutes" }, { value: "120", label: "120 minutes" }, { value: "180", label: "180 minutes" }]} />
       <SettingRange label="Local keep-warm" value={data.preferences.realtime_local_keep_warm_minutes} min={0} max={30} step={5} suffix=" min" disabled={busy} onCommit={(value) => void updatePreferences({ realtime_local_keep_warm_minutes: value })} />
+      </details>
     </Category>;
     case "permissions": return <PermissionsPanel {...props} />;
     case "extensions": return <ExtensionsPanel {...props} />;

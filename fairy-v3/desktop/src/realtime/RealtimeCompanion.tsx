@@ -68,11 +68,13 @@ import "./realtime-companion.css";
 type RealtimeStartupStage =
   | "resolving_backend"
   | "creating_session"
+  | "preparing_fairy_voice"
   | "starting_backend_runtime";
 
 function realtimeStartupStageLabel(stage: RealtimeStartupStage): string {
   if (stage === "resolving_backend") return "Resolving backend";
   if (stage === "creating_session") return "Creating governed session";
+  if (stage === "preparing_fairy_voice") return "Preparing Fairy voice";
   return "Starting backend runtime";
 }
 
@@ -114,6 +116,7 @@ export function RealtimeCompanion({
   const draftCaptionRef = useRef("");
   const [busy, setBusy] = useState(false);
   const [startupStage, setStartupStage] = useState<RealtimeStartupStage | null>(null);
+  const startupInFlight = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [voiceWarning, setVoiceWarning] = useState<string | null>(null);
   const [memoryNotice, setMemoryNotice] = useState<CompanionMemoryNotice | null>(null);
@@ -675,10 +678,13 @@ export function RealtimeCompanion({
 
   const start = async () => {
     if (
-      preferences === null || !preferences.realtime_beta_enabled
+      startupInFlight.current
+      ||
+      preferences === null
       || resolution?.available !== true || !microphoneConsent
       || !screenConsent || sourceId === ""
     ) return;
+    startupInFlight.current = true;
     setBusy(true);
     setStartupStage("resolving_backend");
     setError(null);
@@ -730,6 +736,10 @@ export function RealtimeCompanion({
         idempotency_key: crypto.randomUUID(),
       });
       updateSession(created);
+      if (preferences.realtime_voice_output === "fairy_voice") {
+        setStartupStage("preparing_fairy_voice");
+        await hostInvoke("voice_worker_prepare");
+      }
       setStartupStage("starting_backend_runtime");
       const worker = await client.worker.start({
         session_id: created.id,
@@ -756,8 +766,18 @@ export function RealtimeCompanion({
     } catch (caught) {
       const errorCode = coreErrorCode(caught) ?? messageOf(caught);
       setError(realtimeProviderErrorMessage(errorCode));
-      if (sessionRef.current !== null) await report("failed", errorCode);
+      const failedSession = sessionRef.current;
+      if (failedSession !== null) {
+        const cleanup = typeof client.worker.stop === "function"
+          ? client.worker.stop(failedSession.id)
+          : Promise.resolve();
+        await Promise.allSettled([
+          cleanup,
+          report("failed", errorCode),
+        ]);
+      }
     } finally {
+      startupInFlight.current = false;
       setStartupStage(null);
       setBusy(false);
     }
@@ -975,9 +995,8 @@ export function RealtimeCompanion({
               </label>
             ) : null}
             <div className="realtime-policy realtime-backend-card"><span>Backend</span><strong>{backendLabel(resolution?.backend, resolution?.requires_cloud_upload_consent, preferences?.realtime_cloud_provider)}</strong><span>Voice</span><strong>{voiceOutputLabel(preferences?.realtime_voice_output)}</strong></div>
-            {preferences?.realtime_beta_enabled === false ? <div className="realtime-error" role="alert">Enable Realtime Beta in Settings before starting.</div> : null}
-            {resolution?.available === false && resolution.reason !== "REALTIME_BETA_DISABLED" ? <div className="realtime-error" role="alert">{resolutionGuidance(resolution.reason)}</div> : null}
-            {resolution === null && preferences?.realtime_beta_enabled ? <div className="realtime-note" role="status">Checking backend readiness…</div> : null}
+            {resolution?.available === false ? <div className="realtime-error" role="alert">{resolutionGuidance(resolution.reason)}</div> : null}
+            {resolution === null ? <div className="realtime-note" role="status">Checking backend readiness…</div> : null}
             <label className="realtime-consent"><input type="checkbox" checked={microphoneConsent} onChange={(event) => setMicrophoneConsent(event.target.checked)} /><Mic size={15} /><span>{cloudPrivacy ? "Upload microphone for this Cloud session" : "Use microphone for this Local session"}</span></label>
             <label className="realtime-consent"><input type="checkbox" checked={screenConsent} onChange={(event) => setScreenConsent(event.target.checked)} /><Monitor size={15} /><span>{cloudPrivacy ? "Upload only the explicitly selected window" : captureMode === "follow_foreground" ? "Observe the foreground window locally, excluding protected apps" : "Process only the selected window locally"}</span></label>
             <label className="realtime-consent"><input type="checkbox" checked={applicationAudioConsent} disabled={!applicationAudioAvailable} onChange={(event) => setApplicationAudioConsent(event.target.checked)} /><Volume2 size={15} /><span>{applicationAudioAvailable ? "Process selected application audio locally" : "Application audio unavailable for this Cloud provider"}</span></label>

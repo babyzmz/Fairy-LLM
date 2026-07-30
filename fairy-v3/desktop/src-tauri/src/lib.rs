@@ -365,7 +365,7 @@ pub fn authorize_pet_render_window(label: &str) -> Result<(), WindowScopeError> 
 }
 
 pub fn authorize_voice_health_window(label: &str) -> Result<(), WindowScopeError> {
-    if label == "main" {
+    if ["main", PET_INPUT_LABEL, PET_RENDER_LABEL, COMPANION_LABEL].contains(&label) {
         Ok(())
     } else {
         Err(WindowScopeError)
@@ -374,6 +374,14 @@ pub fn authorize_voice_health_window(label: &str) -> Result<(), WindowScopeError
 
 pub fn authorize_voice_settings_window(label: &str) -> Result<(), WindowScopeError> {
     authorize_settings_window(label)
+}
+
+pub fn authorize_voice_control_window(label: &str) -> Result<(), WindowScopeError> {
+    if ["main", PET_INPUT_LABEL, PET_RENDER_LABEL, COMPANION_LABEL].contains(&label) {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
 }
 
 pub fn settings_method_allowed(method: &str) -> bool {
@@ -714,13 +722,9 @@ async fn omni_model_remove(
 }
 
 fn validate_realtime_activation(
-    preferences: &DesktopPreferences,
     input: &RealtimeWorkerStartInput,
     local_ready: bool,
 ) -> Result<(), &'static str> {
-    if !preferences.realtime_beta_enabled {
-        return Err("REALTIME_BETA_DISABLED");
-    }
     if input.backend == fairy_realtime_worker::RealtimeBackendKind::LocalMiniCpmO45 {
         return if local_ready {
             Ok(())
@@ -812,7 +816,7 @@ async fn realtime_worker_start_segment(
         } else {
             false
         };
-    validate_realtime_activation(&preferences, &input, local_ready).map_err(str::to_owned)?;
+    validate_realtime_activation(&input, local_ready).map_err(str::to_owned)?;
     if input.backend == fairy_realtime_worker::RealtimeBackendKind::CloudLive {
         enforce_realtime_cloud_daily_limit(state, preferences.realtime_cloud_daily_limit_minutes)
             .await?;
@@ -1893,7 +1897,7 @@ pub(crate) fn end_native_pet_drag(
                 state,
                 PetPreferencesUpdate {
                     expected_revision: current.revision,
-                    voice_auto_play_pet: None,
+                    voice_replies_enabled: None,
                     pet_muted: None,
                     pet_always_on_top: None,
                     pet_anchor: Some(desktop_preferences::PetAnchorPreference {
@@ -2189,7 +2193,7 @@ async fn pet_window_group_end_drag(
             &state,
             PetPreferencesUpdate {
                 expected_revision,
-                voice_auto_play_pet: None,
+                voice_replies_enabled: None,
                 pet_muted: None,
                 pet_always_on_top: None,
                 pet_anchor: Some(desktop_preferences::PetAnchorPreference {
@@ -2253,7 +2257,7 @@ async fn pet_window_group_reset_position(
             &state,
             PetPreferencesUpdate {
                 expected_revision,
-                voice_auto_play_pet: None,
+                voice_replies_enabled: None,
                 pet_muted: None,
                 pet_always_on_top: None,
                 pet_anchor: None,
@@ -4228,9 +4232,9 @@ fn build_fairy_tray(
     let auto_play = CheckMenuItem::with_id(
         app,
         TRAY_AUTO_PLAY_ID,
-        "Auto-play replies",
+        "Fairy voice replies",
         true,
-        preferences.voice_auto_play_pet,
+        preferences.voice_replies_enabled,
         None::<&str>,
     )?;
     let muted = CheckMenuItem::with_id(
@@ -4346,8 +4350,8 @@ fn toggle_pet_preference_from_tray(
         .map_err(|error| error.to_string())?;
     let update = PetPreferencesUpdate {
         expected_revision: current.revision,
-        voice_auto_play_pet: (action == FairyTrayAction::ToggleAutoPlay)
-            .then_some(!current.voice_auto_play_pet),
+        voice_replies_enabled: (action == FairyTrayAction::ToggleAutoPlay)
+            .then_some(!current.voice_replies_enabled),
         pet_muted: (action == FairyTrayAction::ToggleMuted).then_some(!current.pet_muted),
         pet_always_on_top: (action == FairyTrayAction::ToggleAlwaysOnTop)
             .then_some(!current.pet_always_on_top),
@@ -4367,7 +4371,7 @@ fn reset_pet_position_from_tray(app: &tauri::AppHandle) -> Result<DesktopPrefere
         state.inner(),
         PetPreferencesUpdate {
             expected_revision: current.revision,
-            voice_auto_play_pet: None,
+            voice_replies_enabled: None,
             pet_muted: None,
             pet_always_on_top: None,
             pet_anchor: None,
@@ -4383,7 +4387,9 @@ fn sync_tray_preferences(app: &tauri::AppHandle, preferences: &DesktopPreference
     let Some(tray) = app.try_state::<FairyTrayState>() else {
         return;
     };
-    let _ = tray.auto_play.set_checked(preferences.voice_auto_play_pet);
+    let _ = tray
+        .auto_play
+        .set_checked(preferences.voice_replies_enabled);
     let _ = tray.muted.set_checked(preferences.pet_muted);
     let _ = tray
         .always_on_top
@@ -4657,7 +4663,7 @@ async fn voice_worker_prepare(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<Value, String> {
-    authorize_voice_settings_window(window.label())
+    authorize_voice_control_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
     let voice = Arc::clone(&state.voice);
     tauri::async_runtime::spawn_blocking(move || voice.prepare())
@@ -4671,8 +4677,11 @@ async fn voice_worker_stop(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<Value, String> {
-    authorize_voice_settings_window(window.label())
+    authorize_voice_control_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
+    if state.realtime.status().running {
+        return Err("VOICE_WORKER_IN_USE".to_owned());
+    }
     let voice = Arc::clone(&state.voice);
     tauri::async_runtime::spawn_blocking(move || voice.stop())
         .await
@@ -5768,7 +5777,7 @@ mod realtime_activation_tests {
 
     use super::{
         realtime_persona_snapshot_request, realtime_persona_snapshot_result,
-        validate_realtime_activation, DesktopPreferences, RealtimeWorkerStartInput,
+        validate_realtime_activation, RealtimeWorkerStartInput,
     };
     use serde_json::json;
 
@@ -5795,31 +5804,21 @@ mod realtime_activation_tests {
     }
 
     #[test]
-    fn beta_gate_precedes_every_worker_start() {
-        assert_eq!(
-            validate_realtime_activation(&DesktopPreferences::default(), &cloud_input(), false),
-            Err("REALTIME_BETA_DISABLED")
-        );
+    fn explicit_cloud_start_is_not_blocked_by_a_legacy_beta_preference() {
+        assert_eq!(validate_realtime_activation(&cloud_input(), false), Ok(()));
     }
 
     #[test]
-    fn local_backend_remains_inactive_after_beta_is_enabled() {
-        let preferences = DesktopPreferences {
-            realtime_beta_enabled: true,
-            ..DesktopPreferences::default()
-        };
+    fn local_backend_remains_inactive_until_readiness_passes() {
         let mut input = cloud_input();
         input.backend = RealtimeBackendKind::LocalMiniCpmO45;
         input.cloud_provider = None;
 
         assert_eq!(
-            validate_realtime_activation(&preferences, &input, false),
+            validate_realtime_activation(&input, false),
             Err("LOCAL_BACKEND_NOT_READY")
         );
-        assert_eq!(
-            validate_realtime_activation(&preferences, &input, true),
-            Ok(())
-        );
+        assert_eq!(validate_realtime_activation(&input, true), Ok(()));
     }
 
     #[test]
