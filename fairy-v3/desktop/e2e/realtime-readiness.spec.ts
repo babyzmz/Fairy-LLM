@@ -63,6 +63,7 @@ for (const scenario of [
       page.getByRole("status", { name: "Local readiness status" }),
     ).toHaveText(scenario.label);
 
+    await page.getByText("Advanced Realtime settings", { exact: true }).click();
     const backend = page.getByRole("combobox", { name: "Backend" });
     await backend.selectOption("cloud_live");
     await expect(backend).toHaveValue("cloud_live");

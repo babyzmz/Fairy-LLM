@@ -95,7 +95,7 @@ test("Fairy quick chat, cards, and context menu stay inside the expanded surface
   await page.getByTestId("presence-surface").click({ button: "right" });
   await expect(page.getByRole("menu", { name: "Fairy menu" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "New chat" })).toBeVisible();
-  await expect(page.getByRole("menuitemcheckbox", { name: "Auto-play replies" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("menuitemcheckbox", { name: "Fairy voice replies" })).toHaveAttribute("aria-checked", "true");
   expect(await overflow(page)).toEqual({ horizontal: 0, vertical: 0 });
   await page.screenshot({ path: testInfo.outputPath("fairy-expanded-menu.png"), omitBackground: true });
   await context.close();

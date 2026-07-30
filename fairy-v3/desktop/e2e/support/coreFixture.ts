@@ -765,7 +765,7 @@ async function installCoreFixture(page: Page) {
         prices: [],
       });
       let desktopPreferences = {
-        schema_version: 10,
+        schema_version: 11,
         revision: 0,
         language: "system",
         launch_at_startup: false,
@@ -774,8 +774,7 @@ async function installCoreFixture(page: Page) {
         reduced_motion: false,
         compact_density: false,
         selected_profile_id: null as string | null,
-        voice_auto_play_chat: false,
-        voice_auto_play_pet: true,
+        voice_replies_enabled: true,
         voice_volume_percent: 80,
         voice_rate_percent: 100,
         permission_cloud_profile: "standard",
