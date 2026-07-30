@@ -981,15 +981,16 @@ describe("RealtimeCompanion", () => {
     } as unknown as CoreClient["realtime"];
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
-    await screen.findByRole("option", { name: "Test Game 路 1280脳720" });
+    await screen.findByRole("option", { name: /Test Game/ });
+    await screen.findByText(/Local .* MiniCPM-o 4\.5/);
     const applicationAudio = screen.getByRole("checkbox", {
       name: "Process selected application audio locally",
     }) as HTMLInputElement;
     expect(applicationAudio.checked).toBe(true);
     expect(applicationAudio.disabled).toBe(false);
-    expect(screen.getByRole("combobox", { name: "Observation scope" })).toHaveValue(
-      "follow_foreground",
-    );
+    expect((screen.getByRole("combobox", {
+      name: "Observation scope",
+    }) as HTMLSelectElement).value).toBe("follow_foreground");
 
     await grantMediaConsentAndStart();
 
@@ -1070,7 +1071,9 @@ describe("RealtimeCompanion", () => {
       session_id: activeSession.id,
       channel: "microphone",
     }));
-    fireEvent.click(screen.getByRole("button", { name: "Use window" }));
+    const useWindow = screen.getByRole("button", { name: "Use window" }) as HTMLButtonElement;
+    await waitFor(() => expect(useWindow.disabled).toBe(false));
+    fireEvent.click(useWindow);
     await waitFor(() => expect(replaceSource).toHaveBeenCalledWith({
       session_id: activeSession.id,
       source_id: 42,

@@ -1177,8 +1177,10 @@ mod tests {
             vec!["same.exe".to_owned(), "SAME.EXE".to_owned()],
             vec!["app.exe".to_owned(); 33],
         ] {
-            let mut preferences = DesktopPreferences::default();
-            preferences.realtime_excluded_applications = excluded;
+            let preferences = DesktopPreferences {
+                realtime_excluded_applications: excluded,
+                ..DesktopPreferences::default()
+            };
             assert!(matches!(
                 store.update(DesktopPreferencesUpdate {
                     expected_revision: 0,
@@ -1193,9 +1195,13 @@ mod tests {
     fn excluded_applications_are_trimmed_and_normalized_before_persisting() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let store = DesktopPreferencesStore::new(directory.path());
-        let mut preferences = DesktopPreferences::default();
-        preferences.realtime_excluded_applications =
-            vec![" OBS64.EXE ".to_owned(), "Private-App.Exe".to_owned()];
+        let preferences = DesktopPreferences {
+            realtime_excluded_applications: vec![
+                " OBS64.EXE ".to_owned(),
+                "Private-App.Exe".to_owned(),
+            ],
+            ..DesktopPreferences::default()
+        };
 
         let saved = store
             .update(DesktopPreferencesUpdate {

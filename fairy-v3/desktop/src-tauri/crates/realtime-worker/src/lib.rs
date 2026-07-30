@@ -7,6 +7,7 @@ mod protocol;
 mod provider;
 mod runtime;
 mod runtime_events;
+mod runtime_session;
 mod session;
 mod transport;
 

@@ -91,17 +91,19 @@ impl RealtimeMicrophoneProcessor for RealtimeAudioProcessor {
         self.speech_active = false;
         self.frames_since_delay_search = 0;
     }
+}
 
+impl RealtimeAudioProcessor {
     fn process_frame(&mut self, microphone: &[i16]) -> ProcessedAudioFrame {
         let reference = self.aligned_reference(microphone);
         let echo_cancelled = self.cancel_echo(microphone, &reference);
-        let echo_rms = rms(&echo_cancelled);
-        let speech_evidence = echo_rms > (self.noise_rms * 2.2).max(MIN_SPEECH_RMS);
+        let echo_rms = rms_f32(&echo_cancelled);
+        let speech_evidence = echo_rms > (self.noise_rms * 1.5).max(MIN_SPEECH_RMS);
         if !speech_evidence {
             self.noise_rms = (self.noise_rms * 0.97 + echo_rms * 0.03).max(24.0);
         }
         let suppressed = suppress_noise(&echo_cancelled, self.noise_rms, speech_evidence);
-        let speech_rms = rms(&suppressed);
+        let speech_rms = rms_f32(&suppressed);
         let (speech_started, speech_stopped) = self.update_vad(
             speech_evidence && speech_rms > (self.noise_rms * 1.35).max(MIN_SPEECH_RMS * 0.7),
         );
@@ -157,14 +159,14 @@ impl RealtimeMicrophoneProcessor for RealtimeAudioProcessor {
             let mut estimate = 0.0;
             let mut energy = 1.0;
             for tap in 0..ECHO_FILTER_TAPS {
-                let value = reference[reference_index - tap - 1];
+                let value = reference[reference_index - tap];
                 estimate += self.echo_weights[tap] * value;
                 energy += value * value;
             }
             let error = f32::from(*sample) - estimate;
             let step = adaptation * error / energy;
             for tap in 0..ECHO_FILTER_TAPS {
-                self.echo_weights[tap] += step * reference[reference_index - tap - 1];
+                self.echo_weights[tap] += step * reference[reference_index - tap];
                 self.echo_weights[tap] = self.echo_weights[tap].clamp(-4.0, 4.0);
             }
             output.push(error);
@@ -200,12 +202,19 @@ impl RealtimeMicrophoneProcessor for RealtimeAudioProcessor {
         };
         let rate = if desired < self.agc_gain { 0.18 } else { 0.025 };
         self.agc_gain += (desired - self.agc_gain) * rate;
+        let peak = samples
+            .iter()
+            .map(|sample| sample.abs())
+            .fold(0.0_f32, f32::max);
+        if peak > 1.0 {
+            self.agc_gain = self.agc_gain.min(f32::from(i16::MAX) * 0.98 / peak);
+        }
         samples
             .iter()
             .map(|sample| {
                 (*sample * self.agc_gain)
                     .round()
-                    .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16
+                    .clamp(-f32::from(i16::MAX), f32::from(i16::MAX)) as i16
             })
             .collect()
     }

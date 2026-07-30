@@ -32,6 +32,7 @@ fn four_hour_equivalent_soak_is_bounded_monotonic_and_fail_closed() {
         activity_profile: RealtimeActivityProfile::Auto,
         interaction_intensity: RealtimeInteractionIntensity::Standard,
         presence_max_minutes: 300,
+        local_keep_warm_minutes: 0,
     })
     .expect("start coordinator");
     let mut context = RealtimeContextAuthority::default();

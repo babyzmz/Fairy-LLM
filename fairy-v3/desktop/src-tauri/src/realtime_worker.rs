@@ -462,6 +462,7 @@ impl RealtimeWorkerManager {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn start_segment(
         &self,
         app: &AppHandle,
@@ -3604,6 +3605,7 @@ mod tests {
         assert!(validate_capture_scope(&input).is_err());
         input.backend = RealtimeBackendKind::LocalMiniCpmO45;
         input.cloud_provider = None;
+        input.voice_output = RealtimeVoiceOutput::FairyVoice;
         assert!(validate_capture_scope(&input).is_ok());
     }
 
@@ -3957,7 +3959,7 @@ mod tests {
             assert!(matches!(transition, RealtimeWakeTransition::Cloud(_)));
         }
         let dialogue = dialogue();
-        let projection = commit_cloud_wake_event(
+        let projection = commit_segment_wake_event(
             &serde_json::json!({
                 "type": "segment_woken",
                 "session_id": "session-1",
