@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fairy_core_bridge::{CoreBridge, CoreBridgeError, CoreLaunchSpec};
+use fairy_realtime_worker::RealtimeStartupStage;
 use serde_json::{json, Value};
 use tauri::ipc::{Channel, Response};
 use tauri::menu::{CheckMenuItem, MenuBuilder, MenuItem};
@@ -57,7 +58,7 @@ use realtime_worker::{
     RealtimeWorkerManager, RealtimeWorkerReplaceSourceInput, RealtimeWorkerRetryMediaInput,
     RealtimeWorkerSetInputInput, RealtimeWorkerSetPolicyInput, RealtimeWorkerSpeechStateInput,
     RealtimeWorkerStartInput, RealtimeWorkerStatus, RealtimeWorkerStopInput,
-    RealtimeWorkerToolResultInput, RealtimeWorkerWakeInput,
+    RealtimeWorkerToolResultInput, RealtimeWorkerWakeInput, REALTIME_WORKER_EVENT,
 };
 use voice_worker::{
     bundled_voice_launch, development_voice_launch, prepared_realtime_session,
@@ -821,6 +822,7 @@ async fn realtime_worker_start_segment(
         enforce_realtime_cloud_daily_limit(state, preferences.realtime_cloud_daily_limit_minutes)
             .await?;
     }
+    emit_realtime_startup_stage(app, &input.session_id, RealtimeStartupStage::LoadingPersona);
     let persona_response = call_core(state, realtime_persona_snapshot_request(&input)).await;
     let persona_snapshot = realtime_persona_snapshot_result(persona_response)?;
     let credential = match input.credential_provider() {
@@ -834,7 +836,12 @@ async fn realtime_worker_start_segment(
     };
     let credential = credential.map(zeroize::Zeroizing::new);
     let persona_snapshot = zeroize::Zeroizing::new(persona_snapshot);
-    if continuation {
+    emit_realtime_startup_stage(
+        app,
+        &input.session_id,
+        RealtimeStartupStage::StartingBackendRuntime,
+    );
+    let status = if continuation {
         state.realtime.continue_session(
             app,
             input,
@@ -853,7 +860,23 @@ async fn realtime_worker_start_segment(
             preferences.realtime_local_keep_warm_minutes,
         )
     }
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    Ok(status)
+}
+
+fn emit_realtime_startup_stage(
+    app: &tauri::AppHandle,
+    session_id: &str,
+    stage: RealtimeStartupStage,
+) {
+    let _ = app.emit(
+        REALTIME_WORKER_EVENT,
+        json!({
+            "type": "startup_stage",
+            "session_id": session_id,
+            "stage": stage,
+        }),
+    );
 }
 
 fn realtime_persona_snapshot_request(input: &RealtimeWorkerStartInput) -> Value {

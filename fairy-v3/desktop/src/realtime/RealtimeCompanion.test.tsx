@@ -352,11 +352,46 @@ describe("RealtimeCompanion", () => {
     await grantMediaConsentAndStart();
 
     expect(await screen.findByText(/ONNX Runtime CUDA provider/)).not.toBeNull();
+    expect(screen.getByText("Failed while preparing fairy voice.")).not.toBeNull();
     expect(start).not.toHaveBeenCalled();
     await waitFor(() => expect(report).toHaveBeenCalledWith(expect.objectContaining({
       error_code: "VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE",
       status: "failed",
     })));
+  });
+
+  it("preserves the Persona failure stage and reports one governed terminal transition", async () => {
+    const report = vi.fn(async () => session("failed", 2));
+    const stop = vi.fn(async () => workerStatus(false));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        report,
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => workerStatus(false)),
+        start: vi.fn(async () => {
+          throw new Error("REALTIME_PERSONA_UNAVAILABLE");
+        }),
+        stop,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+    await grantMediaConsentAndStart();
+
+    expect(await screen.findByText(/Fairy Persona could not be loaded/)).not.toBeNull();
+    expect(screen.getByText("Failed while loading fairy persona.")).not.toBeNull();
+    await waitFor(() => expect(report).toHaveBeenCalledOnce());
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      status: "failed",
+      error_code: "REALTIME_PERSONA_UNAVAILABLE",
+    }));
+    expect(stop).toHaveBeenCalledOnce();
   });
 
   it("restores bounded Assistance state and keeps approval in the main chat", async () => {
@@ -754,7 +789,7 @@ describe("RealtimeCompanion", () => {
     expect(JSON.stringify(report.mock.calls)).not.toContain("Boss at half health");
   });
 
-  it("shows the authoritative startup stage while the backend runtime is starting", async () => {
+  it("shows ordered authoritative startup stages until the Worker becomes active", async () => {
     let resolveWorker!: (status: RealtimeWorkerStatus) => void;
     const workerStart = new Promise<RealtimeWorkerStatus>((resolve) => {
       resolveWorker = resolve;
@@ -780,12 +815,114 @@ describe("RealtimeCompanion", () => {
 
     expect(
       (await screen.findByRole("status", { name: "Realtime startup" })).textContent,
-    ).toBe("Starting backend runtime");
+    ).toBe("Loading Fairy Persona");
+
+    await act(async () => eventListener?.({ payload: {
+      type: "startup_stage",
+      session_id: "01900000-0000-7000-8000-000000000099",
+      stage: "acquiring_microphone",
+    } }));
+    expect(screen.getByRole("status", { name: "Realtime startup" }).textContent)
+      .toBe("Loading Fairy Persona");
+    await act(async () => eventListener?.({ payload: {
+      type: "startup_stage",
+      session_id: session("starting", 1).id,
+      stage: "starting_backend_runtime",
+    } }));
+    expect(screen.getByRole("status", { name: "Realtime startup" }).textContent)
+      .toBe("Starting backend runtime");
+    await act(async () => eventListener?.({ payload: {
+      type: "startup_stage",
+      session_id: session("starting", 1).id,
+      segment_id: "segment-1",
+      context_epoch: 1,
+      stage: "acquiring_microphone",
+    } }));
+    expect(screen.getByRole("status", { name: "Realtime startup" }).textContent)
+      .toBe("Acquiring microphone");
+    await act(async () => eventListener?.({ payload: {
+      type: "startup_stage",
+      session_id: session("starting", 1).id,
+      segment_id: "segment-1",
+      context_epoch: 1,
+      stage: "acquiring_observed_window",
+    } }));
+    expect(screen.getByRole("status", { name: "Realtime startup" }).textContent)
+      .toBe("Acquiring observed window");
+    await act(async () => eventListener?.({ payload: {
+      type: "startup_stage",
+      session_id: session("starting", 1).id,
+      segment_id: "segment-1",
+      context_epoch: 1,
+      stage: "acquiring_application_audio",
+    } }));
+    expect(screen.getByRole("status", { name: "Realtime startup" }).textContent)
+      .toBe("Acquiring application audio");
+    await act(async () => eventListener?.({ payload: {
+      type: "startup_stage",
+      session_id: session("starting", 1).id,
+      stage: "loading_persona",
+    } }));
+    expect(screen.getByRole("status", { name: "Realtime startup" }).textContent)
+      .toBe("Acquiring application audio");
 
     resolveWorker(workerStatus(true));
+    await act(async () => eventListener?.({ payload: {
+      type: "startup_stage",
+      session_id: session("starting", 1).id,
+      segment_id: "segment-1",
+      context_epoch: 1,
+      stage: "active",
+    } }));
     await waitFor(() => expect(
       screen.queryByRole("status", { name: "Realtime startup" }),
     ).toBeNull());
+  });
+
+  it("cancels a pending startup on close and rejects its late completion", async () => {
+    let resolveWorker!: (status: RealtimeWorkerStatus) => void;
+    const workerStart = new Promise<RealtimeWorkerStatus>((resolve) => {
+      resolveWorker = resolve;
+    });
+    const stopWorker = vi.fn(async () => workerStatus(false));
+    const stopSession = vi.fn(async () => session("cancelled", 2));
+    const report = vi.fn();
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        stop: stopSession,
+        report,
+      },
+      memories: { save: vi.fn() },
+      transcript: { append: vi.fn(), list: vi.fn(async () => ({ items: [] })) },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => workerStatus(false)),
+        start: vi.fn(() => workerStart),
+        stop: stopWorker,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: /Test Game/ });
+    await grantMediaConsentAndStart();
+    await screen.findByText("Loading Fairy Persona");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() => expect(stopSession).toHaveBeenCalledOnce());
+    await waitFor(() => expect(stopWorker).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog", { name: "Realtime Companion Beta" })).toBeNull();
+    expect(report).not.toHaveBeenCalled();
+
+    resolveWorker(workerStatus(true));
+    await act(async () => {
+      await workerStart;
+    });
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(stopWorker).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog", { name: "Realtime Companion Beta" })).toBeNull();
   });
 
   it("keeps the session active while an unsaved caption is retried manually", async () => {

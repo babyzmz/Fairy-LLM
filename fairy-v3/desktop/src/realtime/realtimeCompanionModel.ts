@@ -15,7 +15,25 @@ export interface CaptureSurface {
   height: number;
 }
 
+export type RealtimeStartupStage =
+  | "resolving_backend"
+  | "creating_session"
+  | "preparing_fairy_voice"
+  | "loading_persona"
+  | "starting_backend_runtime"
+  | "acquiring_microphone"
+  | "acquiring_observed_window"
+  | "acquiring_application_audio"
+  | "active";
+
 export type WorkerEvent =
+  | {
+      type: "startup_stage";
+      session_id: string;
+      segment_id?: string;
+      context_epoch?: number;
+      stage: RealtimeStartupStage;
+    }
   | { type: "session_state"; session_id: string; segment_id: string; context_epoch: number; status: string; backend: "local_mini_cpm_o45" | "cloud_live"; cloud_provider?: string | null; error_code?: string | null }
   | { type: "public_caption"; session_id: string; segment_id: string; context_epoch: number; sequence: number; text: string; stable: boolean; speaker: "user" | "assistant"; speech_output?: "fairy_voice" | "provider_native_voice" | "text_only"; speech_generation?: number; persona_digest?: string }
   | ({ type: "presence_projection" } & RealtimePresenceProjection)

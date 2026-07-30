@@ -53,6 +53,7 @@ import {
   EMPTY_SIDECAR,
   EMPTY_USAGE,
   type CaptureSurface,
+  type RealtimeStartupStage,
   type RealtimeUsage,
   type RealtimeWorkerIdentity,
   type WorkerEvent,
@@ -65,17 +66,39 @@ export {
 } from "./realtimeCompanionSupport";
 import "./realtime-companion.css";
 
-type RealtimeStartupStage =
-  | "resolving_backend"
-  | "creating_session"
-  | "preparing_fairy_voice"
-  | "starting_backend_runtime";
+const REALTIME_STARTUP_STAGE_ORDER: Record<RealtimeStartupStage, number> = {
+  resolving_backend: 0,
+  creating_session: 1,
+  preparing_fairy_voice: 2,
+  loading_persona: 3,
+  starting_backend_runtime: 4,
+  acquiring_microphone: 5,
+  acquiring_observed_window: 6,
+  acquiring_application_audio: 7,
+  active: 8,
+};
 
 function realtimeStartupStageLabel(stage: RealtimeStartupStage): string {
-  if (stage === "resolving_backend") return "Resolving backend";
-  if (stage === "creating_session") return "Creating governed session";
-  if (stage === "preparing_fairy_voice") return "Preparing Fairy voice";
-  return "Starting backend runtime";
+  switch (stage) {
+    case "resolving_backend":
+      return "Resolving backend";
+    case "creating_session":
+      return "Creating governed session";
+    case "preparing_fairy_voice":
+      return "Preparing Fairy voice";
+    case "loading_persona":
+      return "Loading Fairy Persona";
+    case "starting_backend_runtime":
+      return "Starting backend runtime";
+    case "acquiring_microphone":
+      return "Acquiring microphone";
+    case "acquiring_observed_window":
+      return "Acquiring observed window";
+    case "acquiring_application_audio":
+      return "Acquiring application audio";
+    case "active":
+      return "Realtime active";
+  }
 }
 
 export function RealtimeCompanion({
@@ -106,6 +129,7 @@ export function RealtimeCompanion({
     useState<DesktopPreferences["realtime_capture_mode"]>("selected_window");
   const [session, setSession] = useState<RealtimeSession | null>(null);
   const sessionRef = useRef<RealtimeSession | null>(null);
+  const mountedRef = useRef(true);
   const [presenceProjection, setPresenceProjection] =
     useState<RealtimePresenceProjection | null>(null);
   const presenceProjectionRef = useRef<RealtimePresenceProjection | null>(null);
@@ -116,7 +140,15 @@ export function RealtimeCompanion({
   const draftCaptionRef = useRef("");
   const [busy, setBusy] = useState(false);
   const [startupStage, setStartupStage] = useState<RealtimeStartupStage | null>(null);
+  const startupStageRef = useRef<RealtimeStartupStage | null>(null);
+  const [startupFailureStage, setStartupFailureStage] =
+    useState<RealtimeStartupStage | null>(null);
   const startupInFlight = useRef(false);
+  const startupAttemptRef = useRef(0);
+  const startupSessionRef =
+    useRef<{ attempt: number; session: RealtimeSession } | null>(null);
+  const startupCleanupRef =
+    useRef(new Map<number, Promise<RealtimeSession | null>>());
   const [error, setError] = useState<string | null>(null);
   const [voiceWarning, setVoiceWarning] = useState<string | null>(null);
   const [memoryNotice, setMemoryNotice] = useState<CompanionMemoryNotice | null>(null);
@@ -215,6 +247,197 @@ export function RealtimeCompanion({
     sessionRef.current = value;
     setSession(value);
   }, []);
+
+  const advanceStartupStage = useCallback((stage: RealtimeStartupStage) => {
+    if (!startupInFlight.current) return;
+    const current = startupStageRef.current;
+    if (
+      current !== null
+      && REALTIME_STARTUP_STAGE_ORDER[stage] < REALTIME_STARTUP_STAGE_ORDER[current]
+    ) return;
+    startupStageRef.current = stage;
+    setStartupStage(stage);
+  }, []);
+
+  const completeStartupAttempt = useCallback((attempt: number) => {
+    if (startupAttemptRef.current !== attempt) return;
+    startupInFlight.current = false;
+    startupSessionRef.current = null;
+    startupStageRef.current = null;
+    setStartupStage(null);
+    setBusy(false);
+  }, []);
+
+  const cleanupStartupAttempt = useCallback((
+    attempt: number,
+    created: RealtimeSession,
+    status: "failed" | "cancelled" | "interrupted",
+    errorCode: string,
+  ): Promise<RealtimeSession | null> => {
+    const existing = startupCleanupRef.current.get(attempt);
+    if (existing !== undefined) return existing;
+    const cleanup = (async () => {
+      const stop = typeof client.worker.stop === "function"
+        ? client.worker.stop(created.id)
+        : Promise.resolve(null);
+      if (status === "cancelled" && typeof client.sessions.stop === "function") {
+        const requestCoreStop = async () => {
+          try {
+            return await client.sessions.stop({
+              session_id: created.id,
+              expected_revision: created.revision,
+            });
+          } catch (caught) {
+            if (
+              coreErrorCode(caught) !== "VERSION_CONFLICT"
+              || typeof client.sessions.get !== "function"
+            ) throw caught;
+            const latest = await client.sessions.get(created.id);
+            if (latest.status === "stopping" || isTerminal(latest.status)) return latest;
+            return client.sessions.stop({
+              session_id: latest.id,
+              expected_revision: latest.revision,
+            });
+          }
+        };
+        const [workerStopped, coreStopped] = await Promise.allSettled([
+          stop,
+          requestCoreStop(),
+        ]);
+        if (coreStopped.status !== "fulfilled") return null;
+        if (
+          coreStopped.value.status !== "stopping"
+          || workerStopped.status !== "fulfilled"
+          || workerStopped.value === null
+          || typeof client.sessions.report !== "function"
+        ) return coreStopped.value;
+        const worker = workerStopped.value;
+        return client.sessions.report({
+          session_id: coreStopped.value.id,
+          status: "completed",
+          expected_revision: coreStopped.value.revision,
+          audio_input_ms: worker.audio_input_ms,
+          audio_output_ms: worker.audio_output_ms,
+          video_frame_count: worker.video_frame_count,
+          interruption_count: worker.interruption_count,
+          tool_call_count: worker.tool_call_count,
+          error_code: null,
+        });
+      }
+      const terminal = typeof client.sessions.report === "function"
+        ? client.sessions.report({
+            session_id: created.id,
+            status,
+            expected_revision: created.revision,
+            audio_input_ms: created.audio_input_ms,
+            audio_output_ms: created.audio_output_ms,
+            video_frame_count: created.video_frame_count,
+            interruption_count: created.interruption_count,
+            tool_call_count: created.tool_call_count,
+            error_code: errorCode,
+          })
+        : Promise.resolve(null);
+      const [, reported] = await Promise.allSettled([stop, terminal]);
+      return reported.status === "fulfilled" ? reported.value : null;
+    })();
+    startupCleanupRef.current.set(attempt, cleanup);
+    if (startupCleanupRef.current.size > 16) {
+      const oldest = startupCleanupRef.current.keys().next().value;
+      if (oldest !== undefined) startupCleanupRef.current.delete(oldest);
+    }
+    return cleanup;
+  }, [client.sessions, client.worker]);
+
+  const failStartupAttempt = useCallback(async (
+    attempt: number,
+    errorCode: string,
+    terminalStatus: "failed" | "interrupted" = "failed",
+  ) => {
+    if (startupAttemptRef.current !== attempt) return;
+    const failedStage = startupStageRef.current;
+    const pending = startupSessionRef.current?.attempt === attempt
+      ? startupSessionRef.current.session
+      : null;
+    startupAttemptRef.current += 1;
+    startupInFlight.current = false;
+    startupSessionRef.current = null;
+    startupStageRef.current = null;
+    setStartupStage(null);
+    setStartupFailureStage(failedStage);
+    setBusy(false);
+    setError(realtimeProviderErrorMessage(errorCode));
+    if (pending === null) return;
+    const terminal = await cleanupStartupAttempt(
+      attempt,
+      pending,
+      terminalStatus,
+      errorCode,
+    );
+    if (
+      mountedRef.current
+      && terminal !== null
+      && sessionRef.current?.id === terminal.id
+    ) {
+      updateSession(terminal);
+    }
+  }, [cleanupStartupAttempt, updateSession]);
+
+  const cancelStartupAttempt = useCallback((): boolean => {
+    if (!startupInFlight.current) return false;
+    const attempt = startupAttemptRef.current;
+    const pending = startupSessionRef.current?.attempt === attempt
+      ? startupSessionRef.current.session
+      : null;
+    startupAttemptRef.current += 1;
+    startupInFlight.current = false;
+    startupSessionRef.current = null;
+    startupStageRef.current = null;
+    setStartupStage(null);
+    setBusy(pending !== null);
+    if (pending !== null) {
+      void cleanupStartupAttempt(
+        attempt,
+        pending,
+        "cancelled",
+        "REALTIME_START_CANCELLED",
+      ).then((terminal) => {
+        if (
+          mountedRef.current
+          && terminal !== null
+          && sessionRef.current?.id === terminal.id
+        ) {
+          updateSession(terminal);
+        }
+        if (mountedRef.current) setBusy(false);
+      });
+    }
+    return true;
+  }, [cleanupStartupAttempt, updateSession]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => () => {
+    const attempt = startupAttemptRef.current;
+    const pending = startupSessionRef.current?.attempt === attempt
+      ? startupSessionRef.current.session
+      : null;
+    startupAttemptRef.current += 1;
+    startupInFlight.current = false;
+    startupSessionRef.current = null;
+    if (pending !== null) {
+      void cleanupStartupAttempt(
+        attempt,
+        pending,
+        "cancelled",
+        "REALTIME_START_CANCELLED",
+      );
+    }
+  }, [cleanupStartupAttempt]);
 
   const updateLivePolicy = useCallback(async (
     activityProfile: "auto" | "game" | "focus",
@@ -495,6 +718,19 @@ export function RealtimeCompanion({
       const current = sessionRef.current;
       if (payload.type === "worker_interrupted") {
         if (current === null || isTerminal(current.status)) return;
+        const pending = startupSessionRef.current;
+        if (
+          startupInFlight.current
+          && pending !== null
+          && pending.session.id === current.id
+        ) {
+          void failStartupAttempt(
+            pending.attempt,
+            payload.error_code,
+            "interrupted",
+          );
+          return;
+        }
         void report("interrupted", payload.error_code);
         setError(realtimeProviderErrorMessage(payload.error_code));
         return;
@@ -515,6 +751,20 @@ export function RealtimeCompanion({
         });
         return;
       }
+      if (payload.type === "startup_stage") {
+        const pending = startupSessionRef.current;
+        if (
+          !startupInFlight.current
+          || pending === null
+          || pending.attempt !== startupAttemptRef.current
+          || pending.session.id !== payload.session_id
+        ) return;
+        advanceStartupStage(payload.stage);
+        if (payload.stage === "active") {
+          completeStartupAttempt(pending.attempt);
+        }
+        return;
+      }
       if (!("session_id" in payload) || payload.session_id !== current?.id) return;
       if (isTerminal(current.status)) return;
       const identity = workerIdentityRef.current;
@@ -531,9 +781,27 @@ export function RealtimeCompanion({
       ) return;
       if (payload.type === "session_state") {
         setActiveBackend(payload.backend);
-        if (payload.status === "active") void report("active");
+        if (payload.status === "active") {
+          const pending = startupSessionRef.current;
+          if (pending !== null && pending.session.id === payload.session_id) {
+            completeStartupAttempt(pending.attempt);
+          }
+          void report("active");
+        }
         if (payload.status === "interrupted") void report("interrupted", payload.error_code ?? "WORKER_INTERRUPTED");
         if (payload.status === "failed") {
+          const pending = startupSessionRef.current;
+          if (
+            startupInFlight.current
+            && pending !== null
+            && pending.session.id === payload.session_id
+          ) {
+            void failStartupAttempt(
+              pending.attempt,
+              payload.error_code ?? "REALTIME_SESSION_FAILED",
+            );
+            return;
+          }
           setError(realtimeProviderErrorMessage(payload.error_code));
           void (async () => {
             await report("failed", payload.error_code ?? "REALTIME_SESSION_FAILED");
@@ -671,7 +939,10 @@ export function RealtimeCompanion({
     };
   }, [
     client.worker,
+    advanceStartupStage,
+    completeStartupAttempt,
     enqueueTranscript,
+    failStartupAttempt,
     fairySpeech,
     report,
   ]);
@@ -684,9 +955,14 @@ export function RealtimeCompanion({
       || resolution?.available !== true || !microphoneConsent
       || !screenConsent || sourceId === ""
     ) return;
+    const attempt = startupAttemptRef.current + 1;
+    startupAttemptRef.current = attempt;
     startupInFlight.current = true;
+    startupSessionRef.current = null;
     setBusy(true);
-    setStartupStage("resolving_backend");
+    startupStageRef.current = null;
+    advanceStartupStage("resolving_backend");
+    setStartupFailureStage(null);
     setError(null);
     setVoiceWarning(null);
     stopFairyVoice();
@@ -708,6 +984,7 @@ export function RealtimeCompanion({
     workerIdentityRef.current = null;
     presenceProjectionRef.current = null;
     setPresenceProjection(null);
+    let created: RealtimeSession | null = null;
     try {
       const resolution = await client.worker.preview({
         activity_profile: preferences.realtime_activity_profile,
@@ -715,13 +992,14 @@ export function RealtimeCompanion({
         cloud_microphone_upload_consent: microphoneConsent,
         cloud_screen_upload_consent: screenConsent,
       });
+      if (startupAttemptRef.current !== attempt) return;
       if (!resolution.available || resolution.backend === null) {
         throw new Error(resolution.reason ?? "REALTIME_BACKEND_UNAVAILABLE");
       }
       const selectedApplicationAudio =
         resolution.backend === "local_mini_cpm_o45" && applicationAudioConsent;
-      setStartupStage("creating_session");
-      const created = await client.sessions.start({
+      advanceStartupStage("creating_session");
+      created = await client.sessions.start({
         device_id: deviceId(),
         conversation_id: null,
         provider: resolution.backend === "local_mini_cpm_o45"
@@ -735,12 +1013,31 @@ export function RealtimeCompanion({
         game_audio_consent: selectedApplicationAudio,
         idempotency_key: crypto.randomUUID(),
       });
+      startupSessionRef.current = { attempt, session: created };
+      if (startupAttemptRef.current !== attempt) {
+        await cleanupStartupAttempt(
+          attempt,
+          created,
+          "cancelled",
+          "REALTIME_START_CANCELLED",
+        );
+        return;
+      }
       updateSession(created);
       if (preferences.realtime_voice_output === "fairy_voice") {
-        setStartupStage("preparing_fairy_voice");
+        advanceStartupStage("preparing_fairy_voice");
         await hostInvoke("voice_worker_prepare");
+        if (startupAttemptRef.current !== attempt) {
+          await cleanupStartupAttempt(
+            attempt,
+            created,
+            "cancelled",
+            "REALTIME_START_CANCELLED",
+          );
+          return;
+        }
       }
-      setStartupStage("starting_backend_runtime");
+      advanceStartupStage("loading_persona");
       const worker = await client.worker.start({
         session_id: created.id,
         resolution_token: resolution.resolution_token,
@@ -762,24 +1059,30 @@ export function RealtimeCompanion({
           : "selected_window",
         excluded_applications: preferences.realtime_excluded_applications,
       });
+      if (startupAttemptRef.current !== attempt) {
+        await cleanupStartupAttempt(
+          attempt,
+          created,
+          "cancelled",
+          "REALTIME_START_CANCELLED",
+        );
+        return;
+      }
       applyWorkerStatus(worker);
     } catch (caught) {
       const errorCode = coreErrorCode(caught) ?? messageOf(caught);
-      setError(realtimeProviderErrorMessage(errorCode));
-      const failedSession = sessionRef.current;
-      if (failedSession !== null) {
-        const cleanup = typeof client.worker.stop === "function"
-          ? client.worker.stop(failedSession.id)
-          : Promise.resolve();
-        await Promise.allSettled([
-          cleanup,
-          report("failed", errorCode),
-        ]);
+      if (startupAttemptRef.current !== attempt) {
+        if (created !== null) {
+          await cleanupStartupAttempt(
+            attempt,
+            created,
+            "cancelled",
+            "REALTIME_START_CANCELLED",
+          );
+        }
+        return;
       }
-    } finally {
-      startupInFlight.current = false;
-      setStartupStage(null);
-      setBusy(false);
+      await failStartupAttempt(attempt, errorCode);
     }
   };
 
@@ -873,6 +1176,10 @@ export function RealtimeCompanion({
   const stop = async () => {
     const current = sessionRef.current;
     if (current === null || isTerminal(current.status)) return;
+    if (startupInFlight.current) {
+      cancelStartupAttempt();
+      return;
+    }
     setBusy(true);
     setError(null);
     stopFairyVoice();
@@ -955,11 +1262,12 @@ export function RealtimeCompanion({
   const resolvedLocal = resolution?.backend === "local_mini_cpm_o45";
   const applicationAudioAvailable = resolvedLocal;
   const close = () => {
+    const cancelledStartup = cancelStartupAttempt();
     if (windowMode) {
       onClose?.();
       return;
     }
-    if (!active) {
+    if (!active || cancelledStartup) {
       setOpen(false);
       setCaptions([]);
       setDraftCaption("");
@@ -1014,7 +1322,11 @@ export function RealtimeCompanion({
                     presenceProjection?.cloud_provider ?? preferences?.realtime_cloud_provider,
                   )}</small>
                 </div>
-                <button type="button" disabled={busy} onClick={() => void stop()}>
+                <button
+                  type="button"
+                  disabled={busy && !startupInFlight.current}
+                  onClick={() => void stop()}
+                >
                   <Square size={14} /> Stop
                 </button>
               </div>
@@ -1202,7 +1514,16 @@ export function RealtimeCompanion({
             </div>
           ) : null}
           {voiceWarning ? <div className="realtime-warning" role="status">{voiceWarning}</div> : null}
-          {error ? <div className="realtime-error" role="alert">{error}</div> : null}
+          {error ? (
+            <div className="realtime-error" role="alert">
+              <span>{error}</span>
+              {startupFailureStage !== null ? (
+                <small>
+                  Failed while {realtimeStartupStageLabel(startupFailureStage).toLocaleLowerCase()}.
+                </small>
+              ) : null}
+            </div>
+          ) : null}
         </section>
         {active ? (
           <div className={`realtime-controls${controlsOpen ? " is-open" : ""}`}>

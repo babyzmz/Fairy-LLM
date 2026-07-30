@@ -27,6 +27,17 @@ pub enum RealtimeResourceLevel {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimeStartupStage {
+    LoadingPersona,
+    StartingBackendRuntime,
+    AcquiringMicrophone,
+    AcquiringObservedWindow,
+    AcquiringApplicationAudio,
+    Active,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RealtimeResourcePolicy {
     pub level: RealtimeResourceLevel,
@@ -388,6 +399,12 @@ pub enum HostCommand {
 pub enum WorkerEvent {
     Ready {
         protocol: String,
+    },
+    StartupStage {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        stage: RealtimeStartupStage,
     },
     BackendState {
         session_id: String,
@@ -851,6 +868,12 @@ mod tests {
         let mut events = vec![
             WorkerEvent::Ready {
                 protocol: "fairy-realtime-worker-v2".to_owned(),
+            },
+            WorkerEvent::StartupStage {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                stage: RealtimeStartupStage::AcquiringMicrophone,
             },
             WorkerEvent::ModelLoadProgress {
                 session_id: identity().0,

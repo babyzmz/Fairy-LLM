@@ -26,7 +26,8 @@ pub use media::{
 pub use persona::{validate_persona_snapshot, PersonaSnapshotError, ValidatedRealtimePersona};
 pub use protocol::{
     read_frame, write_frame, HostCommand, RealtimeContextCarryover, RealtimeResourceLevel,
-    RealtimeResourcePolicy, SecretString, WorkerEvent, MAX_CONTROL_FRAME_BYTES,
+    RealtimeResourcePolicy, RealtimeStartupStage, SecretString, WorkerEvent,
+    MAX_CONTROL_FRAME_BYTES,
 };
 pub use provider::{CaptionSpeaker, GeminiProtocol, GlmProtocol, ProviderOutput, RealtimeProtocol};
 pub use runtime::{RealtimeRuntime, RuntimeCommand, RuntimeLaunch};

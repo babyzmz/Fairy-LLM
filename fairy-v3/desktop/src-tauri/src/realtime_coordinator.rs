@@ -1216,6 +1216,7 @@ fn worker_presence_input(
             None,
         )),
         WorkerEvent::Ready { .. }
+        | WorkerEvent::StartupStage { .. }
         | WorkerEvent::MediaChannelState { .. }
         | WorkerEvent::CaptureSourceChanged { .. }
         | WorkerEvent::LocalSidecarFailure { .. }

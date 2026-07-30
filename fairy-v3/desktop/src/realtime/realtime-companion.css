@@ -93,7 +93,8 @@
 .realtime-memory-notice strong { font-size: 12px; }
 .realtime-memory-notice small { color: #91a19c; font-size: 10px; line-height: 1.4; }
 .realtime-memory-notice > button { min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 8px; border: 1px solid #42675f; background: #1b302b; color: #ccebe4; font-size: 10px; }
-.realtime-error { margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #ef7369; background: #341c1a; color: #ffc4bd; font-size: 12px; }
+.realtime-error { display: grid; gap: 4px; margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #ef7369; background: #341c1a; color: #ffc4bd; font-size: 12px; }
+.realtime-error small { color: #d89b94; font-size: 10px; line-height: 1.35; }
 .realtime-warning { margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #d5a94f; background: #2d2818; color: #f1d797; font-size: 12px; }
 .realtime-transcript-warning { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 20px 20px; padding: 9px 11px; border-left: 2px solid #d5a94f; background: #242116; color: #e5cd91; font-size: 12px; }
 .realtime-transcript-warning button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 8px; border: 1px solid #766638; background: #302a19; color: #f1d797; }
