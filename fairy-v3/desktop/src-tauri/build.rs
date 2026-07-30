@@ -140,9 +140,9 @@ fn main() {
         )
         .join("windows-common-controls.manifest");
         println!("cargo:rerun-if-changed=windows-common-controls.manifest");
-        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
         println!(
-            "cargo:rustc-link-arg=/MANIFESTINPUT:{}",
+            "cargo:rustc-link-arg-tests=/MANIFESTINPUT:{}",
             common_controls_manifest.display()
         );
     }
