@@ -134,6 +134,18 @@ fn verify_production_omni_stage(root: &Path) {
 }
 
 fn main() {
+    if cfg!(target_os = "windows") {
+        let common_controls_manifest = PathBuf::from(
+            std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest directory"),
+        )
+        .join("windows-common-controls.manifest");
+        println!("cargo:rerun-if-changed=windows-common-controls.manifest");
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!(
+            "cargo:rustc-link-arg=/MANIFESTINPUT:{}",
+            common_controls_manifest.display()
+        );
+    }
     println!("cargo:rerun-if-changed=runtime/omni/build-profile.txt");
     println!("cargo:rerun-if-changed=runtime/omni/fairy-omni-runtime.exe");
     println!("cargo:rerun-if-changed=runtime/omni/cublas64_13.dll");
