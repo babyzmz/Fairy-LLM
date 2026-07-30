@@ -3,10 +3,10 @@ use fairy_desktop_v3::presence_coordinator::ExpansionDirection;
 use fairy_desktop_v3::{
     anchored_pet_core_frame, anchored_pet_frame, anchored_pet_input_frame,
     authorize_core_rpc_window, authorize_pet_input_window, authorize_pet_render_window,
-    authorize_preferences_reader, authorize_settings_window, authorize_voice_health_window,
-    authorize_voice_settings_window, auxiliary_window_policy, bridge_failure_response,
-    fairy_tray_action, presence_window_creation_specs, resolve_desktop_data_dir,
-    settings_method_allowed, FairyTrayAction, PetWindowFrame,
+    authorize_preferences_reader, authorize_settings_window, authorize_voice_control_window,
+    authorize_voice_health_window, authorize_voice_settings_window, auxiliary_window_policy,
+    bridge_failure_response, fairy_tray_action, presence_window_creation_specs,
+    resolve_desktop_data_dir, settings_method_allowed, FairyTrayAction, PetWindowFrame,
 };
 use serde_json::json;
 use std::ffi::OsString;
@@ -22,11 +22,17 @@ fn only_the_main_window_can_call_core_rpc() {
 }
 
 #[test]
-fn voice_host_commands_keep_session_and_model_access_out_of_auxiliary_windows() {
+fn voice_host_commands_allow_bounded_pet_state_without_exposing_settings() {
     assert!(authorize_voice_health_window("main").is_ok());
     assert!(authorize_voice_health_window("settings").is_err());
-    assert!(authorize_voice_health_window("pet-render").is_err());
-    assert!(authorize_voice_health_window("pet-input").is_err());
+    assert!(authorize_voice_health_window("pet-render").is_ok());
+    assert!(authorize_voice_health_window("pet-input").is_ok());
+    assert!(authorize_voice_health_window("companion").is_ok());
+    assert!(authorize_voice_control_window("main").is_ok());
+    assert!(authorize_voice_control_window("pet-render").is_ok());
+    assert!(authorize_voice_control_window("pet-input").is_ok());
+    assert!(authorize_voice_control_window("companion").is_ok());
+    assert!(authorize_voice_control_window("settings").is_err());
     assert!(authorize_voice_settings_window("main").is_ok());
     assert!(authorize_voice_settings_window("settings").is_err());
     assert!(authorize_voice_settings_window("pet-input").is_err());
