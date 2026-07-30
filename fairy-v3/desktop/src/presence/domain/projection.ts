@@ -217,7 +217,7 @@ const RULES: Readonly<Record<string, ProjectionRule>> = Object.freeze({
   },
   "command.succeeded": {
     activity: "attending",
-    workState: "analyzing",
+    workState: "ready",
     statusText: "Checking the result",
   },
   "preview.starting": {

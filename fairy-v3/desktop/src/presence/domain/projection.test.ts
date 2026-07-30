@@ -138,6 +138,7 @@ describe("PresenceProjection", () => {
         payload: { public_summary: "must not be copied" },
       }),
     );
+    expect(succeeded.work_state).toBe("ready");
     expect(succeeded.status_text).toBe("Checking the result");
     expect(JSON.stringify(succeeded)).not.toContain("must not be copied");
 
