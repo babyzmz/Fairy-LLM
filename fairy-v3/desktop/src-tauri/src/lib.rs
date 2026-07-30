@@ -817,26 +817,8 @@ async fn realtime_worker_start_segment(
         enforce_realtime_cloud_daily_limit(state, preferences.realtime_cloud_daily_limit_minutes)
             .await?;
     }
-    let persona_response = call_core(
-        state,
-        json!({
-            "jsonrpc": "2.0",
-            "id": "realtime-persona-snapshot",
-            "method": "realtime.persona.snapshot",
-            "params": {
-                "locale": input.locale.clone(),
-                "activity_profile": input.activity_profile,
-                "interaction_intensity": input.interaction_intensity
-            }
-        }),
-    )
-    .await;
-    let persona_snapshot = persona_response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| "REALTIME_PERSONA_UNAVAILABLE".to_owned())?;
-    let persona_snapshot = serde_json::to_string(&persona_snapshot)
-        .map_err(|_| "REALTIME_PERSONA_UNAVAILABLE".to_owned())?;
+    let persona_response = call_core(state, realtime_persona_snapshot_request(&input)).await;
+    let persona_snapshot = realtime_persona_snapshot_result(persona_response)?;
     let credential = match input.credential_provider() {
         Some(provider) => Some(
             ProviderCredentialStore::new(&state.data_dir)
@@ -868,6 +850,30 @@ async fn realtime_worker_start_segment(
         )
     }
     .map_err(|error| error.to_string())
+}
+
+fn realtime_persona_snapshot_request(input: &RealtimeWorkerStartInput) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": -10_003,
+        "method": "realtime.persona.snapshot",
+        "params": {
+            "locale": input.locale.clone(),
+            "activity_profile": input.activity_profile,
+            "interaction_intensity": input.interaction_intensity
+        }
+    })
+}
+
+fn realtime_persona_snapshot_result(response: Value) -> Result<String, String> {
+    let snapshot: Value = deserialize_core_result(response).map_err(|error_code| {
+        if error_code == "CORE_PROTOCOL_ERROR" {
+            "REALTIME_PERSONA_UNAVAILABLE".to_owned()
+        } else {
+            error_code
+        }
+    })?;
+    serde_json::to_string(&snapshot).map_err(|_| "REALTIME_PERSONA_UNAVAILABLE".to_owned())
 }
 
 fn resolve_backend_for_state(
@@ -5730,7 +5736,11 @@ mod realtime_activation_tests {
         RealtimeInteractionIntensity, RealtimeVoiceOutput,
     };
 
-    use super::{validate_realtime_activation, DesktopPreferences, RealtimeWorkerStartInput};
+    use super::{
+        realtime_persona_snapshot_request, realtime_persona_snapshot_result,
+        validate_realtime_activation, DesktopPreferences, RealtimeWorkerStartInput,
+    };
+    use serde_json::json;
 
     fn cloud_input() -> RealtimeWorkerStartInput {
         RealtimeWorkerStartInput {
@@ -5779,6 +5789,32 @@ mod realtime_activation_tests {
         assert_eq!(
             validate_realtime_activation(&preferences, &input, true),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn persona_request_uses_a_bridge_compatible_integer_id() {
+        let request = realtime_persona_snapshot_request(&cloud_input());
+
+        assert_eq!(request["id"].as_i64(), Some(-10_003));
+        assert_eq!(request["method"], "realtime.persona.snapshot");
+    }
+
+    #[test]
+    fn persona_failure_preserves_the_stable_core_error_code() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": -10_003,
+            "error": {
+                "code": -32_050,
+                "message": "bridge unavailable",
+                "data": { "error_code": "WORKER_INTERRUPTED" }
+            }
+        });
+
+        assert_eq!(
+            realtime_persona_snapshot_result(response),
+            Err("WORKER_INTERRUPTED".to_owned())
         );
     }
 }

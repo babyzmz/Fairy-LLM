@@ -65,6 +65,17 @@ export {
 } from "./realtimeCompanionSupport";
 import "./realtime-companion.css";
 
+type RealtimeStartupStage =
+  | "resolving_backend"
+  | "creating_session"
+  | "starting_backend_runtime";
+
+function realtimeStartupStageLabel(stage: RealtimeStartupStage): string {
+  if (stage === "resolving_backend") return "Resolving backend";
+  if (stage === "creating_session") return "Creating governed session";
+  return "Starting backend runtime";
+}
+
 export function RealtimeCompanion({
   client,
   hostInvoke = invoke,
@@ -102,6 +113,7 @@ export function RealtimeCompanion({
   const [draftCaption, setDraftCaption] = useState("");
   const draftCaptionRef = useRef("");
   const [busy, setBusy] = useState(false);
+  const [startupStage, setStartupStage] = useState<RealtimeStartupStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [voiceWarning, setVoiceWarning] = useState<string | null>(null);
   const [memoryNotice, setMemoryNotice] = useState<CompanionMemoryNotice | null>(null);
@@ -668,6 +680,7 @@ export function RealtimeCompanion({
       || !screenConsent || sourceId === ""
     ) return;
     setBusy(true);
+    setStartupStage("resolving_backend");
     setError(null);
     setVoiceWarning(null);
     stopFairyVoice();
@@ -701,6 +714,7 @@ export function RealtimeCompanion({
       }
       const selectedApplicationAudio =
         resolution.backend === "local_mini_cpm_o45" && applicationAudioConsent;
+      setStartupStage("creating_session");
       const created = await client.sessions.start({
         device_id: deviceId(),
         conversation_id: null,
@@ -716,6 +730,7 @@ export function RealtimeCompanion({
         idempotency_key: crypto.randomUUID(),
       });
       updateSession(created);
+      setStartupStage("starting_backend_runtime");
       const worker = await client.worker.start({
         session_id: created.id,
         resolution_token: resolution.resolution_token,
@@ -743,6 +758,7 @@ export function RealtimeCompanion({
       setError(realtimeProviderErrorMessage(errorCode));
       if (sessionRef.current !== null) await report("failed", errorCode);
     } finally {
+      setStartupStage(null);
       setBusy(false);
     }
   };
@@ -936,6 +952,11 @@ export function RealtimeCompanion({
         <section className="realtime-panel" role="dialog" aria-modal={!windowMode} aria-label="Realtime Companion Beta">
           <header><div><span>Fairy</span><h2>Realtime Companion Beta</h2></div><button type="button" aria-label="Close" onClick={close}><X size={17} /></button></header>
           <div className={`realtime-privacy ${cloudPrivacy ? "is-cloud" : "is-local"}`}><ShieldCheck size={16} /><span>{cloudPrivacy ? "Cloud Live sends only this session’s enabled microphone and explicitly selected-window frames to the configured provider. Application audio is unavailable because the provider transport cannot preserve a separate track. Raw media is transient and never stored by Fairy." : "Local MiniCPM processes enabled microphone, observed-window frames, and optional selected-application audio on this device. Raw media stays in transient local memory."} Spoken captions remain on this device in the linked conversation.</span></div>
+          {startupStage !== null ? (
+            <div className="realtime-note" role="status" aria-label="Realtime startup">
+              {realtimeStartupStageLabel(startupStage)}
+            </div>
+          ) : null}
           {!active ? <div className="realtime-config">
             <label><span><Monitor size={15} /> {captureMode === "follow_foreground" && resolvedLocal ? "Starting observed window" : "Observed window"}</span><select value={sourceId} onChange={(event) => setSourceId(event.target.value)} disabled={busy}>{surfaces.map((surface) => <option key={surface.source_id} value={surface.source_id}>{surface.label} · {surface.width}×{surface.height}</option>)}</select></label>
             {resolvedLocal ? (

@@ -164,8 +164,14 @@ export function realtimeProviderErrorMessage(code?: string | null): string {
     case "LOCAL_RUNTIME_QUARANTINED":
     case "LOCAL_BACKEND_NOT_READY_AFTER_UNLOAD":
       return "Local Realtime is not ready to wake. Review and repair Local readiness in Settings.";
+    case "REALTIME_PERSONA_UNAVAILABLE":
+      return "Fairy Persona could not be loaded. Wait for Core to recover, then retry.";
     default:
-      return "Realtime session failed.";
+      return code !== null
+        && code !== undefined
+        && /^[A-Z][A-Z0-9_]{0,127}$/.test(code)
+        ? `Realtime session failed (${code}).`
+        : "Realtime session failed.";
   }
 }
 

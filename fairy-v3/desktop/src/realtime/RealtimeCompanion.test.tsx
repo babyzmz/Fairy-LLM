@@ -723,6 +723,40 @@ describe("RealtimeCompanion", () => {
     expect(JSON.stringify(report.mock.calls)).not.toContain("Boss at half health");
   });
 
+  it("shows the authoritative startup stage while the backend runtime is starting", async () => {
+    let resolveWorker!: (status: RealtimeWorkerStatus) => void;
+    const workerStart = new Promise<RealtimeWorkerStatus>((resolve) => {
+      resolveWorker = resolve;
+    });
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        report: vi.fn(async () => session("failed", 2)),
+      },
+      memories: { save: vi.fn() },
+      transcript: { append: vi.fn(), list: vi.fn(async () => ({ items: [] })) },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => workerStatus(false)),
+        start: vi.fn(() => workerStart),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: /Test Game/ });
+    await grantMediaConsentAndStart();
+
+    expect(
+      (await screen.findByRole("status", { name: "Realtime startup" })).textContent,
+    ).toBe("Starting backend runtime");
+
+    resolveWorker(workerStatus(true));
+    await waitFor(() => expect(
+      screen.queryByRole("status", { name: "Realtime startup" }),
+    ).toBeNull());
+  });
+
   it("keeps the session active while an unsaved caption is retried manually", async () => {
     const append = vi.fn().mockRejectedValue(new Error("offline"));
     const client = {
@@ -1314,9 +1348,11 @@ describe("realtimeProviderErrorMessage", () => {
       .toContain("Local Realtime");
     expect(realtimeProviderErrorMessage("LOCAL_BACKEND_NOT_READY_AFTER_UNLOAD"))
       .toContain("wake");
+    expect(realtimeProviderErrorMessage("REALTIME_PERSONA_UNAVAILABLE"))
+      .toContain("Persona");
     expect(realtimeProviderErrorMessage("provider secret leaked here"))
       .toBe("Realtime session failed.");
     expect(realtimeProviderErrorMessage("UNRECOGNIZED_INTERNAL_CODE"))
-      .toBe("Realtime session failed.");
+      .toContain("UNRECOGNIZED_INTERNAL_CODE");
   });
 });
