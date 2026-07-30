@@ -145,6 +145,13 @@ Invoke-Step "Release: Voice license policy" $Root "powershell" @(
     "-File",
     "scripts/test-voice-release-licenses.ps1"
 )
+Invoke-Step "Voice: runtime policy" $Root "powershell" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts/test-voice-runtime-policy.ps1"
+)
 Invoke-Step "Presence: input ownership guard" $Root "powershell" @(
     "-NoProfile",
     "-ExecutionPolicy",

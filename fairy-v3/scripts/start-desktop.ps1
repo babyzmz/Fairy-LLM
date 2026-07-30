@@ -522,6 +522,15 @@ try {
         Remove-Item Env:FAIRY_PROVIDER_SECRET_OPENROUTER -ErrorAction SilentlyContinue
     }
     if ($null -ne $voiceRuntime) {
+        try {
+            & (Join-Path $PSScriptRoot "check-voice-runtime.ps1") `
+                -PythonPath $voiceRuntime.Program |
+                Out-Null
+            Write-Host "Fairy Voice CUDA runtime preflight passed."
+        }
+        catch {
+            Write-Warning "Fairy Voice runtime preflight failed: $($_.Exception.Message)"
+        }
         $env:FAIRY_VOICE_WORKER_PROGRAM = $voiceRuntime.Program
         $env:FAIRY_COSYVOICE_ROOT = $voiceRuntime.CosyVoiceRoot
         Write-Host "Fairy Voice runtime: $($voiceRuntime.Program)"

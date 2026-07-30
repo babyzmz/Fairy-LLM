@@ -31,16 +31,9 @@ $runtimePython = if (-not [string]::IsNullOrWhiteSpace($env:FAIRY_COSYVOICE_PYTH
 if ([string]::IsNullOrWhiteSpace($runtimePython) -or -not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) {
     throw "The locked CosyVoice CUDA Python runtime was not found. Set FAIRY_COSYVOICE_PYTHON."
 }
-$runtimeJson = & $runtimePython -c "import json, tensorrt, torch, torchaudio; print(json.dumps({'torch': torch.__version__, 'torchaudio': torchaudio.__version__, 'tensorrt': tensorrt.__version__}))"
-if ($LASTEXITCODE -ne 0) { throw "The CosyVoice CUDA runtime is incomplete" }
-$runtimeVersions = $runtimeJson | ConvertFrom-Json
-if (
-    $runtimeVersions.torch -ne "2.7.0+cu128" -or
-    $runtimeVersions.torchaudio -ne "2.7.0+cu128" -or
-    $runtimeVersions.tensorrt -ne "10.13.3.9"
-) {
-    throw "The CosyVoice CUDA runtime does not match the verified release baseline"
-}
+. (Join-Path $PSScriptRoot "voice-runtime-policy.ps1")
+$runtimeReport = Get-FairyVoiceRuntimeReport -PythonPath $runtimePython
+[void](Assert-FairyVoiceRuntimeReport -Report $runtimeReport)
 
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
@@ -123,6 +116,7 @@ try {
         --hidden-import torch `
         --hidden-import torchaudio `
         --hidden-import tensorrt `
+        --hidden-import onnxruntime `
         --exclude-module modelscope `
         --exclude-module typeguard `
         --exclude-module x_transformers `
@@ -132,6 +126,16 @@ try {
     $built = Join-Path $dist "fairy-voice-worker"
     if (-not (Test-Path -LiteralPath (Join-Path $built "fairy-voice-worker.exe") -PathType Leaf)) {
         throw "PyInstaller did not produce the Fairy Voice Worker runtime"
+    }
+    if ($null -eq (
+        Get-ChildItem `
+            -LiteralPath $built `
+            -Filter "onnxruntime_providers_cuda.dll" `
+            -File `
+            -Recurse |
+            Select-Object -First 1
+    )) {
+        throw "VOICE_RELEASE_ONNX_CUDA_PROVIDER_MISSING"
     }
     if (Test-Path -LiteralPath $destination) {
         Remove-Item -LiteralPath $destination -Recurse -Force
