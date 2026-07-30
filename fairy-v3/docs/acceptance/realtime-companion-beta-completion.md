@@ -1,6 +1,6 @@
 # Realtime Companion Beta Completion Acceptance
 
-Date: 2026-07-29
+Date: 2026-07-30
 
 ## Status
 
@@ -12,9 +12,11 @@ in commits:
 - `751e8e0e feat(realtime): enforce standby and cloud budgets`
 - `8a0ed020 feat(desktop): complete realtime companion controls`
 
-Automated gates, native WebView2 checks, physical audio/GPU/provider checks,
-soak, installer, and release validation are **not run** by user request.
-Therefore this record does not claim release readiness.
+The deterministic automated gates and a guarded native WebView2 development
+session are complete. Physical audio, eligible-GPU Local inference, live
+provider, real four-hour wall-clock soak, installer, signing, release
+composition, Docker/PostgreSQL/S3, and production-build validation remain
+**not run**. Therefore this record does not claim release readiness.
 
 This record separates code-level completion from the real Windows audio, GPU,
 provider, WebView2, installer, and long-duration evidence that must be run with
@@ -93,20 +95,20 @@ Implementation adds focused tests for:
 - truthful consent, general terminology, Cloud channel capability, keyboard
   actions, constrained layout, Reduced Motion, reload, and source replacement.
 
-These tests are now written. Per the user's instruction, their execution is
-deferred until the joint verification session.
+These tests were executed in the 2026-07-30 joint verification session. The
+focused and complete deterministic results are recorded below.
 
 ## Implementation evidence
 
 | Area | Primary implementation |
 | --- | --- |
-| Bounded AEC/NS/AGC/VAD and Barge-in | `desktop/src-tauri/crates/realtime-worker/src/audio_processing.rs`, `runtime.rs`, `media.rs`, `protocol.rs` |
-| Fairy process-tree render reference and independent channel recovery | `desktop/src-tauri/crates/realtime-worker/src/runtime.rs`, `desktop/src-tauri/src/realtime_worker.rs` |
-| Capture privacy, Follow Foreground, source epochs, DND/lock handling | `desktop/src-tauri/src/realtime_privacy.rs`, `desktop/src-tauri/src/realtime_worker.rs`, `desktop/src-tauri/crates/realtime-worker/src/runtime.rs` |
+| Bounded AEC/NS/AGC/VAD and Barge-in | `desktop/src-tauri/crates/realtime-worker/src/audio_processing.rs`, `runtime_session.rs`, `media.rs`, `protocol.rs` |
+| Fairy process-tree render reference and independent channel recovery | `desktop/src-tauri/crates/realtime-worker/src/runtime.rs`, `runtime_session.rs`, `desktop/src-tauri/src/realtime_worker.rs` |
+| Capture privacy, Follow Foreground, source epochs, DND/lock handling | `desktop/src-tauri/src/realtime_privacy.rs`, `desktop/src-tauri/src/realtime_worker.rs`, Realtime Worker runtime |
 | Standby and one-shot Local unload | `desktop/src-tauri/src/realtime_coordinator.rs`, `desktop/src-tauri/src/realtime_worker.rs`, Worker protocol/runtime |
 | Authoritative Cloud daily wall-time gate | `core/src/fairy_core/realtime/repository.py`, `application.py`, `desktop/src-tauri/src/realtime_daily_budget.rs`, `desktop/src-tauri/src/lib.rs` |
 | Preference schema 10 and exclusion normalization | `desktop/src-tauri/src/desktop_preferences.rs`, `desktop/src/settings/client.ts` |
-| Companion projections, consent, retry/replace, and constrained UI | `desktop/src/realtime/RealtimeCompanion.tsx`, `realtime-companion.css`, Core/Tauri transport types |
+| Companion projections, consent, retry/replace, and constrained UI | `desktop/src/realtime/RealtimeCompanion.tsx`, `RealtimeMediaStatus.tsx`, `realtimeCompanionModel.ts`, `realtime-companion.css`, Core/Tauri transport types |
 | Settings controls and current readiness copy | `desktop/src/settings/SettingsApp.tsx`, `settingsControls.tsx`, `RealtimeReadinessCard.tsx` |
 
 The generated RPC registry and TypeScript method contract were refreshed for
@@ -222,22 +224,48 @@ out of scope until the user explicitly starts the final release gate.
 
 ## Evidence log
 
-- The contract generator was run once for Slice 3:
-  `powershell -ExecutionPolicy Bypass -File scripts/generate-contracts.ps1`.
-  Its first sandboxed attempt could not access the shared `uv` cache; the
-  approved rerun completed and only the expected contract files changed.
-- Rust formatting (`cargo fmt --manifest-path
-  desktop/src-tauri/Cargo.toml --all`), Python formatting for the touched Core
-  files, and `git diff --check` were run during implementation. Formatting is
-  not counted as a test gate.
-- No `tsc`, pytest, Vitest, Playwright, Cargo test, Clippy, Tauri dev, Voice,
-  Omni inference, live provider, Docker, release, installer, or soak command
-  was run for this completion cycle.
+- Focused Core Realtime/service: 35 passed before the complete run; after the
+  final contract export-order cleanup, the Realtime/contract/service group
+  passed 64/64.
+- Complete Core: 869/870 passed on the first run. The only failure was the
+  repository module-size boundary; after splitting the renderer state/media UI
+  and Worker control/session runtime, its focused boundary suite passed 6/6.
+  No Core behavior test failed.
+- Realtime Worker: 69/69 passed. The live GLM integration remained ignored
+  because `FAIRY_ZHIPU_API_KEY_FILE` and live provider access were unavailable.
+- Complete Rust workspace with all targets passed, including 284 Desktop unit
+  tests (283 passed, one CUDA/model download test ignored), the 69 Worker
+  tests, all integration suites, and the three deterministic soak tests.
+- Strict Rust lint passed:
+  `cargo clippy --workspace --all-targets -- -D warnings`.
+- TypeScript passed: `npx tsc --noEmit`.
+- Focused Desktop components passed 48/48; complete Vitest passed 98 files /
+  531 tests.
+- Realtime Playwright passed 20/20; complete Playwright passed 81/81,
+  including functional and performance projects in the controlled Vite
+  lifecycle.
+- Capabilities passed 118/118. Cloud non-integration passed 123 tests; one
+  PostgreSQL integration test was skipped for missing test DSNs and 29
+  integration tests were deliberately deselected.
+- Python formatting passed for 488 files and ruff passed after sorting the
+  public Realtime export list. `scripts/check_boundaries.py` and
+  `git diff --check` passed.
+- The guarded native Tauri development session showed exactly one visible
+  `Fairy` WebView2 window with `CORE READY`. Settings opened in that same
+  window; the Voice page reported `Stopped · starts on first playback`.
+  Returning restored the conversation, Composer, Line Sidebar, and active
+  `Preview Static · 1/3 active`.
+- Opening Voice settings started no Voice, Realtime, or Omni Worker. The
+  machine reported an RTX 5060 Ti with 15.7 GiB VRAM, below the frozen 16 GiB
+  Local Beta gate; the model was not installed and the runtime was not
+  self-tested, so Local inference was not attempted.
+- `scripts/test-all.ps1 -SkipDocker` was not invoked because it also performs
+  release Core sidecar, MinGit composition, Rust release-composition, and
+  production frontend build steps. Those remain reserved for the explicitly
+  authorized final release gate; the available non-release sub-gates were run
+  individually instead.
 - No API key or raw media was printed or persisted.
-- Final read-only inspection found no `fairy`, Core, Voice, Omni, Realtime
-  Worker, Cargo, Rustc, Python, or Pythonw process and no listener on the
-  controlled Vite/preview ports 1430, 1431, or 43125. Eight unrelated Node
-  processes existed without those listeners and were left untouched.
-- No `desktop/test-results`, `desktop/playwright-report`, or `desktop/.tmp`
-  output existed. The only unrelated worktree item was the user's untracked
-  parent-level `CLAUDE.md`; it was not read, modified, staged, or removed.
+- The native session and its Core/Vite children were stopped after inspection.
+  Final process/listener and generated-output cleanup is recorded with the
+  closure commit. The unrelated parent-level `CLAUDE.md` was not read,
+  modified, staged, or removed.
