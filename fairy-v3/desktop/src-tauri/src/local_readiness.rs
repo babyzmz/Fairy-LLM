@@ -24,7 +24,7 @@ const MIB: u64 = 1024 * 1024;
 const GIB: u64 = 1024 * 1024 * 1024;
 const INSTALL_TEMPORARY_ALLOWANCE: u64 = 2 * GIB;
 const INSTALL_POST_FREE_SPACE: u64 = 5 * GIB;
-const DEFAULT_RENDERER_RESERVE: u64 = 2 * GIB;
+const DEFAULT_RUNTIME_HEADROOM: u64 = 512 * MIB;
 const RUNTIME_RELATIVE_PATH: [&str; 2] = ["omni", "fairy-omni-runtime.exe"];
 
 pub trait HardwareProbeSource: Send + Sync {
@@ -169,7 +169,7 @@ impl LocalReadinessService {
         } else {
             None
         };
-        facts.renderer_reserve_bytes = DEFAULT_RENDERER_RESERVE;
+        facts.runtime_headroom_bytes = DEFAULT_RUNTIME_HEADROOM;
         let capability = evaluate_local_beta_readiness(&facts, profile);
         Ok(LocalReadinessReport {
             schema_version: 1,
@@ -385,7 +385,7 @@ fn empty_facts() -> HardwareCapabilityFacts {
         runtime_self_test_passed: None,
         runtime_quarantined: None,
         predicted_model_peak_bytes: None,
-        renderer_reserve_bytes: 0,
+        runtime_headroom_bytes: 0,
     }
 }
 
@@ -589,6 +589,10 @@ mod tests {
             .expect("after");
         assert_eq!(after.runtime, OmniRuntimeReadiness::Passed);
         assert!(after.capability.local_beta_eligible);
+        assert_eq!(
+            after.capability.required_budget_bytes,
+            Some(9 * GIB + DEFAULT_RUNTIME_HEADROOM)
+        );
     }
 
     #[test]

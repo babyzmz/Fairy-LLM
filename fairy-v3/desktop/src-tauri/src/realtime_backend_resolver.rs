@@ -184,7 +184,7 @@ const fn local_reason_code(reason: LocalBetaReadinessReason) -> &'static str {
         LocalBetaReadinessReason::UnsupportedOs => "LOCAL_OS_UNSUPPORTED",
         LocalBetaReadinessReason::UnsupportedArchitecture => "LOCAL_ARCHITECTURE_UNSUPPORTED",
         LocalBetaReadinessReason::UnsupportedVendor => "LOCAL_GPU_UNSUPPORTED",
-        LocalBetaReadinessReason::VramBelow16gb => "LOCAL_VRAM_INSUFFICIENT",
+        LocalBetaReadinessReason::VramBelow12gb => "LOCAL_VRAM_INSUFFICIENT",
         LocalBetaReadinessReason::Avx2Unavailable => "LOCAL_AVX2_UNAVAILABLE",
         LocalBetaReadinessReason::CudaUnavailable => "LOCAL_CUDA_UNAVAILABLE",
         LocalBetaReadinessReason::DriverIncompatible => "LOCAL_DRIVER_INCOMPATIBLE",
@@ -244,6 +244,14 @@ mod tests {
         assert!(resolved.available);
         assert_eq!(resolved.backend, Some(RealtimeBackendKind::LocalMiniCpmO45));
         assert_eq!(resolved.cloud_provider, None);
+    }
+
+    #[test]
+    fn twelve_gb_static_failure_keeps_the_stable_backend_code() {
+        assert_eq!(
+            local_reason_code(LocalBetaReadinessReason::VramBelow12gb),
+            "LOCAL_VRAM_INSUFFICIENT"
+        );
     }
 
     #[test]

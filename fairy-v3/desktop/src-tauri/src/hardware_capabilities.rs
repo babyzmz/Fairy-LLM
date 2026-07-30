@@ -2,12 +2,9 @@ use fairy_realtime_worker::RealtimeActivityProfile;
 use serde::{Deserialize, Serialize};
 
 const GIB: u64 = 1024 * 1024 * 1024;
-const MIN_DEDICATED_VRAM: u64 = 16 * GIB;
+const MIN_DEDICATED_VRAM_BYTES: u64 = 12_000_000_000;
 const MIN_POST_INSTALL_DISK: u64 = 5 * GIB;
 const LOW_SYSTEM_MEMORY: u64 = 24 * GIB;
-const FOCUS_RESERVE: u64 = 3 * GIB;
-const AUTO_RESERVE: u64 = 4 * GIB;
-const GAME_RESERVE: u64 = 5 * GIB;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,7 +24,7 @@ pub enum LocalBetaReadinessReason {
     UnsupportedOs,
     UnsupportedArchitecture,
     UnsupportedVendor,
-    VramBelow16gb,
+    VramBelow12gb,
     Avx2Unavailable,
     CudaUnavailable,
     DriverIncompatible,
@@ -60,7 +57,7 @@ pub struct HardwareCapabilityFacts {
     pub runtime_self_test_passed: Option<bool>,
     pub runtime_quarantined: Option<bool>,
     pub predicted_model_peak_bytes: Option<u64>,
-    pub renderer_reserve_bytes: u64,
+    pub runtime_headroom_bytes: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -76,21 +73,15 @@ pub struct HardwareCapabilityReport {
 
 pub fn evaluate_local_beta_readiness(
     facts: &HardwareCapabilityFacts,
-    profile: RealtimeActivityProfile,
+    _profile: RealtimeActivityProfile,
 ) -> HardwareCapabilityReport {
     let available_budget = facts
         .budget_bytes
         .zip(facts.current_usage_bytes)
         .and_then(|(budget, usage)| budget.checked_sub(usage));
-    let profile_reserve = match profile {
-        RealtimeActivityProfile::Focus => FOCUS_RESERVE,
-        RealtimeActivityProfile::Auto => AUTO_RESERVE,
-        RealtimeActivityProfile::Game => GAME_RESERVE,
-    };
-    let required_budget = facts.predicted_model_peak_bytes.and_then(|peak| {
-        peak.checked_add(facts.renderer_reserve_bytes)
-            .and_then(|value| value.checked_add(profile_reserve))
-    });
+    let required_budget = facts
+        .predicted_model_peak_bytes
+        .and_then(|peak| peak.checked_add(facts.runtime_headroom_bytes));
 
     let reason = if facts.windows_supported != Some(true) {
         LocalBetaReadinessReason::UnsupportedOs
@@ -100,9 +91,9 @@ pub fn evaluate_local_beta_readiness(
         LocalBetaReadinessReason::UnsupportedVendor
     } else if facts
         .dedicated_vram_bytes
-        .is_none_or(|value| value < MIN_DEDICATED_VRAM)
+        .is_none_or(|value| value < MIN_DEDICATED_VRAM_BYTES)
     {
-        LocalBetaReadinessReason::VramBelow16gb
+        LocalBetaReadinessReason::VramBelow12gb
     } else if facts.avx2_available != Some(true) {
         LocalBetaReadinessReason::Avx2Unavailable
     } else if facts.cuda_available != Some(true) {
@@ -146,7 +137,7 @@ pub fn evaluate_local_beta_readiness(
         && facts.gpu_vendor == Some(GpuVendor::Nvidia)
         && facts
             .dedicated_vram_bytes
-            .is_some_and(|value| value >= MIN_DEDICATED_VRAM)
+            .is_some_and(|value| value >= MIN_DEDICATED_VRAM_BYTES)
         && facts.avx2_available == Some(true)
         && facts.cuda_available == Some(true)
         && facts.driver_compatible == Some(true)
@@ -176,6 +167,7 @@ mod tests {
     use super::*;
     use fairy_realtime_worker::RealtimeActivityProfile;
 
+    const MIB: u64 = 1024 * 1024;
     const GIB: u64 = 1024 * 1024 * 1024;
 
     fn eligible_facts() -> HardwareCapabilityFacts {
@@ -199,7 +191,7 @@ mod tests {
             runtime_self_test_passed: Some(true),
             runtime_quarantined: Some(false),
             predicted_model_peak_bytes: Some(9 * GIB),
-            renderer_reserve_bytes: 2 * GIB,
+            runtime_headroom_bytes: 512 * MIB,
         }
     }
 
@@ -213,11 +205,39 @@ mod tests {
     }
 
     #[test]
-    fn twelve_gib_is_below_the_product_gate() {
+    fn nominal_twelve_gb_is_in_the_supported_hardware_class() {
         let mut facts = eligible_facts();
-        facts.dedicated_vram_bytes = Some(12 * GIB);
+        facts.dedicated_vram_bytes = Some(12_000_000_000);
+        facts.budget_bytes = Some(12_000_000_000);
+        facts.current_usage_bytes = Some(1_000_000_000);
+        facts.predicted_model_peak_bytes = Some(9_500 * MIB);
+        facts.runtime_headroom_bytes = 512 * MIB;
         let report = evaluate_local_beta_readiness(&facts, RealtimeActivityProfile::Focus);
-        assert_eq!(report.reason, LocalBetaReadinessReason::VramBelow16gb);
+        assert!(report.static_eligible);
+        assert!(report.local_beta_eligible);
+        assert_eq!(report.reason, LocalBetaReadinessReason::Eligible);
+        assert_eq!(report.required_budget_bytes, Some(10_012 * MIB));
+    }
+
+    #[test]
+    fn value_below_twelve_decimal_gb_fails_the_static_gate() {
+        let mut facts = eligible_facts();
+        facts.dedicated_vram_bytes = Some(11_999_999_999);
+        let report = evaluate_local_beta_readiness(&facts, RealtimeActivityProfile::Focus);
+        assert!(!report.static_eligible);
+        assert_eq!(
+            serde_json::to_string(&report.reason).expect("reason"),
+            "\"vram_below12gb\""
+        );
+    }
+
+    #[test]
+    fn windows_reported_nominal_sixteen_gb_is_supported() {
+        let mut facts = eligible_facts();
+        facts.dedicated_vram_bytes = Some(16_829_644_800);
+        let report = evaluate_local_beta_readiness(&facts, RealtimeActivityProfile::Focus);
+        assert!(report.static_eligible);
+        assert!(report.local_beta_eligible);
     }
 
     #[test]
@@ -335,17 +355,33 @@ mod tests {
     }
 
     #[test]
-    fn game_budget_reserves_more_memory_than_focus() {
+    fn activity_profiles_do_not_duplicate_live_vram_reserves() {
+        let facts = eligible_facts();
+        let required = [
+            RealtimeActivityProfile::Focus,
+            RealtimeActivityProfile::Auto,
+            RealtimeActivityProfile::Game,
+        ]
+        .map(|profile| evaluate_local_beta_readiness(&facts, profile).required_budget_bytes);
+        assert_eq!(required, [required[0]; 3]);
+    }
+
+    #[test]
+    fn supported_adapter_can_be_temporarily_short_of_live_vram() {
         let mut facts = eligible_facts();
-        facts.budget_bytes = Some(16 * GIB);
-        facts.current_usage_bytes = Some(GIB);
-        assert!(
-            evaluate_local_beta_readiness(&facts, RealtimeActivityProfile::Focus)
-                .local_beta_eligible
-        );
+        facts.dedicated_vram_bytes = Some(12_000_000_000);
+        facts.predicted_model_peak_bytes = Some(9_500 * MIB);
+        facts.runtime_headroom_bytes = 512 * MIB;
+        facts.budget_bytes = Some(11_000 * MIB);
+        facts.current_usage_bytes = Some(989 * MIB);
+        let report = evaluate_local_beta_readiness(&facts, RealtimeActivityProfile::Game);
+        assert!(report.static_eligible);
+        assert!(!report.local_beta_eligible);
         assert_eq!(
-            evaluate_local_beta_readiness(&facts, RealtimeActivityProfile::Game).reason,
+            report.reason,
             LocalBetaReadinessReason::InsufficientFreeVram
         );
+        assert_eq!(report.available_budget_bytes, Some(10_011 * MIB));
+        assert_eq!(report.required_budget_bytes, Some(10_012 * MIB));
     }
 }

@@ -1581,7 +1581,7 @@ async function installCoreFixture(page: Page) {
         if (variant === "unsupported") {
           report.hardware.adapter.dedicated_vram_bytes = 12 * gib;
           report.capability.static_eligible = false;
-          report.capability.reason = "vram_below16gb";
+          report.capability.reason = "vram_below12gb";
         } else if (variant === "installable") {
           report.model.phase = "not_installed";
           report.model.received_bytes = 0;

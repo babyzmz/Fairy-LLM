@@ -52,7 +52,7 @@ def main() -> None:
         support,
         (
             "Windows 10/11 x64",
-            "at least 16 GiB physical VRAM",
+            "at least 12 GB dedicated VRAM",
             "does not guarantee availability",
             "never switches Local and Cloud silently",
             "Packaging success is not release approval",
@@ -74,7 +74,7 @@ def main() -> None:
     require(
         troubleshooting,
         (
-            "`vram_below16gb`",
+            "`vram_below12gb`",
             "`runtime_quarantined`",
             "does not loop, switch to CPU, or silently switch to Cloud",
             "Do not include content captured or spoken",

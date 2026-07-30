@@ -269,3 +269,16 @@ out of scope until the user explicitly starts the final release gate.
   Final process/listener and generated-output cleanup is recorded with the
   closure commit. The unrelated parent-level `CLAUDE.md` was not read,
   modified, staged, or removed.
+
+## 2026-07-30 Local VRAM policy addendum
+
+The earlier RTX 5060 Ti observation above remains truthful evidence for the
+then-current exact 16 GiB policy, but it is no longer the product decision.
+The approved 2026-07-30 readiness design replaces that floor with the nominal
+12 GB hardware class and replaces additive renderer/profile reserves with the
+verified model peak plus 512 MiB runtime headroom.
+
+The earlier “15.7 GiB is below the product floor” conclusion must not be used to
+classify this adapter after the correction. A new native readiness refresh,
+model verification, runtime self-test, and live GPU-budget observation are
+still required before recording eligible-device or public-release evidence.

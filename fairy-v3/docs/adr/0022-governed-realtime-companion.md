@@ -95,10 +95,13 @@ The local runtime:
 - is bound to the parent process lifetime.
 
 Local Beta remains unavailable unless runtime hardware and artifact checks pass.
-The product hard gate is Windows x64, NVIDIA dedicated VRAM of at least 16 GiB,
-AVX2, initialized CUDA Driver, a matching DXGI/CUDA adapter, verified model and
-runtime artifacts, a passing self-test, and sufficient current GPU budget. CPU
-fallback is never presented as local Realtime Beta.
+The product hard gate is Windows x64, an NVIDIA adapter reporting at least
+12,000,000,000 bytes of dedicated VRAM (the nominal 12 GB hardware class), AVX2,
+an initialized CUDA Driver, a matching DXGI/CUDA adapter, verified model and
+runtime artifacts, a passing self-test, and enough current GPU budget for the
+verified model peak plus 512 MiB runtime headroom. This 2026-07-30 policy
+supersedes the original exact 16 GiB floor and its additive activity-profile
+reserves. CPU fallback is never presented as local Realtime Beta.
 
 ### Media and privacy
 

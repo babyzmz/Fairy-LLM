@@ -394,7 +394,7 @@ function readinessView(report: LocalReadinessReport | undefined, failed: boolean
       status: "temporary",
       tone: "warning",
       label: "Temporarily unavailable",
-      detail: "Close GPU-heavy applications or choose a lighter activity profile, then refresh.",
+      detail: "Close GPU-heavy applications, then refresh and retry.",
     } as const;
   }
   if (report.capability.local_beta_eligible) {
@@ -453,7 +453,7 @@ function budgetLabel(report: LocalReadinessReport) {
 
 function hardwareFailureDetail(report: LocalReadinessReport) {
   const reason = report.capability.reason;
-  if (reason === "vram_below16gb") return "Local Beta requires an NVIDIA GPU with at least 16 GiB physical VRAM.";
+  if (reason === "vram_below12gb") return "Local Beta requires an NVIDIA GPU with at least 12 GB dedicated VRAM.";
   if (reason === "unsupported_vendor") return "Local Beta currently supports a qualifying NVIDIA adapter only.";
   if (reason === "avx2_unavailable") return "This processor does not expose the required AVX2 instruction set.";
   if (reason === "cuda_unavailable" || reason === "driver_incompatible") return "A compatible CUDA driver is required.";

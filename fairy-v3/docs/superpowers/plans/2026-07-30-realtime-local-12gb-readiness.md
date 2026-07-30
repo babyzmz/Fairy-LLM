@@ -33,7 +33,7 @@
 - Consumes: `HardwareProbeReport::{dedicated_vram_bytes,budget_bytes,current_usage_bytes}` and `OmniModelManifest::predicted_peak_vram_mb`.
 - Produces: `LocalBetaReadinessReason::VramBelow12gb`, `HardwareCapabilityFacts::runtime_headroom_bytes`, and `HardwareCapabilityReport::required_budget_bytes`.
 
-- [ ] **Step 1: Replace the old policy tests with failing 12 GB and unified-budget cases**
+- [x] **Step 1: Replace the old policy tests with failing 12 GB and unified-budget cases**
 
 Add focused cases in `hardware_capabilities.rs` equivalent to:
 
@@ -75,7 +75,7 @@ fn activity_profiles_do_not_duplicate_live_vram_reserves() {
 Also add a 15.7 GiB regression case and a live-budget-shortfall case that expects
 `InsufficientFreeVram` while `static_eligible` remains true.
 
-- [ ] **Step 2: Run the focused Rust test and confirm failure**
+- [x] **Step 2: Run the focused Rust test and confirm failure**
 
 Run:
 
@@ -88,7 +88,7 @@ from `desktop/src-tauri`.
 Expected: compile or assertion failure because `VramBelow12gb`,
 `runtime_headroom_bytes`, and the unified 10,012 MiB calculation do not exist.
 
-- [ ] **Step 3: Implement the corrected static and dynamic policy**
+- [x] **Step 3: Implement the corrected static and dynamic policy**
 
 In `hardware_capabilities.rs`:
 
@@ -115,7 +115,7 @@ it to `facts.runtime_headroom_bytes`. Update empty fixtures in
 `hardware_probe.rs` and `local_readiness.rs`. Update the backend resolver match
 arm to map `VramBelow12gb` to the unchanged `LOCAL_VRAM_INSUFFICIENT` code.
 
-- [ ] **Step 4: Run the focused Rust tests**
+- [x] **Step 4: Run the focused Rust tests**
 
 Run:
 
@@ -142,7 +142,7 @@ headroom, transient free-budget failure, and stable backend-code coverage.
 - Consumes: serialized Rust reason `"vram_below12gb"`.
 - Produces: TypeScript `LocalBetaReadinessReason` coverage and user-facing static/transient remediation copy.
 
-- [ ] **Step 1: Change the component test fixture first**
+- [x] **Step 1: Change the component test fixture first**
 
 Replace `"vram_below16gb"` with `"vram_below12gb"` and assert:
 
@@ -156,7 +156,7 @@ Keep the separate `insufficient_free_vram` test and assert that it recommends
 closing GPU-heavy applications and retrying, without claiming the adapter is
 unsupported.
 
-- [ ] **Step 2: Run the component test and confirm failure**
+- [x] **Step 2: Run the component test and confirm failure**
 
 Run:
 
@@ -168,7 +168,7 @@ from `desktop`.
 
 Expected: type or text failure because the new reason and copy are not handled.
 
-- [ ] **Step 3: Update the TypeScript contract, UI copy, and E2E fixture**
+- [x] **Step 3: Update the TypeScript contract, UI copy, and E2E fixture**
 
 Change the reason union and E2E readiness fixture to `"vram_below12gb"`. Update
 `readinessReason()` to return:
@@ -182,7 +182,7 @@ if (reason === "vram_below12gb") {
 Update the transient text to describe current GPU use rather than a
 profile-specific synthetic reserve.
 
-- [ ] **Step 4: Run Desktop checks**
+- [x] **Step 4: Run Desktop checks**
 
 Run from `desktop`:
 
@@ -209,7 +209,7 @@ fixtures.
 - Consumes: the implemented 12 GB static reason and unified live-budget behavior.
 - Produces: release-document assertions for “at least 12 GB dedicated VRAM” and `` `vram_below12gb` ``.
 
-- [ ] **Step 1: Make the release-document test require the new policy**
+- [x] **Step 1: Make the release-document test require the new policy**
 
 Change `scripts/check-release-documents.py` to require:
 
@@ -226,7 +226,7 @@ python scripts/check-release-documents.py
 
 Expected: failure until the support and troubleshooting documents are updated.
 
-- [ ] **Step 2: Update active policy documents**
+- [x] **Step 2: Update active policy documents**
 
 Update the support matrix to offer Local Beta for qualifying NVIDIA 12 GB+
 hardware. Remove the row that groups 12 GiB with unsupported 8 GiB hardware.
@@ -241,7 +241,7 @@ Amend ADR 0022's active hard-gate paragraph to point to the superseding
 2026-07-30 decision: decimal 12 GB static floor plus verified model peak and
 512 MiB live headroom.
 
-- [ ] **Step 3: Preserve truthful historical acceptance evidence**
+- [x] **Step 3: Preserve truthful historical acceptance evidence**
 
 Add a dated addendum to
 `docs/acceptance/realtime-companion-beta-completion.md` stating that the earlier
@@ -250,7 +250,7 @@ Add a dated addendum to
 Do not rewrite the captured Phase 0–8 results as if they had passed under the
 new code.
 
-- [ ] **Step 4: Run document and stale-policy checks**
+- [x] **Step 4: Run document and stale-policy checks**
 
 Run:
 
@@ -274,7 +274,7 @@ superseded policy as historical evidence.
 - Consumes: the complete implementation.
 - Produces: one reversible Conventional Commit with target test evidence.
 
-- [ ] **Step 1: Run formatting and diff checks**
+- [x] **Step 1: Run formatting and diff checks**
 
 Run:
 
@@ -285,7 +285,7 @@ git diff --check
 
 Expected: both pass.
 
-- [ ] **Step 2: Run the bounded regression gate**
+- [x] **Step 2: Run the bounded regression gate**
 
 Run:
 
@@ -314,7 +314,7 @@ from the project root.
 Expected: every bounded check passes. Native WebView2/GPU evidence remains
 explicitly pending for the user-assisted gate.
 
-- [ ] **Step 3: Review the final diff and process state**
+- [x] **Step 3: Review the final diff and process state**
 
 Confirm:
 
@@ -327,7 +327,7 @@ Only the intended implementation files are modified; `../CLAUDE.md` remains
 untracked. Confirm no new Node, Python, Cargo, Tauri, Core, Voice, or Realtime
 process remains after the bounded commands.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add -- desktop/src-tauri/src/hardware_capabilities.rs desktop/src-tauri/src/hardware_probe.rs desktop/src-tauri/src/local_readiness.rs desktop/src-tauri/src/realtime_backend_resolver.rs desktop/src/settings/client.ts desktop/src/settings/RealtimeReadinessCard.tsx desktop/src/settings/RealtimeReadinessCard.test.tsx desktop/e2e/support/coreFixture.ts docs/release/realtime-companion-beta-support.md docs/release/realtime-companion-beta-troubleshooting.md docs/adr/0022-governed-realtime-companion.md docs/acceptance/realtime-companion-beta-completion.md scripts/check-release-documents.py

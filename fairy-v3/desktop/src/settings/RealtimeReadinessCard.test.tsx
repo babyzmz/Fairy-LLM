@@ -22,7 +22,7 @@ describe("RealtimeReadinessCard", () => {
   it.each([
     {
       name: "unsupported hardware",
-      report: report({ staticEligible: false, reason: "vram_below16gb" }),
+      report: report({ staticEligible: false, reason: "vram_below12gb" }),
       label: "Unavailable",
     },
     {
@@ -66,6 +66,23 @@ describe("RealtimeReadinessCard", () => {
       expect(screen.getByRole("status", { name: "Local readiness status" }))
         .toHaveTextContent(label);
     });
+  });
+
+  it("explains the nominal 12 GB dedicated VRAM hardware floor", async () => {
+    renderCard(report({ staticEligible: false, reason: "vram_below12gb" }));
+
+    expect(await screen.findByText(
+      "Local Beta requires an NVIDIA GPU with at least 12 GB dedicated VRAM.",
+    )).toBeInTheDocument();
+  });
+
+  it("describes live VRAM pressure as temporary GPU use", async () => {
+    renderCard(report({ runtime: "passed", reason: "insufficient_free_vram" }));
+
+    expect(await screen.findByText(
+      "Close GPU-heavy applications, then refresh and retry.",
+    )).toBeInTheDocument();
+    expect(screen.queryByText(/lighter activity profile/i)).not.toBeInTheDocument();
   });
 
   it("shows bounded numeric progress and cancels the active operation", async () => {

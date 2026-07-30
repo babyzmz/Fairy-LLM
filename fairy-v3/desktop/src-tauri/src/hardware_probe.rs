@@ -151,7 +151,7 @@ mod tests {
             runtime_self_test_passed: None,
             runtime_quarantined: None,
             predicted_model_peak_bytes: None,
-            renderer_reserve_bytes: 0,
+            runtime_headroom_bytes: 0,
         }
     }
 

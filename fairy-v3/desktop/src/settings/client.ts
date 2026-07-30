@@ -152,7 +152,7 @@ export type LocalBetaReadinessReason =
   | "unsupported_os"
   | "unsupported_architecture"
   | "unsupported_vendor"
-  | "vram_below16gb"
+  | "vram_below12gb"
   | "avx2_unavailable"
   | "cuda_unavailable"
   | "driver_incompatible"

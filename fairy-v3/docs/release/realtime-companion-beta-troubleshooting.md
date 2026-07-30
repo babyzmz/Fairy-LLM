@@ -10,7 +10,7 @@ report.
 | --- | --- | --- |
 | `unsupported_os` / `unsupported_architecture` | Local Beta requires Windows 10/11 x64 | Use Cloud when configured |
 | `unsupported_vendor` | The selected adapter is not a qualifying NVIDIA GPU | Use Cloud when configured |
-| `vram_below16gb` | Physical dedicated VRAM is below the Beta floor | Use Cloud; CPU fallback is not Local Beta |
+| `vram_below12gb` | Dedicated VRAM is below the 12 GB Beta hardware floor | Use Cloud; CPU fallback is not Local Beta |
 | `avx2_unavailable` | CPU lacks the required instruction support | Use Cloud |
 | `cuda_unavailable` / `driver_incompatible` | CUDA driver initialization or compatibility failed | Update the NVIDIA driver, restart, and Verify again |
 | `adapter_mismatch` | CUDA and DXGI did not identify the same adapter | Select the correct GPU or update drivers |
@@ -18,7 +18,7 @@ report.
 | `model_verification_failed` | Size, hash, or layout validation failed | Retry the managed install; do not rename files manually |
 | `runtime_missing` | Production Omni runtime is absent | Repair or reinstall Fairy |
 | `self_test_failed` | Runtime integrity or protocol self-test failed | Verify again; use Cloud if the failure persists |
-| `insufficient_free_vram` | Current applications consume the profile's GPU reserve | Close GPU-heavy apps, choose Focus, or use Cloud |
+| `insufficient_free_vram` | Current applications leave less than the verified model peak plus runtime headroom | Close GPU-heavy apps, refresh, or use Cloud |
 | `insufficient_disk` | Download/install reserve is too small | Free disk space and retry |
 | `runtime_quarantined` | The local Sidecar failed twice | Use Verify and retry only after checking driver/runtime health |
 

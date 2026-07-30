@@ -14,9 +14,9 @@ upload scope.
 
 | Device/runtime state | Local MiniCPM-o 4.5 Beta | Cloud realtime |
 | --- | --- | --- |
-| NVIDIA discrete GPU with at least 16 GiB physical VRAM and every runtime readiness check passing | Available | Available when configured |
+| NVIDIA discrete GPU with at least 12 GB dedicated VRAM and every runtime readiness check passing | Available | Available when configured |
 | Qualifying NVIDIA GPU with insufficient current VRAM budget | Temporarily unavailable | Available when configured |
-| NVIDIA 8/12 GiB | Not offered | Available when configured |
+| NVIDIA GPU below 12 GB dedicated VRAM | Not offered | Available when configured |
 | AMD or Intel discrete GPU | Not offered in this Beta | Available when configured |
 | No discrete GPU | Not offered | Available when configured |
 | Model missing or not verified | Unavailable until managed install completes | Available when configured |
@@ -24,11 +24,13 @@ upload scope.
 
 Local Beta also requires AVX2, an initialized CUDA driver, a CUDA/DXGI adapter
 LUID match, verified model/runtime digests, a passing runtime self-test,
-adequate disk space, and enough current GPU budget for the chosen profile.
+adequate disk space, and enough current GPU budget for the verified model peak
+plus 512 MiB runtime headroom.
 System memory of at least 32 GiB is recommended; below 24 GiB produces a risk
 warning.
 
-A 16 GiB GPU does not guarantee availability. Games and creative tools may
+A 12 GB GPU does not guarantee availability; it only identifies the supported
+hardware class. Games and creative tools may
 consume too much of the current GPU memory budget. Fairy does not disguise
 partial GPU offload or a slow CPU fallback as Local Realtime Beta.
 
