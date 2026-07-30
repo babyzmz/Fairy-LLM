@@ -4653,6 +4653,34 @@ async fn voice_worker_health(
 }
 
 #[tauri::command]
+async fn voice_worker_prepare(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    authorize_voice_settings_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let voice = Arc::clone(&state.voice);
+    tauri::async_runtime::spawn_blocking(move || voice.prepare())
+        .await
+        .map_err(|_| "VOICE_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.public_code().to_owned())
+}
+
+#[tauri::command]
+async fn voice_worker_stop(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    authorize_voice_settings_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let voice = Arc::clone(&state.voice);
+    tauri::async_runtime::spawn_blocking(move || voice.stop())
+        .await
+        .map_err(|_| "VOICE_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.public_code().to_owned())
+}
+
+#[tauri::command]
 async fn voice_model_install(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
@@ -5580,6 +5608,8 @@ pub fn run() {
             main_view_request_get,
             main_view_navigate,
             voice_worker_health,
+            voice_worker_prepare,
+            voice_worker_stop,
             voice_model_install,
             voice_session_start,
             voice_session_cancel,

@@ -29,6 +29,17 @@ class VoiceWorkerState:
         self.tokens = OneTimeTokenRegistry()
         self._cancellations: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
+        self._prepare_lock = threading.Lock()
+
+    def prepare_runtime(self) -> dict[str, object]:
+        with self._prepare_lock:
+            health = self.runtime.health()
+            if health.status != "ready":
+                self.runtime.load()
+                health = self.runtime.health()
+            if health.status != "ready":
+                raise RuntimeError(health.error_code or "VOICE_WORKER_NOT_READY")
+            return health.as_dict()
 
     def cancellation_for(self, session_id: str) -> threading.Event:
         if not session_id or len(session_id) > 128:
@@ -76,6 +87,9 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/v1/model/install":
             self._install_model()
+            return
+        if self.path == "/v1/runtime/prepare":
+            self._prepare_runtime()
             return
         if self.path == "/v1/sessions":
             self._stream_session()
@@ -129,6 +143,24 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
             )
             return
         self._json(HTTPStatus.OK, {"installed": True, "manifest_digest": digest})
+
+    def _prepare_runtime(self) -> None:
+        if not self._authorize_control():
+            return
+        try:
+            health = self.state.prepare_runtime()
+        except Exception:
+            logging.exception("Fairy Voice runtime preparation failed")
+            failed_health = self.state.runtime.health()
+            self._json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    **failed_health.as_dict(),
+                    "error_code": failed_health.error_code or "VOICE_WORKER_LOAD_FAILED",
+                },
+            )
+            return
+        self._json(HTTPStatus.OK, health)
 
     def _stream_session(self) -> None:
         if not self._consume_session_token():
@@ -257,13 +289,6 @@ def main() -> None:
     runtime = runtime_from_environment()
     state = VoiceWorkerState(runtime=runtime, bootstrap_token=bootstrap_token)
     server = create_server(host=args.host, port=args.port, state=state)
-    if runtime.health().status == "warming":
-        threading.Thread(
-            target=_warm_runtime,
-            args=(runtime,),
-            name="fairy-voice-warmup",
-            daemon=True,
-        ).start()
     port = server.server_address[1]
     print(json.dumps({"protocol": "fairy-voice-worker-v1", "port": port}), flush=True)
     try:
@@ -272,14 +297,6 @@ def main() -> None:
         pass
     finally:
         server.server_close()
-
-
-def _warm_runtime(runtime: VoiceRuntime) -> None:
-    try:
-        runtime.load()
-    except Exception:
-        logging.exception("Fairy Voice Worker warmup failed")
-
 
 if __name__ == "__main__":
     main()

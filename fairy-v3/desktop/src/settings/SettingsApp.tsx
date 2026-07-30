@@ -624,6 +624,7 @@ function SettingsCategorySkeleton({ id }: { id: SettingsCategoryId }) {
 function SettingsCategory(props: SettingsCategoryProps) {
   const { id, data, busy, updatePreferences, updateMemorySettings } = props;
   const [localReady, setLocalReady] = useState(false);
+  const [voiceOperation, setVoiceOperation] = useState<"preparing" | "stopping" | null>(null);
   switch (id) {
     case "general": return <Category title="General" subtitle="Desktop behavior">
       <SettingSelect icon={<Languages size={17} />} label="Language" value={data.preferences.language} disabled={busy} onChange={(value) => void updatePreferences({ language: value as DesktopPreferences["language"] })} options={[{ value: "system", label: "System default" }, { value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }]} />
@@ -645,21 +646,78 @@ function SettingsCategory(props: SettingsCategoryProps) {
       <HealthRow
         icon={<Volume2 size={17} />}
         label="Fairy Voice Worker"
-        status={voiceHealthLabel(data.voiceHealth)}
+        status={voiceOperation === "preparing"
+          ? "Checking runtime and warming model"
+          : voiceOperation === "stopping"
+            ? "Stopping"
+            : voiceHealthLabel(data.voiceHealth)}
         tone={data.voiceHealth.status === "ready" ? "success" : ["idle", "warming"].includes(data.voiceHealth.status) ? "neutral" : "error"}
       />
       <div className="settings-section-command">
-        <span>{data.voiceHealth.status === "idle" ? "Starts only when playback is requested" : data.voiceHealth.device_name ?? "A CUDA GPU is required"}</span>
-        {["idle", "ready"].includes(data.voiceHealth.status) ? (
+        <span>{data.voiceHealth.status === "idle"
+          ? "Stopped. Start it now, or Fairy will wait for Ready on the first reply."
+          : data.voiceHealth.device_name ?? "A CUDA GPU runtime is required"}</span>
+        {voiceOperation === "preparing" ? (
+          <button className="secondary-command" type="button" onClick={() => {
+            setVoiceOperation("stopping");
+            void props.act(async () => {
+              try {
+                await props.client.voice.stop();
+                await props.reload();
+              } finally {
+                setVoiceOperation(null);
+              }
+            });
+          }}>
+            <X size={14} /> Stop warming
+          </button>
+        ) : data.voiceHealth.status === "idle" ? (
+          <button className="secondary-command" type="button" disabled={busy} onClick={() => {
+            setVoiceOperation("preparing");
+            void props.act(async () => {
+              try {
+                await props.client.voice.prepare();
+                await props.reload();
+              } finally {
+                setVoiceOperation(null);
+              }
+            });
+          }}>
+            <Play size={14} /> Start Fairy voice
+          </button>
+        ) : data.voiceHealth.status === "ready" ? (
+          <>
           <button className="secondary-command" type="button" disabled={busy} onClick={() => void props.act(async () => {
-            const playback = await startNativeVoiceTest();
-            await playback.finished;
+            try {
+              const playback = await startNativeVoiceTest();
+              await playback.finished;
+            } finally {
+              await props.reload();
+            }
           })}>
             <Play size={14} /> Test Fairy voice
           </button>
-        ) : data.voiceHealth.status === "warming" ? null : (
           <button className="secondary-command" type="button" disabled={busy} onClick={() => void props.act(async () => {
-            await props.client.voice.installModel();
+            await props.client.voice.stop();
+            await props.reload();
+          })}>
+            <X size={14} /> Stop voice worker
+          </button>
+          </>
+        ) : data.voiceHealth.status === "warming" ? (
+          <button className="secondary-command" type="button" disabled={busy} onClick={() => void props.act(async () => {
+            await props.client.voice.stop();
+            await props.reload();
+          })}>
+            <X size={14} /> Stop warming
+          </button>
+        ) : (
+          <button className="secondary-command" type="button" disabled={busy} onClick={() => void props.act(async () => {
+            if (data.voiceHealth.model_installed) {
+              await props.client.voice.prepare();
+            } else {
+              await props.client.voice.installModel();
+            }
             await props.reload();
           })}>
             <RefreshCw size={14} /> {data.voiceHealth.model_installed ? "Retry voice runtime" : "Install voice model"}
@@ -988,6 +1046,7 @@ function unavailableVoiceHealth(): VoiceWorkerHealth {
     prompt_ready: false,
     cuda_available: false,
     tensorrt_available: false,
+    onnx_cuda_available: false,
     backend: null,
     device_name: null,
     sample_rate: 24_000,
@@ -996,10 +1055,13 @@ function unavailableVoiceHealth(): VoiceWorkerHealth {
 }
 
 function voiceHealthLabel(health: VoiceWorkerHealth): string {
-  if (health.status === "idle") return "Stopped · starts on first playback";
+  if (health.status === "idle") return "Stopped · ready to start";
   if (health.status === "ready") return `Ready at ${health.sample_rate / 1000} kHz`;
   if (health.status === "warming") return "Warming model";
   if (health.status === "model_missing") return "Model not installed";
+  if (health.error_code === "VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE") {
+    return "ONNX Runtime CUDA provider unavailable";
+  }
   return health.error_code ?? "Voice unavailable";
 }
 

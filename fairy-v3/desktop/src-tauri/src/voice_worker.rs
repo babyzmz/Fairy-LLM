@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -53,6 +54,8 @@ pub enum VoiceWorkerError {
     Unavailable(String),
     #[error("voice worker protocol failed: {0}")]
     Protocol(String),
+    #[error("voice worker reported: {0}")]
+    Worker(String),
     #[error("voice worker request failed: HTTP {0}")]
     Http(u16),
     #[error("voice worker I/O failed: {0}")]
@@ -62,10 +65,11 @@ pub enum VoiceWorkerError {
 }
 
 impl VoiceWorkerError {
-    pub fn public_code(&self) -> &'static str {
+    pub fn public_code(&self) -> &str {
         match self {
             Self::Unavailable(_) => "VOICE_WORKER_UNAVAILABLE",
             Self::Protocol(_) => "VOICE_PROTOCOL_ERROR",
+            Self::Worker(error_code) => error_code,
             Self::Http(_) => "VOICE_WORKER_HTTP_ERROR",
             Self::Io(_) => "VOICE_WORKER_IO_ERROR",
             Self::Json(_) => "VOICE_WORKER_PROTOCOL_ERROR",
@@ -136,6 +140,8 @@ struct WorkerProcess {
 pub struct VoiceWorkerManager {
     launch: VoiceWorkerLaunch,
     process: Mutex<Option<WorkerProcess>>,
+    prepare_lock: Mutex<()>,
+    lifecycle_sequence: AtomicU64,
     cancellations: Mutex<HashSet<String>>,
 }
 
@@ -144,6 +150,8 @@ impl VoiceWorkerManager {
         Self {
             launch,
             process: Mutex::new(None),
+            prepare_lock: Mutex::new(()),
+            lifecycle_sequence: AtomicU64::new(0),
             cancellations: Mutex::new(HashSet::new()),
         }
     }
@@ -160,6 +168,70 @@ impl VoiceWorkerManager {
         request_health(&connection)
     }
 
+    pub fn prepare(&self) -> Result<Value, VoiceWorkerError> {
+        let requested_sequence = self.lifecycle_sequence.load(Ordering::Acquire);
+        let _prepare_guard = self
+            .prepare_lock
+            .lock()
+            .map_err(|_| VoiceWorkerError::Unavailable("prepare lock is poisoned".to_owned()))?;
+        if self.lifecycle_sequence.load(Ordering::Acquire) != requested_sequence {
+            return Ok(cold_voice_health(&self.launch));
+        }
+        let connection = self.connection()?;
+        let current = request_health(&connection)?;
+        if current.get("status").and_then(Value::as_str) == Some("ready") {
+            return Ok(current);
+        }
+        let response = send_request(
+            connection.address,
+            "POST",
+            "/v1/runtime/prepare",
+            &connection.bootstrap_token,
+            b"",
+            Duration::from_secs(10 * 60),
+        );
+        let (status, _, mut reader) = match response {
+            Ok(response) => response,
+            Err(_) if self.lifecycle_sequence.load(Ordering::Acquire) != requested_sequence => {
+                return Ok(cold_voice_health(&self.launch));
+            }
+            Err(error) => return Err(error),
+        };
+        let mut body = Vec::new();
+        reader.read_to_end(&mut body)?;
+        if status != 200 {
+            return Err(worker_response_error(status, &body));
+        }
+        let health: Value = serde_json::from_slice(&body)?;
+        if health.get("status").and_then(Value::as_str) != Some("ready") {
+            return Err(VoiceWorkerError::Worker(
+                health
+                    .get("error_code")
+                    .and_then(Value::as_str)
+                    .filter(|code| is_stable_worker_code(code))
+                    .unwrap_or("VOICE_WORKER_NOT_READY")
+                    .to_owned(),
+            ));
+        }
+        Ok(health)
+    }
+
+    pub fn stop(&self) -> Result<Value, VoiceWorkerError> {
+        self.lifecycle_sequence.fetch_add(1, Ordering::AcqRel);
+        let mut guard = self
+            .process
+            .lock()
+            .map_err(|_| VoiceWorkerError::Unavailable("worker lock is poisoned".to_owned()))?;
+        if let Some(mut process) = guard.take() {
+            let _ = process.child.kill();
+            process.child.wait()?;
+        }
+        if let Ok(mut cancellations) = self.cancellations.lock() {
+            cancellations.clear();
+        }
+        Ok(cold_voice_health(&self.launch))
+    }
+
     pub fn install_model(&self) -> Result<Value, VoiceWorkerError> {
         let connection = self.connection()?;
         let (status, _, mut reader) = send_request(
@@ -173,9 +245,7 @@ impl VoiceWorkerManager {
         let mut body = Vec::new();
         reader.read_to_end(&mut body)?;
         if status != 200 {
-            return Err(VoiceWorkerError::Protocol(worker_error_message(
-                status, &body,
-            )));
+            return Err(worker_response_error(status, &body));
         }
         Ok(serde_json::from_slice(&body)?)
     }
@@ -193,6 +263,10 @@ impl VoiceWorkerManager {
         }
         if let Ok(mut cancellations) = self.cancellations.lock() {
             cancellations.remove(&session.id);
+        }
+        let health = self.prepare()?;
+        if health.get("status").and_then(Value::as_str) != Some("ready") {
+            return Err(VoiceWorkerError::Worker("VOICE_WORKER_STOPPED".to_owned()));
         }
         let connection = self.connection()?;
         let token = secure_token()?;
@@ -213,9 +287,7 @@ impl VoiceWorkerManager {
         if status != 200 {
             let mut body = Vec::new();
             reader.read_to_end(&mut body)?;
-            return Err(VoiceWorkerError::Protocol(worker_error_message(
-                status, &body,
-            )));
+            return Err(worker_response_error(status, &body));
         }
         let returned_session = required_header(&headers, "x-fairy-session-id")?;
         let returned_scope = required_header(&headers, "x-fairy-scope-digest")?;
@@ -308,9 +380,7 @@ impl VoiceWorkerManager {
         let mut body = Vec::new();
         reader.read_to_end(&mut body)?;
         if status != 200 {
-            return Err(VoiceWorkerError::Protocol(worker_error_message(
-                status, &body,
-            )));
+            return Err(worker_response_error(status, &body));
         }
         let response: Value = serde_json::from_slice(&body)?;
         if response.get("cancelled").and_then(Value::as_bool) == Some(true) {
@@ -470,6 +540,7 @@ fn cold_voice_health(launch: &VoiceWorkerLaunch) -> Value {
         "prompt_ready": prompt_ready,
         "cuda_available": false,
         "tensorrt_available": false,
+        "onnx_cuda_available": false,
         "backend": Value::Null,
         "device_name": Value::Null,
         "sample_rate": 24_000,
@@ -576,9 +647,7 @@ fn register_token(connection: &WorkerConnection, token: &str) -> Result<(), Voic
     let mut response = Vec::new();
     reader.read_to_end(&mut response)?;
     if status != 201 {
-        return Err(VoiceWorkerError::Protocol(worker_error_message(
-            status, &response,
-        )));
+        return Err(worker_response_error(status, &response));
     }
     Ok(())
 }
@@ -657,6 +726,23 @@ fn worker_error_message(status: u16, body: &[u8]) -> String {
                 .map(str::to_owned)
         })
         .unwrap_or_else(|| format!("voice worker HTTP {status}"))
+}
+
+fn worker_response_error(status: u16, body: &[u8]) -> VoiceWorkerError {
+    let message = worker_error_message(status, body);
+    if is_stable_worker_code(&message) {
+        VoiceWorkerError::Worker(message)
+    } else {
+        VoiceWorkerError::Http(status)
+    }
+}
+
+fn is_stable_worker_code(value: &str) -> bool {
+    value.len() <= 64
+        && value.starts_with("VOICE_")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
 fn secure_token() -> Result<String, VoiceWorkerError> {
@@ -764,8 +850,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        bundled_voice_launch, fill_secure_random, worker_error_message, VoiceWorkerLaunch,
-        VoiceWorkerManager,
+        bundled_voice_launch, fill_secure_random, worker_error_message, worker_response_error,
+        VoiceWorkerLaunch, VoiceWorkerManager,
     };
 
     #[test]
@@ -787,6 +873,18 @@ mod tests {
         assert_eq!(
             worker_error_message(500, b"private traceback"),
             "voice worker HTTP 500"
+        );
+        assert_eq!(
+            worker_response_error(
+                503,
+                br#"{"error_code":"VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE"}"#,
+            )
+            .public_code(),
+            "VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE"
+        );
+        assert_eq!(
+            worker_response_error(500, br#"{"error_code":"secret.path"}"#).public_code(),
+            "VOICE_WORKER_HTTP_ERROR"
         );
     }
 

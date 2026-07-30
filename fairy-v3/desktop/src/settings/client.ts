@@ -132,6 +132,7 @@ export interface VoiceWorkerHealth {
   prompt_ready: boolean;
   cuda_available: boolean;
   tensorrt_available: boolean;
+  onnx_cuda_available: boolean;
   backend: string | null;
   device_name: string | null;
   sample_rate: number;
@@ -416,6 +417,8 @@ export class SettingsClient {
 
   readonly voice = {
     health: () => this.invoke<VoiceWorkerHealth>("voice_worker_health"),
+    prepare: () => this.invoke<VoiceWorkerHealth>("voice_worker_prepare"),
+    stop: () => this.invoke<VoiceWorkerHealth>("voice_worker_stop"),
     installModel: () => this.invoke<VoiceModelInstallResult>("voice_model_install"),
   };
 

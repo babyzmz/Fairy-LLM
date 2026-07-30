@@ -43,6 +43,7 @@ class VoiceWorkerHealth:
     prompt_ready: bool
     cuda_available: bool
     tensorrt_available: bool
+    onnx_cuda_available: bool
     backend: str | None
     device_name: str | None
     sample_rate: int
@@ -92,13 +93,26 @@ class CosyVoice3Runtime:
         model_ready = self._ready
         prompt_ready = self._prompt_wav.is_file() and self._prompt_text.is_file()
         cuda_available = False
-        tensorrt_available = importlib.util.find_spec("tensorrt") is not None
+        tensorrt_available = False
+        onnx_cuda_available = False
         device_name: str | None = None
         try:
             torch = importlib.import_module("torch")
             cuda_available = bool(torch.cuda.is_available())
             if cuda_available:
                 device_name = str(torch.cuda.get_device_name(0))
+        except Exception:
+            pass
+        try:
+            importlib.import_module("tensorrt")
+            tensorrt_available = True
+        except Exception:
+            pass
+        try:
+            onnxruntime = importlib.import_module("onnxruntime")
+            onnx_cuda_available = (
+                "CUDAExecutionProvider" in onnxruntime.get_available_providers()
+            )
         except Exception:
             pass
         if model_ready:
@@ -119,6 +133,9 @@ class CosyVoice3Runtime:
         elif not tensorrt_available:
             status = "acceleration_unavailable"
             error_code = "VOICE_TRT_UNAVAILABLE"
+        elif not onnx_cuda_available:
+            status = "acceleration_unavailable"
+            error_code = "VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE"
         else:
             status = "warming"
             error_code = None
@@ -131,6 +148,7 @@ class CosyVoice3Runtime:
             prompt_ready=prompt_ready,
             cuda_available=cuda_available,
             tensorrt_available=tensorrt_available,
+            onnx_cuda_available=onnx_cuda_available,
             backend="tensorrt" if model_ready else None,
             device_name=device_name,
             sample_rate=SAMPLE_RATE,
@@ -144,6 +162,7 @@ class CosyVoice3Runtime:
             self._ready = False
             try:
                 self._validate_assets()
+                self._validate_runtime()
                 matcha = self._source_dir / "third_party" / "Matcha-TTS"
                 for path in (self._source_dir, matcha):
                     path_text = str(path)
@@ -174,6 +193,12 @@ class CosyVoice3Runtime:
                 self._prime()
                 self._ready = True
                 self._error_code = None
+            except VoiceRuntimePreflightError as error:
+                self._model = None
+                self._model_digest = None
+                self._ready = False
+                self._error_code = error.error_code
+                raise
             except Exception:
                 self._model = None
                 self._model_digest = None
@@ -247,6 +272,15 @@ class CosyVoice3Runtime:
         if not self._prompt_wav.is_file() or not self._prompt_text.is_file():
             raise FileNotFoundError("Fairy voice prompt assets are unavailable")
 
+    def _validate_runtime(self) -> None:
+        health = self.health()
+        if not health.cuda_available:
+            raise VoiceRuntimePreflightError("VOICE_CUDA_UNAVAILABLE")
+        if not health.tensorrt_available:
+            raise VoiceRuntimePreflightError("VOICE_TRT_UNAVAILABLE")
+        if not health.onnx_cuda_available:
+            raise VoiceRuntimePreflightError("VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE")
+
     def _prime(self) -> None:
         assert self._model is not None
         self._model.model.token_hop_len = INITIAL_TOKEN_HOP
@@ -259,6 +293,12 @@ class CosyVoice3Runtime:
         )
         for _ in output:
             pass
+
+
+class VoiceRuntimePreflightError(RuntimeError):
+    def __init__(self, error_code: str) -> None:
+        super().__init__(error_code)
+        self.error_code = error_code
 
 
 def runtime_from_environment() -> CosyVoice3Runtime:

@@ -21,6 +21,7 @@ import {
   SettingsClient,
   type DesktopPreferences,
   type LocalReadinessReport,
+  type VoiceWorkerHealth,
 } from "./client";
 
 afterEach(() => {
@@ -103,6 +104,21 @@ describe("SettingsApp", () => {
     expect(screen.getByRole("checkbox", { name: /^Online assistance/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /^Offer companion memory/ })).toBeChecked();
     expect(screen.getByRole("combobox", { name: "Cloud daily limit" })).toHaveValue("180");
+  });
+
+  it("starts the stopped voice worker explicitly and waits for a ready result", async () => {
+    const invoke = settingsInvoke({ voiceHealth: idleVoiceHealth() });
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Voice/ }));
+
+    expect(await screen.findByText("Stopped · ready to start")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Start Fairy voice" }));
+
+    await vi.waitFor(() => {
+      expect(invoke.mock.calls.some(([command]) => command === "voice_worker_prepare")).toBe(true);
+    });
+    expect(await screen.findByText("Ready at 24 kHz")).toBeVisible();
   });
 
   it("commits normalized Realtime exclusions only after composition finishes", async () => {
@@ -683,9 +699,11 @@ function settingsInvoke(options: {
   obsidianHealth?: ObsidianConnectorHealth;
   rendererHealth?: PresenceRendererHealth | null;
   localReadiness?: LocalReadinessReport;
+  voiceHealth?: VoiceWorkerHealth;
 } = {}) {
   let preferences = defaultPreferences();
   let openRouterConfigured = true;
+  let voiceHealth = options.voiceHealth ?? unavailableVoiceHealth();
   return vi.fn(async (command: string, args?: Record<string, unknown>) => {
     if (command === "desktop_preferences_get") return preferences;
     if (command === "desktop_preferences_update") {
@@ -706,6 +724,15 @@ function settingsInvoke(options: {
     }
     if (command === "realtime_local_readiness_get") {
       return options.localReadiness ?? localRuntimeMissingReadiness();
+    }
+    if (command === "voice_worker_health") return voiceHealth;
+    if (command === "voice_worker_prepare") {
+      voiceHealth = { ...voiceHealth, status: "ready", model_ready: true, backend: "tensorrt" };
+      return voiceHealth;
+    }
+    if (command === "voice_worker_stop") {
+      voiceHealth = { ...voiceHealth, status: "idle", model_ready: false, backend: null };
+      return voiceHealth;
     }
     if (command === "settings_rpc") {
       const request = args?.request as { id: number; method: CoreMethodName; params: Record<string, unknown> };
@@ -728,6 +755,34 @@ function settingsInvoke(options: {
     }
     throw new Error(`Unexpected command: ${command}`);
   });
+}
+
+function idleVoiceHealth(): VoiceWorkerHealth {
+  return {
+    status: "idle",
+    model_repository: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+    model_installed: true,
+    model_ready: false,
+    model_digest: null,
+    prompt_ready: true,
+    cuda_available: false,
+    tensorrt_available: false,
+    onnx_cuda_available: false,
+    backend: null,
+    device_name: null,
+    sample_rate: 24_000,
+    error_code: null,
+  };
+}
+
+function unavailableVoiceHealth(): VoiceWorkerHealth {
+  return {
+    ...idleVoiceHealth(),
+    status: "unavailable",
+    model_installed: false,
+    prompt_ready: false,
+    error_code: "VOICE_WORKER_UNAVAILABLE",
+  };
 }
 
 function localRuntimeMissingReadiness(): LocalReadinessReport {

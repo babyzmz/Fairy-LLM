@@ -12,6 +12,7 @@ import pytest
 from fairy_voice_worker.protocol import OneTimeTokenRegistry, TokenRejectedError
 from fairy_voice_worker.runtime import (
     INITIAL_TOKEN_HOP,
+    MODEL_REQUIRED_FILES,
     CosyVoice3Runtime,
     VoiceWorkerHealth,
     _install_frozen_runtime_guards,
@@ -98,6 +99,81 @@ def test_cosyvoice_does_not_report_ready_until_prime_completes() -> None:
     assert runtime.health().status == "ready"
 
 
+def test_health_rejects_cpu_only_onnx_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_dir = tmp_path / "model"
+    for relative in MODEL_REQUIRED_FILES:
+        path = model_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    prompt_wav = tmp_path / "prompt.wav"
+    prompt_text = tmp_path / "prompt.txt"
+    prompt_wav.touch()
+    prompt_text.write_text("prompt", encoding="utf-8")
+    runtime = CosyVoice3Runtime(
+        model_dir=model_dir,
+        source_dir=tmp_path / "source",
+        prompt_wav=prompt_wav,
+        prompt_text=prompt_text,
+    )
+    real_import = __import__("importlib").import_module
+
+    def import_module(name: str) -> object:
+        if name == "torch":
+            return SimpleNamespace(
+                cuda=SimpleNamespace(
+                    is_available=lambda: True,
+                    get_device_name=lambda _index: "Fixture GPU",
+                ),
+            )
+        if name == "onnxruntime":
+            return SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"])
+        if name == "tensorrt":
+            return SimpleNamespace(__version__="fixture")
+        return real_import(name)
+
+    monkeypatch.setattr("fairy_voice_worker.runtime.importlib.import_module", import_module)
+    monkeypatch.setattr(
+        "fairy_voice_worker.runtime.importlib.util.find_spec",
+        lambda name: object() if name == "tensorrt" else None,
+    )
+
+    health = runtime.health()
+
+    assert health.onnx_cuda_available is False
+    assert health.status == "acceleration_unavailable"
+    assert health.error_code == "VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE"
+
+
+def test_prepare_endpoint_waits_for_runtime_and_returns_ready() -> None:
+    runtime = WarmingRuntime()
+    state = VoiceWorkerState(runtime=runtime, bootstrap_token="bootstrap-" + "b" * 32)
+    server = create_server(host="127.0.0.1", port=0, state=state)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
+        connection.request(
+            "POST",
+            "/v1/runtime/prepare",
+            body=b"",
+            headers={"Authorization": f"Bearer {state.bootstrap_token}"},
+        )
+        response = connection.getresponse()
+        payload = response.read()
+        connection.close()
+
+        assert response.status == 200
+        assert b'"status":"ready"' in payload
+        assert runtime.load_count == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 def test_loopback_server_streams_pcm_and_rejects_token_replay() -> None:
     runtime = FakeRuntime()
     state = VoiceWorkerState(runtime=runtime, bootstrap_token="bootstrap-" + "b" * 32)
@@ -172,6 +248,7 @@ class FakeRuntime:
             prompt_ready=True,
             cuda_available=True,
             tensorrt_available=True,
+            onnx_cuda_available=True,
             backend="fixture",
             device_name="Fixture GPU",
             sample_rate=24_000,
@@ -185,6 +262,27 @@ class FakeRuntime:
         assert text == "Hello"
         if not cancellation.is_set():
             yield b"\x00\x00\x01\x00"
+
+
+class WarmingRuntime(FakeRuntime):
+    def __init__(self) -> None:
+        self.ready = False
+        self.load_count = 0
+
+    def health(self) -> VoiceWorkerHealth:
+        health = super().health()
+        return VoiceWorkerHealth(
+            **{
+                **health.as_dict(),
+                "status": "ready" if self.ready else "warming",
+                "model_ready": self.ready,
+                "error_code": None,
+            },
+        )
+
+    def load(self) -> None:
+        self.load_count += 1
+        self.ready = True
 
 
 class RecordingCosyVoiceModel:
