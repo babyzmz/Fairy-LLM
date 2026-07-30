@@ -1,10 +1,13 @@
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use fairy_realtime_worker::RealtimeActivityProfile;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::hardware_capabilities::{
     evaluate_local_beta_readiness, HardwareCapabilityFacts, HardwareCapabilityReport,
@@ -26,6 +29,9 @@ const INSTALL_TEMPORARY_ALLOWANCE: u64 = 2 * GIB;
 const INSTALL_POST_FREE_SPACE: u64 = 5 * GIB;
 const DEFAULT_RUNTIME_HEADROOM: u64 = 512 * MIB;
 const RUNTIME_RELATIVE_PATH: [&str; 2] = ["omni", "fairy-omni-runtime.exe"];
+const ATTESTATION_SCHEMA_VERSION: u16 = 1;
+const ATTESTATION_FILE_NAME: &str = "runtime-attestation.json";
+const MAX_ATTESTATION_BYTES: u64 = 64 * 1024;
 
 pub trait HardwareProbeSource: Send + Sync {
     fn probe(&self, model_root: &Path) -> HardwareProbeReport;
@@ -71,11 +77,28 @@ pub enum LocalReadinessError {
     Runtime(#[from] OmniRuntimeSelfTestError),
     #[error("the local readiness size calculation overflowed")]
     SizeOverflow,
+    #[error("the local runtime verification attestation could not be saved")]
+    AttestationWrite,
 }
 
 enum SelfTestEvidence {
     Passed(OmniRuntimeSelfTestReport),
     Failed(String),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LocalRuntimeAttestation {
+    schema_version: u16,
+    verified_at_unix_ms: u64,
+    model_layout_fingerprint: String,
+    runtime_sha256: String,
+    runtime_size: u64,
+    runtime_modified_unix_ns: u128,
+    adapter_luid: String,
+    dedicated_vram_bytes: u64,
+    driver_api_version: i32,
+    report: OmniRuntimeSelfTestReport,
 }
 
 pub struct LocalReadinessService {
@@ -86,6 +109,8 @@ pub struct LocalReadinessService {
     self_test_runner: Box<dyn OmniRuntimeSelfTestRunner>,
     hardware_cache: Option<(Instant, HardwareProbeReport)>,
     self_test_evidence: Option<SelfTestEvidence>,
+    attestation_path: PathBuf,
+    attestation: Option<LocalRuntimeAttestation>,
     runtime_quarantined: bool,
 }
 
@@ -120,6 +145,8 @@ impl LocalReadinessService {
             .fold(runtime_root.to_path_buf(), |path, component| {
                 path.join(component)
             });
+        let attestation_path = store.root().join(ATTESTATION_FILE_NAME);
+        let attestation = load_attestation(&attestation_path);
         Ok(Self {
             store,
             manifest,
@@ -128,6 +155,8 @@ impl LocalReadinessService {
             self_test_runner,
             hardware_cache: None,
             self_test_evidence: None,
+            attestation_path,
+            attestation,
             runtime_quarantined: false,
         })
     }
@@ -147,6 +176,7 @@ impl LocalReadinessService {
         let model_installed = model_lifecycle_installed && model_shallow_present;
         let model_verified = model_installed;
         let runtime_installed = regular_file(&self.runtime_path);
+        self.reconcile_attestation(model, &hardware, model_installed, runtime_installed);
         let (runtime, runtime_error_code, self_test_passed, predicted_peak) =
             self.runtime_projection(runtime_installed);
         let mut facts = empty_facts();
@@ -189,6 +219,7 @@ impl LocalReadinessService {
         &mut self,
         model: &OmniModelInstallState,
     ) -> Result<OmniRuntimeSelfTestReport, LocalReadinessError> {
+        self.invalidate_verification_attestation();
         if !self.shallow_model_present()?
             || !matches!(
                 model.phase,
@@ -216,6 +247,20 @@ impl LocalReadinessService {
         let request = runtime_request(self.runtime_path.clone(), model_root, &self.manifest);
         match self.self_test_runner.run(&request) {
             Ok(report) => {
+                let (hardware, _) = self.hardware(false);
+                let Some(attestation) = self.build_attestation(&report, &hardware) else {
+                    self.self_test_evidence = Some(SelfTestEvidence::Failed(
+                        "OMNI_ATTESTATION_WRITE_FAILED".to_owned(),
+                    ));
+                    return Err(LocalReadinessError::AttestationWrite);
+                };
+                if save_attestation(&self.attestation_path, &attestation).is_err() {
+                    self.self_test_evidence = Some(SelfTestEvidence::Failed(
+                        "OMNI_ATTESTATION_WRITE_FAILED".to_owned(),
+                    ));
+                    return Err(LocalReadinessError::AttestationWrite);
+                }
+                self.attestation = Some(attestation);
                 self.self_test_evidence = Some(SelfTestEvidence::Passed(report.clone()));
                 Ok(report)
             }
@@ -234,9 +279,158 @@ impl LocalReadinessService {
 
     pub fn mark_runtime_quarantined(&mut self) {
         self.runtime_quarantined = true;
+        self.invalidate_verification_attestation();
         self.self_test_evidence = Some(SelfTestEvidence::Failed(
             "OMNI_RUNTIME_QUARANTINED".to_owned(),
         ));
+    }
+
+    pub fn invalidate_verification_attestation(&mut self) {
+        self.attestation = None;
+        self.self_test_evidence = None;
+        match fs::remove_file(&self.attestation_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {}
+        }
+    }
+
+    fn reconcile_attestation(
+        &mut self,
+        model: &OmniModelInstallState,
+        hardware: &HardwareProbeReport,
+        model_installed: bool,
+        runtime_installed: bool,
+    ) {
+        let Some(attestation) = self.attestation.clone() else {
+            return;
+        };
+        let restoring = self.self_test_evidence.is_none();
+        if !self.attestation_matches(
+            &attestation,
+            model,
+            hardware,
+            model_installed,
+            runtime_installed,
+            restoring,
+        ) {
+            self.invalidate_verification_attestation();
+            return;
+        }
+        if restoring {
+            self.self_test_evidence = Some(SelfTestEvidence::Passed(attestation.report.clone()));
+        }
+    }
+
+    fn build_attestation(
+        &self,
+        report: &OmniRuntimeSelfTestReport,
+        hardware: &HardwareProbeReport,
+    ) -> Option<LocalRuntimeAttestation> {
+        let adapter = hardware.adapter.as_ref()?;
+        let driver_api_version = hardware.cuda.driver_api_version?;
+        if !hardware.cuda.available
+            || !hardware.cuda.driver_compatible
+            || !hardware.cuda.adapter_luid_matches
+            || adapter.luid.is_empty()
+            || adapter.luid.len() > 64
+        {
+            return None;
+        }
+        let runtime = runtime_identity(&self.runtime_path, true)?;
+        Some(LocalRuntimeAttestation {
+            schema_version: ATTESTATION_SCHEMA_VERSION,
+            verified_at_unix_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()?
+                .as_millis()
+                .try_into()
+                .ok()?,
+            model_layout_fingerprint: self.model_layout_fingerprint()?,
+            runtime_sha256: runtime.sha256?,
+            runtime_size: runtime.size,
+            runtime_modified_unix_ns: runtime.modified_unix_ns,
+            adapter_luid: adapter.luid.clone(),
+            dedicated_vram_bytes: adapter.dedicated_vram_bytes,
+            driver_api_version,
+            report: report.clone(),
+        })
+    }
+
+    fn attestation_matches(
+        &self,
+        attestation: &LocalRuntimeAttestation,
+        model: &OmniModelInstallState,
+        hardware: &HardwareProbeReport,
+        model_installed: bool,
+        runtime_installed: bool,
+        verify_runtime_digest: bool,
+    ) -> bool {
+        let Some(adapter) = hardware.adapter.as_ref() else {
+            return false;
+        };
+        let Some(driver_api_version) = hardware.cuda.driver_api_version else {
+            return false;
+        };
+        let Some(runtime) = runtime_identity(&self.runtime_path, verify_runtime_digest) else {
+            return false;
+        };
+        let report = &attestation.report;
+        attestation.schema_version == ATTESTATION_SCHEMA_VERSION
+            && model_installed
+            && runtime_installed
+            && model.model_version == self.manifest.version
+            && model.manifest_digest == self.manifest.manifest_digest
+            && report.runtime_compatibility == self.manifest.runtime_compatibility
+            && report.manifest_digest == self.manifest.manifest_digest
+            && report.model_version == self.manifest.version
+            && report.upstream_runtime_revision == self.manifest.upstream_runtime_revision
+            && report.patch_set_digest == self.manifest.patch_set_digest
+            && report.build_profile == "production-cuda"
+            && report.cuda_compiled
+            && report.backend_ready
+            && report.model_probe == "ready"
+            && is_sha256(&attestation.model_layout_fingerprint)
+            && is_sha256(&attestation.runtime_sha256)
+            && self.model_layout_fingerprint().as_deref()
+                == Some(attestation.model_layout_fingerprint.as_str())
+            && runtime.size == attestation.runtime_size
+            && runtime.modified_unix_ns == attestation.runtime_modified_unix_ns
+            && runtime
+                .sha256
+                .as_deref()
+                .is_none_or(|digest| digest == attestation.runtime_sha256)
+            && hardware.cuda.available
+            && hardware.cuda.driver_compatible
+            && hardware.cuda.adapter_luid_matches
+            && adapter.luid == attestation.adapter_luid
+            && adapter.dedicated_vram_bytes == attestation.dedicated_vram_bytes
+            && driver_api_version == attestation.driver_api_version
+    }
+
+    fn model_layout_fingerprint(&self) -> Option<String> {
+        let version = self.store.version_dir(&self.manifest).ok()?;
+        let mut paths = Vec::with_capacity(self.manifest.files.len() + 1);
+        paths.push(("manifest.json".to_owned(), version.join("manifest.json")));
+        paths.extend(self.manifest.files.iter().map(|file| {
+            (
+                file.path.clone(),
+                version.join(file.path.replace('/', std::path::MAIN_SEPARATOR_STR)),
+            )
+        }));
+        let mut digest = Sha256::new();
+        for (relative, path) in paths {
+            let metadata = fs::symlink_metadata(path).ok()?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return None;
+            }
+            let modified = modified_unix_ns(&metadata)?;
+            digest.update(relative.as_bytes());
+            digest.update([0]);
+            digest.update(metadata.len().to_le_bytes());
+            digest.update(modified.to_le_bytes());
+        }
+        Some(format!("{:x}", digest.finalize()))
     }
 
     fn hardware(&mut self, refresh: bool) -> (HardwareProbeReport, bool) {
@@ -323,6 +517,133 @@ impl LocalReadinessService {
     }
 }
 
+struct RuntimeIdentity {
+    size: u64,
+    modified_unix_ns: u128,
+    sha256: Option<String>,
+}
+
+fn runtime_identity(path: &Path, include_digest: bool) -> Option<RuntimeIdentity> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return None;
+    }
+    let sha256 = if include_digest {
+        let mut file = File::open(path).ok()?;
+        let mut digest = Sha256::new();
+        let mut buffer = [0_u8; 1024 * 1024];
+        loop {
+            let read = file.read(&mut buffer).ok()?;
+            if read == 0 {
+                break;
+            }
+            digest.update(&buffer[..read]);
+        }
+        Some(format!("{:x}", digest.finalize()))
+    } else {
+        None
+    };
+    Some(RuntimeIdentity {
+        size: metadata.len(),
+        modified_unix_ns: modified_unix_ns(&metadata)?,
+        sha256,
+    })
+}
+
+fn modified_unix_ns(metadata: &fs::Metadata) -> Option<u128> {
+    metadata
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_nanos())
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn load_attestation(path: &Path) -> Option<LocalRuntimeAttestation> {
+    if !regular_file(path) || fs::metadata(path).ok()?.len() > MAX_ATTESTATION_BYTES {
+        return None;
+    }
+    let attestation =
+        serde_json::from_slice::<LocalRuntimeAttestation>(&fs::read(path).ok()?).ok()?;
+    if attestation.schema_version != ATTESTATION_SCHEMA_VERSION
+        || !is_sha256(&attestation.model_layout_fingerprint)
+        || !is_sha256(&attestation.runtime_sha256)
+        || attestation.adapter_luid.is_empty()
+        || attestation.adapter_luid.len() > 64
+    {
+        return None;
+    }
+    Some(attestation)
+}
+
+fn save_attestation(
+    path: &Path,
+    attestation: &LocalRuntimeAttestation,
+) -> Result<(), std::io::Error> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("attestation path has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let temporary = parent.join(format!(".runtime-attestation.{}.tmp", Uuid::new_v4()));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        let payload = serde_json::to_vec_pretty(attestation).map_err(std::io::Error::other)?;
+        file.write_all(&payload)?;
+        file.sync_all()?;
+        replace_file(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn replace_file(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_file(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    fs::rename(source, destination)
+}
+
 fn regular_file(path: &Path) -> bool {
     fs::symlink_metadata(path)
         .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
@@ -405,33 +726,45 @@ mod tests {
     impl HardwareProbeSource for CountingProbe {
         fn probe(&self, _model_root: &Path) -> HardwareProbeReport {
             self.0.fetch_add(1, Ordering::SeqCst);
-            HardwareProbeReport {
-                schema_version: 1,
-                windows_supported: true,
-                architecture_x64: true,
-                avx2_available: true,
-                system_total_bytes: Some(32 * GIB),
-                disk_available_bytes: Some(40 * GIB),
-                adapter: Some(HardwareAdapterReport {
-                    name: "Test NVIDIA".to_owned(),
-                    vendor: GpuVendor::Nvidia,
-                    vendor_id: 0x10de,
-                    dedicated_vram_bytes: 24 * GIB,
-                    budget_bytes: Some(22 * GIB),
-                    current_usage_bytes: Some(2 * GIB),
-                    luid: "00000000:00000001".to_owned(),
-                }),
-                cuda: CudaDriverReport {
-                    available: true,
-                    driver_api_version: Some(12_080),
-                    driver_compatible: true,
-                    device_count: 1,
-                    matched_device_ordinal: Some(0),
-                    adapter_luid_matches: true,
-                    error_code: None,
-                },
+            eligible_hardware_report()
+        }
+    }
+
+    struct FixedProbe(HardwareProbeReport);
+
+    impl HardwareProbeSource for FixedProbe {
+        fn probe(&self, _model_root: &Path) -> HardwareProbeReport {
+            self.0.clone()
+        }
+    }
+
+    fn eligible_hardware_report() -> HardwareProbeReport {
+        HardwareProbeReport {
+            schema_version: 1,
+            windows_supported: true,
+            architecture_x64: true,
+            avx2_available: true,
+            system_total_bytes: Some(32 * GIB),
+            disk_available_bytes: Some(40 * GIB),
+            adapter: Some(HardwareAdapterReport {
+                name: "Test NVIDIA".to_owned(),
+                vendor: GpuVendor::Nvidia,
+                vendor_id: 0x10de,
+                dedicated_vram_bytes: 24 * GIB,
+                budget_bytes: Some(22 * GIB),
+                current_usage_bytes: Some(2 * GIB),
+                luid: "00000000:00000001".to_owned(),
+            }),
+            cuda: CudaDriverReport {
+                available: true,
+                driver_api_version: Some(12_080),
+                driver_compatible: true,
+                device_count: 1,
+                matched_device_ordinal: Some(0),
+                adapter_luid_matches: true,
                 error_code: None,
-            }
+            },
+            error_code: None,
         }
     }
 
@@ -472,6 +805,48 @@ mod tests {
         state.phase = OmniModelInstallPhase::RuntimeMissing;
         state.received_bytes = state.total_bytes;
         state
+    }
+
+    fn write_runtime(runtime_root: &Path, contents: &[u8]) -> PathBuf {
+        let runtime_path = runtime_root.join("omni").join("fairy-omni-runtime.exe");
+        fs::create_dir_all(runtime_path.parent().expect("runtime parent")).expect("runtime dir");
+        fs::write(&runtime_path, contents).expect("runtime presence");
+        runtime_path
+    }
+
+    fn passed_self_test_report(manifest: &OmniModelManifest) -> OmniRuntimeSelfTestReport {
+        OmniRuntimeSelfTestReport {
+            schema_version: 2,
+            runtime_compatibility: manifest.runtime_compatibility.clone(),
+            manifest_digest: manifest.manifest_digest.clone(),
+            model_version: manifest.version.clone(),
+            predicted_model_peak_bytes: 9 * GIB,
+            upstream_runtime_revision: manifest.upstream_runtime_revision.clone(),
+            patch_set_digest: manifest.patch_set_digest.clone(),
+            build_profile: "production-cuda".to_owned(),
+            cuda_compiled: true,
+            backend_ready: true,
+            model_probe: "ready".to_owned(),
+        }
+    }
+
+    fn persist_valid_attestation(
+        models_root: &Path,
+        runtime_root: &Path,
+        manifest: &OmniModelManifest,
+        state: &OmniModelInstallState,
+    ) {
+        let mut service = LocalReadinessService::new(
+            models_root,
+            runtime_root,
+            manifest.clone(),
+            Box::new(CountingProbe(Arc::new(AtomicUsize::new(0)))),
+            Box::new(FakeSelfTest {
+                result: Ok(passed_self_test_report(manifest)),
+            }),
+        )
+        .expect("verified service");
+        service.run_self_test(state).expect("self-test");
     }
 
     #[test]
@@ -593,6 +968,170 @@ mod tests {
             after.capability.required_budget_bytes,
             Some(9 * GIB + DEFAULT_RUNTIME_HEADROOM)
         );
+    }
+
+    #[test]
+    fn successful_self_test_restores_after_reopen_without_running_again() {
+        let models = tempfile::tempdir().expect("models");
+        let runtime = tempfile::tempdir().expect("runtime");
+        let manifest = bundled_minicpm_o45_manifest().expect("manifest");
+        let state = write_shallow_model(models.path(), &manifest);
+        let runtime_path = runtime.path().join("omni").join("fairy-omni-runtime.exe");
+        fs::create_dir_all(runtime_path.parent().expect("runtime parent")).expect("runtime dir");
+        fs::write(&runtime_path, b"verified runtime fixture").expect("runtime presence");
+        let self_test_report = OmniRuntimeSelfTestReport {
+            schema_version: 2,
+            runtime_compatibility: manifest.runtime_compatibility.clone(),
+            manifest_digest: manifest.manifest_digest.clone(),
+            model_version: manifest.version.clone(),
+            predicted_model_peak_bytes: 9 * GIB,
+            upstream_runtime_revision: manifest.upstream_runtime_revision.clone(),
+            patch_set_digest: manifest.patch_set_digest.clone(),
+            build_profile: "production-cuda".to_owned(),
+            cuda_compiled: true,
+            backend_ready: true,
+            model_probe: "ready".to_owned(),
+        };
+        let mut verified = LocalReadinessService::new(
+            models.path(),
+            runtime.path(),
+            manifest.clone(),
+            Box::new(CountingProbe(Arc::new(AtomicUsize::new(0)))),
+            Box::new(FakeSelfTest {
+                result: Ok(self_test_report),
+            }),
+        )
+        .expect("verified service");
+        verified.run_self_test(&state).expect("self-test");
+        drop(verified);
+
+        let mut reopened = LocalReadinessService::new(
+            models.path(),
+            runtime.path(),
+            manifest,
+            Box::new(CountingProbe(Arc::new(AtomicUsize::new(0)))),
+            Box::new(FakeSelfTest {
+                result: Err("must not run during readiness"),
+            }),
+        )
+        .expect("reopened service");
+        let report = reopened
+            .report(&state, RealtimeActivityProfile::Focus, false)
+            .expect("restored report");
+
+        assert_eq!(report.runtime, OmniRuntimeReadiness::Passed);
+        assert!(report.capability.local_beta_eligible);
+    }
+
+    #[test]
+    fn changed_runtime_or_model_layout_invalidates_persisted_evidence() {
+        for change_runtime in [true, false] {
+            let models = tempfile::tempdir().expect("models");
+            let runtime = tempfile::tempdir().expect("runtime");
+            let manifest = bundled_minicpm_o45_manifest().expect("manifest");
+            let state = write_shallow_model(models.path(), &manifest);
+            let runtime_path = write_runtime(runtime.path(), b"verified runtime fixture");
+            persist_valid_attestation(models.path(), runtime.path(), &manifest, &state);
+
+            if change_runtime {
+                fs::write(runtime_path, b"changed runtime").expect("changed runtime");
+            } else {
+                let version = OmniModelStore::new(models.path())
+                    .expect("store")
+                    .version_dir(&manifest)
+                    .expect("version");
+                let first = &manifest.files[0];
+                fs::write(
+                    version.join(first.path.replace('/', std::path::MAIN_SEPARATOR_STR)),
+                    b"changed model layout",
+                )
+                .expect("changed model");
+            }
+
+            let mut reopened = LocalReadinessService::new(
+                models.path(),
+                runtime.path(),
+                manifest,
+                Box::new(CountingProbe(Arc::new(AtomicUsize::new(0)))),
+                Box::new(FakeSelfTest {
+                    result: Err("must not run during readiness"),
+                }),
+            )
+            .expect("reopened service");
+            let report = reopened
+                .report(&state, RealtimeActivityProfile::Focus, false)
+                .expect("invalidated report");
+
+            assert_eq!(report.runtime, OmniRuntimeReadiness::NotTested);
+            assert!(!report.capability.local_beta_eligible);
+        }
+    }
+
+    #[test]
+    fn changed_adapter_or_driver_invalidates_persisted_evidence() {
+        for change_driver in [true, false] {
+            let models = tempfile::tempdir().expect("models");
+            let runtime = tempfile::tempdir().expect("runtime");
+            let manifest = bundled_minicpm_o45_manifest().expect("manifest");
+            let state = write_shallow_model(models.path(), &manifest);
+            write_runtime(runtime.path(), b"verified runtime fixture");
+            persist_valid_attestation(models.path(), runtime.path(), &manifest, &state);
+            let mut hardware = eligible_hardware_report();
+            if change_driver {
+                hardware.cuda.driver_api_version = Some(12_090);
+            } else {
+                hardware.adapter.as_mut().expect("adapter").luid = "00000000:00000002".to_owned();
+            }
+
+            let mut reopened = LocalReadinessService::new(
+                models.path(),
+                runtime.path(),
+                manifest,
+                Box::new(FixedProbe(hardware)),
+                Box::new(FakeSelfTest {
+                    result: Err("must not run during readiness"),
+                }),
+            )
+            .expect("reopened service");
+            let report = reopened
+                .report(&state, RealtimeActivityProfile::Focus, false)
+                .expect("invalidated report");
+
+            assert_eq!(report.runtime, OmniRuntimeReadiness::NotTested);
+            assert!(!report.capability.local_beta_eligible);
+        }
+    }
+
+    #[test]
+    fn malformed_or_unknown_attestation_fails_closed() {
+        let models = tempfile::tempdir().expect("models");
+        let runtime = tempfile::tempdir().expect("runtime");
+        let manifest = bundled_minicpm_o45_manifest().expect("manifest");
+        let state = write_shallow_model(models.path(), &manifest);
+        write_runtime(runtime.path(), b"verified runtime fixture");
+        let store = OmniModelStore::new(models.path()).expect("store");
+        fs::write(
+            store.root().join(ATTESTATION_FILE_NAME),
+            br#"{"schema_version":999,"unexpected":"field"}"#,
+        )
+        .expect("malformed attestation");
+
+        let mut service = LocalReadinessService::new(
+            models.path(),
+            runtime.path(),
+            manifest,
+            Box::new(CountingProbe(Arc::new(AtomicUsize::new(0)))),
+            Box::new(FakeSelfTest {
+                result: Err("must not run during readiness"),
+            }),
+        )
+        .expect("service");
+        let report = service
+            .report(&state, RealtimeActivityProfile::Focus, false)
+            .expect("report");
+
+        assert_eq!(report.runtime, OmniRuntimeReadiness::NotTested);
+        assert!(!report.capability.local_beta_eligible);
     }
 
     #[test]

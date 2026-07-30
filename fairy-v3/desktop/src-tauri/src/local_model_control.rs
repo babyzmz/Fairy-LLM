@@ -137,6 +137,10 @@ impl LocalModelControl {
         if operation.is_some() {
             return Err("OMNI_MODEL_OPERATION_BUSY".to_owned());
         }
+        self.readiness
+            .lock()
+            .map_err(|_| "LOCAL_READINESS_UNAVAILABLE".to_owned())?
+            .invalidate_verification_attestation();
         let mut manager_guard = self
             .manager
             .lock()
@@ -202,6 +206,10 @@ impl LocalModelControl {
         if operation.is_some() {
             return Err("OMNI_MODEL_OPERATION_BUSY".to_owned());
         }
+        self.readiness
+            .lock()
+            .map_err(|_| "LOCAL_READINESS_UNAVAILABLE".to_owned())?
+            .invalidate_verification_attestation();
         let mut manager_guard = self
             .manager
             .lock()
@@ -339,10 +347,12 @@ impl LocalModelControl {
         manager.remove().map_err(public_manager_error)?;
         let status = manager.status().clone();
         self.replace_status(status.clone())?;
-        self.readiness
+        let mut readiness = self
+            .readiness
             .lock()
-            .map_err(|_| "LOCAL_READINESS_UNAVAILABLE".to_owned())?
-            .invalidate_hardware_cache();
+            .map_err(|_| "LOCAL_READINESS_UNAVAILABLE".to_owned())?;
+        readiness.invalidate_verification_attestation();
+        readiness.invalidate_hardware_cache();
         Ok(status)
     }
 
@@ -500,6 +510,7 @@ fn public_readiness_error(error: LocalReadinessError) -> String {
         }
         LocalReadinessError::Runtime(_) => "OMNI_SELF_TEST_FAILED",
         LocalReadinessError::SizeOverflow => "OMNI_MODEL_SIZE_OVERFLOW",
+        LocalReadinessError::AttestationWrite => "OMNI_ATTESTATION_WRITE_FAILED",
     }
     .to_owned()
 }
