@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import threading
+import time
 import warnings
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,6 +21,16 @@ from fairy_voice_worker.protocol import (
 from fairy_voice_worker.runtime import VoiceRuntime, install_model, runtime_from_environment
 
 MAX_REQUEST_BYTES = 64 * 1024
+MAX_QUEUED_PLAYBACKS = 8
+MAX_QUEUED_CHARACTERS = 8_000
+MAX_SESSION_CHARACTERS = 2_000
+PLAYBACK_QUEUE_TIMEOUT_SECONDS = 120.0
+
+
+class VoiceQueueError(RuntimeError):
+    def __init__(self, error_code: str) -> None:
+        super().__init__(error_code)
+        self.error_code = error_code
 
 
 class VoiceWorkerState:
@@ -28,7 +39,14 @@ class VoiceWorkerState:
         self.bootstrap_token = bootstrap_token
         self.tokens = OneTimeTokenRegistry()
         self._cancellations: dict[str, threading.Event] = {}
+        self._pre_cancelled: set[str] = set()
         self._lock = threading.Lock()
+        self._queue_condition = threading.Condition(self._lock)
+        self._manual_queue: list[str] = []
+        self._automatic_queue: list[str] = []
+        self._manual_streak = 0
+        self._queued_characters: dict[str, int] = {}
+        self._active_session: str | None = None
         self._prepare_lock = threading.Lock()
 
     def prepare_runtime(self) -> dict[str, object]:
@@ -39,30 +57,129 @@ class VoiceWorkerState:
                 health = self.runtime.health()
             if health.status != "ready":
                 raise RuntimeError(health.error_code or "VOICE_WORKER_NOT_READY")
-            return health.as_dict()
+            return self.health()
 
-    def cancellation_for(self, session_id: str) -> threading.Event:
-        if not session_id or len(session_id) > 128:
-            raise ValueError("voice session id is invalid")
+    def health(self) -> dict[str, object]:
+        health = self.runtime.health().as_dict()
         with self._lock:
+            health["queued_playback_count"] = self._queued_count()
+            health["active_consumer_count"] = int(self._active_session is not None)
+        return health
+
+    def enqueue(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        priority: str = "manual",
+    ) -> threading.Event:
+        if not session_id or len(session_id) > 128:
+            raise VoiceQueueError("VOICE_REQUEST_INVALID")
+        characters = len(text)
+        if characters == 0 or characters > MAX_SESSION_CHARACTERS:
+            raise VoiceQueueError("VOICE_REQUEST_INVALID")
+        if priority not in {"manual", "automatic"}:
+            raise VoiceQueueError("VOICE_REQUEST_INVALID")
+        with self._queue_condition:
             cancellation = self._cancellations.get(session_id)
             if cancellation is not None:
-                raise ValueError("voice session is already active")
+                raise VoiceQueueError("VOICE_REQUEST_DUPLICATE")
+            if (
+                self._queued_count() >= MAX_QUEUED_PLAYBACKS
+                or sum(self._queued_characters.values()) + characters
+                > MAX_QUEUED_CHARACTERS
+            ):
+                raise VoiceQueueError("VOICE_PLAYBACK_QUEUE_FULL")
             cancellation = threading.Event()
+            if session_id in self._pre_cancelled:
+                self._pre_cancelled.remove(session_id)
+                cancellation.set()
             self._cancellations[session_id] = cancellation
+            self._queued_characters[session_id] = characters
+            queue = (
+                self._manual_queue
+                if priority == "manual"
+                else self._automatic_queue
+            )
+            queue.append(session_id)
+            self._queue_condition.notify_all()
             return cancellation
 
+    def wait_for_turn(
+        self,
+        session_id: str,
+        cancellation: threading.Event,
+        *,
+        timeout: float = PLAYBACK_QUEUE_TIMEOUT_SECONDS,
+    ) -> bool:
+        deadline = time.monotonic() + timeout
+        with self._queue_condition:
+            while True:
+                if cancellation.is_set():
+                    self._remove_queued(session_id)
+                    self._queue_condition.notify_all()
+                    return False
+                if (
+                    self._active_session is None
+                    and self._next_queued_session() == session_id
+                ):
+                    if self._manual_queue and self._manual_queue[0] == session_id:
+                        self._manual_queue.pop(0)
+                        self._manual_streak += 1
+                    else:
+                        self._automatic_queue.pop(0)
+                        self._manual_streak = 0
+                    self._queued_characters.pop(session_id, None)
+                    self._active_session = session_id
+                    return True
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    cancellation.set()
+                    self._remove_queued(session_id)
+                    self._cancellations.pop(session_id, None)
+                    self._queue_condition.notify_all()
+                    raise VoiceQueueError("VOICE_PLAYBACK_QUEUE_EXPIRED")
+                self._queue_condition.wait(timeout=min(remaining, 0.25))
+
     def cancel(self, session_id: str) -> bool:
-        with self._lock:
+        with self._queue_condition:
             cancellation = self._cancellations.get(session_id)
-        if cancellation is None:
-            return False
-        cancellation.set()
-        return True
+            if cancellation is None:
+                if len(self._pre_cancelled) >= 128:
+                    self._pre_cancelled.pop()
+                self._pre_cancelled.add(session_id)
+                return True
+            cancellation.set()
+            self._queue_condition.notify_all()
+            return True
 
     def release(self, session_id: str) -> None:
-        with self._lock:
+        with self._queue_condition:
+            self._remove_queued(session_id)
+            if self._active_session == session_id:
+                self._active_session = None
             self._cancellations.pop(session_id, None)
+            self._queue_condition.notify_all()
+
+    def _remove_queued(self, session_id: str) -> None:
+        for queue in (self._manual_queue, self._automatic_queue):
+            try:
+                queue.remove(session_id)
+            except ValueError:
+                pass
+        self._queued_characters.pop(session_id, None)
+
+    def _queued_count(self) -> int:
+        return len(self._manual_queue) + len(self._automatic_queue)
+
+    def _next_queued_session(self) -> str | None:
+        if self._manual_queue and (
+            self._manual_streak < 3 or not self._automatic_queue
+        ):
+            return self._manual_queue[0]
+        if self._automatic_queue:
+            return self._automatic_queue[0]
+        return self._manual_queue[0] if self._manual_queue else None
 
 
 class VoiceRequestHandler(BaseHTTPRequestHandler):
@@ -79,7 +196,7 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
             return
         if not self._authorize_control():
             return
-        self._json(HTTPStatus.OK, self.state.runtime.health().as_dict())
+        self._json(HTTPStatus.OK, self.state.health())
 
     def do_POST(self) -> None:
         if self.path == "/v1/tokens":
@@ -170,15 +287,30 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
             session_id = str(payload["session_id"])
             text = str(payload["text"])
             scope_digest = str(payload["scope_digest"])
+            priority = str(payload.get("priority", "manual"))
             if len(scope_digest) != 64 or any(
                 value not in "0123456789abcdef" for value in scope_digest
             ):
                 raise ValueError("voice scope digest is invalid")
-            cancellation = self.state.cancellation_for(session_id)
-        except (KeyError, ValueError) as error:
+            cancellation = self.state.enqueue(
+                session_id,
+                text,
+                priority=priority,
+            )
+        except (KeyError, ValueError, VoiceQueueError) as error:
+            error_code = (
+                error.error_code
+                if isinstance(error, VoiceQueueError)
+                else "VOICE_REQUEST_INVALID"
+            )
+            status = (
+                HTTPStatus.TOO_MANY_REQUESTS
+                if error_code == "VOICE_PLAYBACK_QUEUE_FULL"
+                else HTTPStatus.BAD_REQUEST
+            )
             self._json(
-                HTTPStatus.BAD_REQUEST,
-                {"error_code": "VOICE_REQUEST_INVALID", "message": str(error)},
+                status,
+                {"error_code": error_code, "message": str(error)},
             )
             return
         health = self.state.runtime.health()
@@ -187,6 +319,21 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 {"error_code": health.error_code or "VOICE_WORKER_NOT_READY"},
+            )
+            return
+        try:
+            if not self.state.wait_for_turn(session_id, cancellation):
+                self.state.release(session_id)
+                self._json(
+                    HTTPStatus.CONFLICT,
+                    {"error_code": "VOICE_PLAYBACK_CANCELLED"},
+                )
+                return
+        except VoiceQueueError as error:
+            self.state.release(session_id)
+            self._json(
+                HTTPStatus.REQUEST_TIMEOUT,
+                {"error_code": error.error_code},
             )
             return
         self.send_response(HTTPStatus.OK)
@@ -302,4 +449,11 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["VoiceWorkerState", "create_server", "main"]
+__all__ = [
+    "MAX_QUEUED_CHARACTERS",
+    "MAX_QUEUED_PLAYBACKS",
+    "VoiceQueueError",
+    "VoiceWorkerState",
+    "create_server",
+    "main",
+]

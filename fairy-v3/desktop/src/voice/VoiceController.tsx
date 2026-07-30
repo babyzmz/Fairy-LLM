@@ -32,6 +32,8 @@ import {
 import { SentenceQueue } from "./sentenceQueue";
 
 const MAX_RECORDING_BYTES = 20 * 1024 * 1024;
+const MAX_AUTO_PLAYBACK_QUEUE_ITEMS = 8;
+const MAX_AUTO_PLAYBACK_QUEUE_CHARACTERS = 8_000;
 
 export interface VoiceClient {
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
@@ -110,7 +112,7 @@ export function VoiceController({
   const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
   const [recordingStatusMessage, setRecordingStatusMessage] = useState<string | null>(null);
-  const [voiceRepliesEnabled, setVoiceRepliesEnabled] = useState(true);
+  const [voiceRepliesEnabled, setVoiceRepliesEnabled] = useState(false);
   const [petMuted, setPetMuted] = useState(false);
   const recordingRef = useRef<RecordingSession | null>(null);
   const transcriptRef = useRef<((text: string) => void) | null>(null);
@@ -126,6 +128,7 @@ export function VoiceController({
   const autoChunkIndex = useRef(0);
   const autoFlushed = useRef(false);
   const autoQueue = useRef(Promise.resolve());
+  const autoQueueBudget = useRef({ epoch: -1, items: 0, characters: 0 });
   const providerAvailable =
     profile !== null &&
     profile.enabled &&
@@ -172,6 +175,14 @@ export function VoiceController({
   useEffect(() => {
     if (petMuted && turn?.task_id === petTaskId) stopSpeaking();
   }, [petMuted, petTaskId, stopSpeaking, turn?.task_id]);
+
+  useEffect(() => {
+    if (!voiceRepliesEnabled) stopSpeaking();
+  }, [stopSpeaking, voiceRepliesEnabled]);
+
+  useEffect(() => {
+    stopSpeaking();
+  }, [conversationId, stopSpeaking]);
 
   const startRecording = useCallback(
     async (onTranscript: (text: string) => void) => {
@@ -421,35 +432,57 @@ export function VoiceController({
     }
     for (const chunk of chunks) {
       const epoch = playbackEpoch.current;
+      const characters = chunk.endOffset - chunk.startOffset;
+      if (autoQueueBudget.current.epoch !== epoch) {
+        autoQueueBudget.current = { epoch, items: 0, characters: 0 };
+      }
+      if (
+        autoQueueBudget.current.items >= MAX_AUTO_PLAYBACK_QUEUE_ITEMS
+        || autoQueueBudget.current.characters + characters > MAX_AUTO_PLAYBACK_QUEUE_CHARACTERS
+      ) {
+        continue;
+      }
+      autoQueueBudget.current.items += 1;
+      autoQueueBudget.current.characters += characters;
       autoQueue.current = autoQueue.current.then(async () => {
-        if (epoch !== playbackEpoch.current || environment.startNativePlayback === undefined) return;
-        setSpeakingMessageId(`auto:${turn.id}`);
-        setSpeakingTurnId(turn.id);
-        setPlaybackState("preparing");
-        const playback = await environment.startNativePlayback({
-          task_id: turn.task_id,
-          turn_id: turn.id,
-          message_id: null,
-          start_offset: chunk.startOffset,
-          end_offset: chunk.endOffset,
-          idempotency_key: `desktop-voice:auto:${turn.id}:${chunk.startOffset}:${chunk.endOffset}`,
-        });
-        if (epoch !== playbackEpoch.current) {
-          playback.stop();
-          return;
-        }
-        playbackRef.current = playback;
-        setPlaybackState("speaking");
-        await (playback.readyForNext ?? playback.finished);
-        if (epoch === playbackEpoch.current) {
-          void playback.finished.then(() => {
-            if (epoch === playbackEpoch.current && playbackRef.current === playback) {
-              playbackRef.current = null;
-              setSpeakingMessageId(null);
-              setSpeakingTurnId(null);
-              setPlaybackState("idle");
-            }
+        try {
+          if (epoch !== playbackEpoch.current || environment.startNativePlayback === undefined) return;
+          setSpeakingMessageId(`auto:${turn.id}`);
+          setSpeakingTurnId(turn.id);
+          setPlaybackState("preparing");
+          const playback = await environment.startNativePlayback({
+            task_id: turn.task_id,
+            turn_id: turn.id,
+            message_id: null,
+            start_offset: chunk.startOffset,
+            end_offset: chunk.endOffset,
+            idempotency_key: `desktop-voice:auto:${turn.id}:${chunk.startOffset}:${chunk.endOffset}`,
           });
+          if (epoch !== playbackEpoch.current) {
+            playback.stop();
+            return;
+          }
+          playbackRef.current = playback;
+          setPlaybackState("speaking");
+          await (playback.readyForNext ?? playback.finished);
+          if (epoch === playbackEpoch.current) {
+            void playback.finished.then(() => {
+              if (epoch === playbackEpoch.current && playbackRef.current === playback) {
+                playbackRef.current = null;
+                setSpeakingMessageId(null);
+                setSpeakingTurnId(null);
+                setPlaybackState("idle");
+              }
+            });
+          }
+        } finally {
+          if (autoQueueBudget.current.epoch === epoch) {
+            autoQueueBudget.current.items = Math.max(0, autoQueueBudget.current.items - 1);
+            autoQueueBudget.current.characters = Math.max(
+              0,
+              autoQueueBudget.current.characters - characters,
+            );
+          }
         }
       }).catch(() => {
         if (epoch === playbackEpoch.current) {

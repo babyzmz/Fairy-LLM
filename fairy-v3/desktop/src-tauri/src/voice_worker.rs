@@ -7,17 +7,21 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::ipc::{Channel, Response};
+use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 
 const HANDSHAKE_PROTOCOL: &str = "fairy-voice-worker-v1";
+pub const VOICE_WORKER_LIFECYCLE_EVENT: &str = "voice-worker-lifecycle";
 const MAX_HEADER_BYTES: usize = 32 * 1024;
 const STREAM_CHUNK_BYTES: usize = 16 * 1024;
+const MAX_QUEUED_PLAYBACKS: usize = 8;
+const MAX_QUEUED_CHARACTERS: usize = 8_000;
 const VOICE_MODEL_REPOSITORY: &str = "FunAudioLLM/Fun-CosyVoice3-0.5B-2512";
 const VOICE_MODEL_DIRECTORY: &str = "Fun-CosyVoice3-0.5B-2512";
 const VOICE_MODEL_FILES: &[&str] = &[
@@ -137,51 +141,129 @@ struct WorkerProcess {
     bootstrap_token: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct VoiceLifecycleSnapshot {
+    pub sequence: u64,
+    pub lifecycle_state: String,
+    pub active_consumer_count: usize,
+    pub queued_playback_count: usize,
+    pub error_code: Option<String>,
+    pub started_at_unix_ms: Option<u64>,
+    pub transitioned_at_unix_ms: u64,
+}
+
+struct VoiceLifecycleState {
+    snapshot: VoiceLifecycleSnapshot,
+    queued_characters: usize,
+}
+
 pub struct VoiceWorkerManager {
     launch: VoiceWorkerLaunch,
+    app: Option<AppHandle>,
     process: Mutex<Option<WorkerProcess>>,
     prepare_lock: Mutex<()>,
-    lifecycle_sequence: AtomicU64,
+    operation_generation: AtomicU64,
+    lifecycle: Mutex<VoiceLifecycleState>,
     cancellations: Mutex<HashSet<String>>,
 }
 
 impl VoiceWorkerManager {
     pub fn new(launch: VoiceWorkerLaunch) -> Self {
+        Self::with_app(launch, None)
+    }
+
+    pub fn new_with_app(launch: VoiceWorkerLaunch, app: AppHandle) -> Self {
+        Self::with_app(launch, Some(app))
+    }
+
+    fn with_app(launch: VoiceWorkerLaunch, app: Option<AppHandle>) -> Self {
+        let now = unix_time_ms();
         Self {
             launch,
+            app,
             process: Mutex::new(None),
             prepare_lock: Mutex::new(()),
-            lifecycle_sequence: AtomicU64::new(0),
+            operation_generation: AtomicU64::new(0),
+            lifecycle: Mutex::new(VoiceLifecycleState {
+                snapshot: VoiceLifecycleSnapshot {
+                    sequence: 0,
+                    lifecycle_state: "stopped".to_owned(),
+                    active_consumer_count: 0,
+                    queued_playback_count: 0,
+                    error_code: None,
+                    started_at_unix_ms: None,
+                    transitioned_at_unix_ms: now,
+                },
+                queued_characters: 0,
+            }),
             cancellations: Mutex::new(HashSet::new()),
         }
     }
 
     pub fn status(&self) -> Result<Value, VoiceWorkerError> {
-        match self.running_connection()? {
+        let health = match self.running_connection()? {
             Some(connection) => request_health(&connection),
             None => Ok(cold_voice_health(&self.launch)),
-        }
+        }?;
+        Ok(self.with_lifecycle(health))
     }
 
     pub fn health(&self) -> Result<Value, VoiceWorkerError> {
         let connection = self.connection()?;
-        request_health(&connection)
+        Ok(self.with_lifecycle(request_health(&connection)?))
     }
 
     pub fn prepare(&self) -> Result<Value, VoiceWorkerError> {
-        let requested_sequence = self.lifecycle_sequence.load(Ordering::Acquire);
+        let requested_generation = self.operation_generation.load(Ordering::Acquire);
+        let result = self.prepare_for_generation(requested_generation);
+        match &result {
+            Ok(health)
+                if self.operation_generation.load(Ordering::Acquire) == requested_generation
+                    && health.get("status").and_then(Value::as_str) == Some("ready") =>
+            {
+                self.transition_if_current(requested_generation, "ready", None);
+            }
+            Err(error)
+                if self.operation_generation.load(Ordering::Acquire) == requested_generation =>
+            {
+                self.transition_if_current(
+                    requested_generation,
+                    "failed",
+                    Some(error.public_code()),
+                );
+            }
+            _ => {}
+        }
+        result.map(|health| self.with_lifecycle(health))
+    }
+
+    fn prepare_for_generation(&self, requested_generation: u64) -> Result<Value, VoiceWorkerError> {
         let _prepare_guard = self
             .prepare_lock
             .lock()
             .map_err(|_| VoiceWorkerError::Unavailable("prepare lock is poisoned".to_owned()))?;
-        if self.lifecycle_sequence.load(Ordering::Acquire) != requested_sequence {
+        if self.operation_generation.load(Ordering::Acquire) != requested_generation {
             return Ok(cold_voice_health(&self.launch));
         }
-        let connection = self.connection()?;
+        let connection = match self.running_connection()? {
+            Some(connection) => connection,
+            None => {
+                self.transition_if_current(requested_generation, "starting_worker", None);
+                self.connection()?
+            }
+        };
+        if self.lifecycle_snapshot().lifecycle_state == "ready" {
+            let current = request_health(&connection)?;
+            if current.get("status").and_then(Value::as_str) == Some("ready") {
+                return Ok(current);
+            }
+        }
+        self.transition_if_current(requested_generation, "checking_runtime", None);
         let current = request_health(&connection)?;
         if current.get("status").and_then(Value::as_str) == Some("ready") {
             return Ok(current);
         }
+        self.transition_if_current(requested_generation, "warming", None);
         let response = send_request(
             connection.address,
             "POST",
@@ -192,13 +274,16 @@ impl VoiceWorkerManager {
         );
         let (status, _, mut reader) = match response {
             Ok(response) => response,
-            Err(_) if self.lifecycle_sequence.load(Ordering::Acquire) != requested_sequence => {
+            Err(_) if self.operation_generation.load(Ordering::Acquire) != requested_generation => {
                 return Ok(cold_voice_health(&self.launch));
             }
             Err(error) => return Err(error),
         };
         let mut body = Vec::new();
         reader.read_to_end(&mut body)?;
+        if self.operation_generation.load(Ordering::Acquire) != requested_generation {
+            return Ok(cold_voice_health(&self.launch));
+        }
         if status != 200 {
             return Err(worker_response_error(status, &body));
         }
@@ -217,7 +302,8 @@ impl VoiceWorkerManager {
     }
 
     pub fn stop(&self) -> Result<Value, VoiceWorkerError> {
-        self.lifecycle_sequence.fetch_add(1, Ordering::AcqRel);
+        self.operation_generation.fetch_add(1, Ordering::AcqRel);
+        self.transition("stopping", None);
         let mut guard = self
             .process
             .lock()
@@ -229,7 +315,9 @@ impl VoiceWorkerManager {
         if let Ok(mut cancellations) = self.cancellations.lock() {
             cancellations.clear();
         }
-        Ok(cold_voice_health(&self.launch))
+        self.reset_playback_counts();
+        self.transition("stopped", None);
+        Ok(self.with_lifecycle(cold_voice_health(&self.launch)))
     }
 
     pub fn install_model(&self) -> Result<Value, VoiceWorkerError> {
@@ -264,17 +352,33 @@ impl VoiceWorkerManager {
         if let Ok(mut cancellations) = self.cancellations.lock() {
             cancellations.remove(&session.id);
         }
+        let mut lease = self.queue_playback(session.validated_text.chars().count())?;
         let health = self.prepare()?;
         if health.get("status").and_then(Value::as_str) != Some("ready") {
             return Err(VoiceWorkerError::Worker("VOICE_WORKER_STOPPED".to_owned()));
         }
+        if self.take_cancellation(&session.id) {
+            let _ = events.send(VoiceStreamEvent::Cancelled {
+                session_id: session.id,
+            });
+            return Ok(());
+        }
         let connection = self.connection()?;
         let token = secure_token()?;
         register_token(&connection, &token)?;
+        let priority = if session.message_id.is_none()
+            && session.task_id != "realtime"
+            && session.task_id != "settings"
+        {
+            "automatic"
+        } else {
+            "manual"
+        };
         let body = serde_json::to_vec(&json!({
             "session_id": session.id,
             "scope_digest": session.scope_digest,
             "text": session.validated_text,
+            "priority": priority,
         }))?;
         let (status, headers, mut reader) = send_request(
             connection.address,
@@ -287,7 +391,14 @@ impl VoiceWorkerManager {
         if status != 200 {
             let mut body = Vec::new();
             reader.read_to_end(&mut body)?;
-            return Err(worker_response_error(status, &body));
+            let error = worker_response_error(status, &body);
+            if error.public_code() == "VOICE_PLAYBACK_CANCELLED" {
+                let _ = events.send(VoiceStreamEvent::Cancelled {
+                    session_id: session.id,
+                });
+                return Ok(());
+            }
+            return Err(error);
         }
         let returned_session = required_header(&headers, "x-fairy-session-id")?;
         let returned_scope = required_header(&headers, "x-fairy-scope-digest")?;
@@ -307,6 +418,7 @@ impl VoiceWorkerManager {
                 "voice PCM format is unsupported".to_owned(),
             ));
         }
+        lease.activate();
         let _ = events.send(VoiceStreamEvent::Started {
             session_id: session.id.clone(),
             sample_rate,
@@ -364,8 +476,47 @@ impl VoiceWorkerManager {
         Ok(())
     }
 
+    fn queue_playback(
+        &self,
+        characters: usize,
+    ) -> Result<VoicePlaybackLease<'_>, VoiceWorkerError> {
+        if characters == 0 || characters > 2_000 {
+            return Err(VoiceWorkerError::Worker("VOICE_REQUEST_INVALID".to_owned()));
+        }
+        let snapshot = {
+            let mut lifecycle = self.lifecycle.lock().map_err(|_| {
+                VoiceWorkerError::Unavailable("lifecycle lock is poisoned".to_owned())
+            })?;
+            if lifecycle.snapshot.queued_playback_count >= MAX_QUEUED_PLAYBACKS
+                || lifecycle.queued_characters.saturating_add(characters) > MAX_QUEUED_CHARACTERS
+            {
+                return Err(VoiceWorkerError::Worker(
+                    "VOICE_PLAYBACK_QUEUE_FULL".to_owned(),
+                ));
+            }
+            lifecycle.snapshot.queued_playback_count += 1;
+            lifecycle.queued_characters += characters;
+            advance_lifecycle_sequence(&mut lifecycle.snapshot);
+            lifecycle.snapshot.clone()
+        };
+        self.emit_lifecycle(&snapshot);
+        Ok(VoicePlaybackLease {
+            manager: self,
+            characters,
+            active: false,
+            released: false,
+            generation: self.operation_generation.load(Ordering::Acquire),
+        })
+    }
+
     pub fn cancel(&self, session_id: &str) -> Result<(), VoiceWorkerError> {
-        let connection = self.connection()?;
+        self.cancellations
+            .lock()
+            .map_err(|_| VoiceWorkerError::Unavailable("cancellation lock is poisoned".to_owned()))?
+            .insert(session_id.to_owned());
+        let Some(connection) = self.running_connection()? else {
+            return Ok(());
+        };
         let token = secure_token()?;
         register_token(&connection, &token)?;
         let path = format!("/v1/sessions/{session_id}");
@@ -382,16 +533,15 @@ impl VoiceWorkerManager {
         if status != 200 {
             return Err(worker_response_error(status, &body));
         }
-        let response: Value = serde_json::from_slice(&body)?;
-        if response.get("cancelled").and_then(Value::as_bool) == Some(true) {
-            self.cancellations
-                .lock()
-                .map_err(|_| {
-                    VoiceWorkerError::Unavailable("cancellation lock is poisoned".to_owned())
-                })?
-                .insert(session_id.to_owned());
-        }
+        let _: Value = serde_json::from_slice(&body)?;
         Ok(())
+    }
+
+    fn take_cancellation(&self, session_id: &str) -> bool {
+        self.cancellations
+            .lock()
+            .map(|mut cancellations| cancellations.remove(session_id))
+            .unwrap_or(false)
     }
 
     fn connection(&self) -> Result<WorkerConnection, VoiceWorkerError> {
@@ -427,6 +577,8 @@ impl VoiceWorkerManager {
         };
         if process.child.try_wait()?.is_some() {
             *guard = None;
+            drop(guard);
+            self.transition("failed", Some("VOICE_WORKER_INTERRUPTED"));
             return Ok(None);
         }
         Ok(Some(WorkerConnection {
@@ -434,6 +586,197 @@ impl VoiceWorkerManager {
             bootstrap_token: process.bootstrap_token.clone(),
         }))
     }
+
+    fn with_lifecycle(&self, mut health: Value) -> Value {
+        let snapshot = self.lifecycle_snapshot();
+        if let Some(object) = health.as_object_mut() {
+            object.insert("sequence".to_owned(), json!(snapshot.sequence));
+            object.insert(
+                "lifecycle_state".to_owned(),
+                json!(snapshot.lifecycle_state),
+            );
+            object.insert(
+                "active_consumer_count".to_owned(),
+                json!(snapshot.active_consumer_count),
+            );
+            object.insert(
+                "queued_playback_count".to_owned(),
+                json!(snapshot.queued_playback_count),
+            );
+            object.insert(
+                "started_at_unix_ms".to_owned(),
+                json!(snapshot.started_at_unix_ms),
+            );
+            object.insert(
+                "transitioned_at_unix_ms".to_owned(),
+                json!(snapshot.transitioned_at_unix_ms),
+            );
+            if snapshot.lifecycle_state == "failed" {
+                object.insert("status".to_owned(), json!("error"));
+                object.insert("error_code".to_owned(), json!(snapshot.error_code));
+            }
+        }
+        health
+    }
+
+    fn lifecycle_snapshot(&self) -> VoiceLifecycleSnapshot {
+        self.lifecycle
+            .lock()
+            .map(|state| state.snapshot.clone())
+            .unwrap_or_else(|_| VoiceLifecycleSnapshot {
+                sequence: 0,
+                lifecycle_state: "failed".to_owned(),
+                active_consumer_count: 0,
+                queued_playback_count: 0,
+                error_code: Some("VOICE_WORKER_UNAVAILABLE".to_owned()),
+                started_at_unix_ms: None,
+                transitioned_at_unix_ms: unix_time_ms(),
+            })
+    }
+
+    fn transition_if_current(
+        &self,
+        generation: u64,
+        lifecycle_state: &str,
+        error_code: Option<&str>,
+    ) {
+        if self.operation_generation.load(Ordering::Acquire) == generation {
+            self.transition(lifecycle_state, error_code);
+        }
+    }
+
+    fn transition(&self, lifecycle_state: &str, error_code: Option<&str>) {
+        let snapshot = {
+            let Ok(mut lifecycle) = self.lifecycle.lock() else {
+                return;
+            };
+            if lifecycle.snapshot.lifecycle_state == lifecycle_state
+                && lifecycle.snapshot.error_code.as_deref() == error_code
+            {
+                return;
+            }
+            lifecycle.snapshot.lifecycle_state = lifecycle_state.to_owned();
+            lifecycle.snapshot.error_code = error_code.map(str::to_owned);
+            if lifecycle_state == "starting_worker" {
+                lifecycle.snapshot.started_at_unix_ms = Some(unix_time_ms());
+            } else if lifecycle_state == "stopped" {
+                lifecycle.snapshot.started_at_unix_ms = None;
+            }
+            advance_lifecycle_sequence(&mut lifecycle.snapshot);
+            lifecycle.snapshot.clone()
+        };
+        self.emit_lifecycle(&snapshot);
+    }
+
+    fn activate_playback(&self, characters: usize, generation: u64) {
+        let snapshot = {
+            let Ok(mut lifecycle) = self.lifecycle.lock() else {
+                return;
+            };
+            lifecycle.snapshot.queued_playback_count =
+                lifecycle.snapshot.queued_playback_count.saturating_sub(1);
+            lifecycle.queued_characters = lifecycle.queued_characters.saturating_sub(characters);
+            lifecycle.snapshot.active_consumer_count += 1;
+            if self.operation_generation.load(Ordering::Acquire) == generation {
+                lifecycle.snapshot.lifecycle_state = "playing".to_owned();
+                lifecycle.snapshot.error_code = None;
+            }
+            advance_lifecycle_sequence(&mut lifecycle.snapshot);
+            lifecycle.snapshot.clone()
+        };
+        self.emit_lifecycle(&snapshot);
+    }
+
+    fn release_playback(&self, characters: usize, active: bool, generation: u64) {
+        let snapshot = {
+            let Ok(mut lifecycle) = self.lifecycle.lock() else {
+                return;
+            };
+            if active {
+                lifecycle.snapshot.active_consumer_count =
+                    lifecycle.snapshot.active_consumer_count.saturating_sub(1);
+            } else {
+                lifecycle.snapshot.queued_playback_count =
+                    lifecycle.snapshot.queued_playback_count.saturating_sub(1);
+                lifecycle.queued_characters =
+                    lifecycle.queued_characters.saturating_sub(characters);
+            }
+            if self.operation_generation.load(Ordering::Acquire) == generation
+                && lifecycle.snapshot.active_consumer_count == 0
+                && lifecycle.snapshot.queued_playback_count == 0
+                && lifecycle.snapshot.lifecycle_state == "playing"
+            {
+                lifecycle.snapshot.lifecycle_state = "ready".to_owned();
+            }
+            advance_lifecycle_sequence(&mut lifecycle.snapshot);
+            lifecycle.snapshot.clone()
+        };
+        self.emit_lifecycle(&snapshot);
+    }
+
+    fn reset_playback_counts(&self) {
+        let snapshot = {
+            let Ok(mut lifecycle) = self.lifecycle.lock() else {
+                return;
+            };
+            lifecycle.snapshot.active_consumer_count = 0;
+            lifecycle.snapshot.queued_playback_count = 0;
+            lifecycle.queued_characters = 0;
+            advance_lifecycle_sequence(&mut lifecycle.snapshot);
+            lifecycle.snapshot.clone()
+        };
+        self.emit_lifecycle(&snapshot);
+    }
+
+    fn emit_lifecycle(&self, snapshot: &VoiceLifecycleSnapshot) {
+        if let Some(app) = &self.app {
+            let _ = app.emit(VOICE_WORKER_LIFECYCLE_EVENT, snapshot);
+        }
+    }
+}
+
+struct VoicePlaybackLease<'a> {
+    manager: &'a VoiceWorkerManager,
+    characters: usize,
+    active: bool,
+    released: bool,
+    generation: u64,
+}
+
+impl VoicePlaybackLease<'_> {
+    fn activate(&mut self) {
+        if self.active || self.released {
+            return;
+        }
+        self.manager
+            .activate_playback(self.characters, self.generation);
+        self.active = true;
+    }
+}
+
+impl Drop for VoicePlaybackLease<'_> {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        self.manager
+            .release_playback(self.characters, self.active, self.generation);
+        self.released = true;
+    }
+}
+
+fn advance_lifecycle_sequence(snapshot: &mut VoiceLifecycleSnapshot) {
+    snapshot.sequence = snapshot.sequence.saturating_add(1);
+    snapshot.transitioned_at_unix_ms = unix_time_ms();
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 pub fn prepared_test_session() -> Result<PreparedVoiceSession, VoiceWorkerError> {
@@ -441,9 +784,9 @@ pub fn prepared_test_session() -> Result<PreparedVoiceSession, VoiceWorkerError>
     let scope_digest = format!("{:x}", Sha256::digest(b"fairy-voice-settings-test-v1"));
     Ok(PreparedVoiceSession {
         id,
-        task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
-        conversation_id: "00000000-0000-4000-8000-000000000002".to_owned(),
-        turn_id: "00000000-0000-4000-8000-000000000003".to_owned(),
+        task_id: "settings".to_owned(),
+        conversation_id: "settings".to_owned(),
+        turn_id: "settings".to_owned(),
         message_id: None,
         start_offset: 0,
         end_offset: 12,
@@ -848,10 +1191,11 @@ pub fn bundled_voice_launch(
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::Ordering;
 
     use super::{
         bundled_voice_launch, fill_secure_random, worker_error_message, worker_response_error,
-        VoiceWorkerLaunch, VoiceWorkerManager,
+        VoiceWorkerLaunch, VoiceWorkerManager, MAX_QUEUED_PLAYBACKS,
     };
 
     #[test]
@@ -924,6 +1268,70 @@ mod tests {
 
         let status = manager.status().expect("cold health");
         assert_eq!(status["status"], "model_missing");
+        assert_eq!(status["lifecycle_state"], "stopped");
+        assert_eq!(status["sequence"], 0);
+        assert_eq!(status["queued_playback_count"], 0);
+        assert_eq!(status["active_consumer_count"], 0);
         assert!(manager.process.lock().expect("worker lock").is_none());
+    }
+
+    #[test]
+    fn lifecycle_sequence_fences_a_late_ready_transition_after_stop() {
+        let manager = VoiceWorkerManager::new(test_launch("voice-lifecycle-fence"));
+        let generation = manager.operation_generation.load(Ordering::Acquire);
+
+        manager.transition_if_current(generation, "starting_worker", None);
+        manager.stop().expect("stop");
+        manager.transition_if_current(generation, "ready", None);
+
+        let snapshot = manager.lifecycle_snapshot();
+        assert_eq!(snapshot.lifecycle_state, "stopped");
+        assert!(snapshot.sequence >= 3);
+        assert_eq!(snapshot.active_consumer_count, 0);
+        assert_eq!(snapshot.queued_playback_count, 0);
+    }
+
+    #[test]
+    fn playback_queue_rejects_work_beyond_its_item_bound() {
+        let manager = VoiceWorkerManager::new(test_launch("voice-queue-bound"));
+        let leases = (0..MAX_QUEUED_PLAYBACKS)
+            .map(|_| manager.queue_playback(1).expect("bounded queue item"))
+            .collect::<Vec<_>>();
+
+        let error = match manager.queue_playback(1) {
+            Ok(_) => panic!("queue must reject overflow"),
+            Err(error) => error,
+        };
+        assert_eq!(error.public_code(), "VOICE_PLAYBACK_QUEUE_FULL");
+        assert_eq!(
+            manager.lifecycle_snapshot().queued_playback_count,
+            MAX_QUEUED_PLAYBACKS
+        );
+
+        drop(leases);
+        assert_eq!(manager.lifecycle_snapshot().queued_playback_count, 0);
+    }
+
+    #[test]
+    fn cancellation_never_starts_a_cold_worker() {
+        let manager = VoiceWorkerManager::new(test_launch("voice-cold-cancel"));
+
+        manager.cancel("session-before-start").expect("cancel");
+
+        assert!(manager.process.lock().expect("worker lock").is_none());
+        assert!(manager.take_cancellation("session-before-start"));
+    }
+
+    fn test_launch(label: &str) -> VoiceWorkerLaunch {
+        let root = std::env::temp_dir().join(format!("{label}-{}", std::process::id()));
+        VoiceWorkerLaunch {
+            program: PathBuf::from("missing-worker.exe"),
+            arguments: Vec::new(),
+            worker_python_path: root.join("worker"),
+            cosyvoice_root: root.join("cosyvoice"),
+            assets_dir: root.join("assets"),
+            data_dir: root.join("data"),
+            log_path: root.join("voice.log"),
+        }
     }
 }

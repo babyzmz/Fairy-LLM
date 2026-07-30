@@ -18,7 +18,13 @@ from fairy_voice_worker.runtime import (
     _install_frozen_runtime_guards,
     normalize_spoken_text,
 )
-from fairy_voice_worker.server import VoiceWorkerState, create_server
+from fairy_voice_worker.server import (
+    MAX_QUEUED_CHARACTERS,
+    MAX_QUEUED_PLAYBACKS,
+    VoiceQueueError,
+    VoiceWorkerState,
+    create_server,
+)
 
 
 def test_one_time_token_is_consumed_and_replay_is_rejected() -> None:
@@ -172,6 +178,96 @@ def test_prepare_endpoint_waits_for_runtime_and_returns_ready() -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_playback_queue_is_bounded_by_items_and_characters() -> None:
+    state = VoiceWorkerState(runtime=FakeRuntime(), bootstrap_token="b" * 40)
+    for index in range(MAX_QUEUED_PLAYBACKS):
+        state.enqueue(f"item-{index}", "x")
+    with pytest.raises(VoiceQueueError, match="VOICE_PLAYBACK_QUEUE_FULL"):
+        state.enqueue("overflow", "x")
+    for index in range(MAX_QUEUED_PLAYBACKS):
+        state.release(f"item-{index}")
+
+    chunk = "x" * 2_000
+    for index in range(MAX_QUEUED_CHARACTERS // len(chunk)):
+        state.enqueue(f"characters-{index}", chunk)
+    with pytest.raises(VoiceQueueError, match="VOICE_PLAYBACK_QUEUE_FULL"):
+        state.enqueue("characters-overflow", "x")
+
+
+def test_playback_queue_preserves_order_and_cancels_waiters() -> None:
+    state = VoiceWorkerState(runtime=FakeRuntime(), bootstrap_token="b" * 40)
+    first = state.enqueue("first", "hello")
+    second = state.enqueue("second", "world")
+
+    assert state.wait_for_turn("first", first, timeout=0.1) is True
+    outcome: list[bool] = []
+    waiter = threading.Thread(
+        target=lambda: outcome.append(
+            state.wait_for_turn("second", second, timeout=1.0),
+        ),
+    )
+    waiter.start()
+    assert state.cancel("second") is True
+    waiter.join(timeout=1)
+
+    assert outcome == [False]
+    health = state.health()
+    assert health["queued_playback_count"] == 0
+    assert health["active_consumer_count"] == 1
+    state.release("first")
+    assert state.health()["active_consumer_count"] == 0
+
+
+def test_playback_queue_expires_without_starting_synthesis() -> None:
+    state = VoiceWorkerState(runtime=FakeRuntime(), bootstrap_token="b" * 40)
+    first = state.enqueue("first", "hello")
+    expired = state.enqueue("expired", "world")
+    assert state.wait_for_turn("first", first, timeout=0.1) is True
+
+    with pytest.raises(VoiceQueueError, match="VOICE_PLAYBACK_QUEUE_EXPIRED"):
+        state.wait_for_turn("expired", expired, timeout=0.0)
+
+    assert state.health()["queued_playback_count"] == 0
+    state.release("first")
+
+
+def test_cancellation_before_worker_admission_prevents_late_playback() -> None:
+    state = VoiceWorkerState(runtime=FakeRuntime(), bootstrap_token="b" * 40)
+
+    assert state.cancel("late-session") is True
+    cancellation = state.enqueue("late-session", "hello")
+
+    assert cancellation.is_set()
+    assert state.wait_for_turn("late-session", cancellation, timeout=0.1) is False
+    assert state.health()["queued_playback_count"] == 0
+    assert state.health()["active_consumer_count"] == 0
+
+
+def test_manual_playback_priority_does_not_starve_automatic_replies() -> None:
+    state = VoiceWorkerState(runtime=FakeRuntime(), bootstrap_token="b" * 40)
+    first = state.enqueue("first", "first", priority="automatic")
+    assert state.wait_for_turn("first", first, timeout=0.1) is True
+
+    automatic = state.enqueue("automatic", "automatic", priority="automatic")
+    manual = {
+        session_id: state.enqueue(session_id, session_id, priority="manual")
+        for session_id in ("manual-1", "manual-2", "manual-3", "manual-4")
+    }
+    state.release("first")
+
+    order = ["manual-1", "manual-2", "manual-3", "automatic", "manual-4"]
+    cancellations = {**manual, "automatic": automatic}
+    for session_id in order:
+        assert state.wait_for_turn(
+            session_id,
+            cancellations[session_id],
+            timeout=0.1,
+        )
+        state.release(session_id)
+
+    assert state.health()["queued_playback_count"] == 0
 
 
 def test_loopback_server_streams_pcm_and_rejects_token_replay() -> None:

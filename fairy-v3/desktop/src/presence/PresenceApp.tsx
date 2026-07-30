@@ -6,7 +6,10 @@ import {
   useState,
 } from "react";
 
-import { type DesktopPreferences } from "../settings/client";
+import {
+  type DesktopPreferences,
+  voiceStatusFromLifecycle,
+} from "../settings/client";
 import type { VoiceWorkerHealth } from "../settings/client";
 import {
   derivePresenceView,
@@ -69,6 +72,7 @@ export function PresenceApp({
   settingsRef.current = settings;
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceWorkerHealth["status"]>("idle");
+  const voiceSequence = useRef(-1);
   const [projection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
   );
@@ -106,12 +110,24 @@ export function PresenceApp({
   useEffect(() => {
     let disposed = false;
     let stop: (() => void) | undefined;
+    let stopVoice: (() => void) | undefined;
     void host.getPreferences().then((value) => {
       if (!disposed) setPreferences(value);
     }).catch(() => undefined);
     void host.getVoiceHealth().then((value) => {
-      if (!disposed) setVoiceStatus(value.status);
+      if (!disposed && value.sequence >= voiceSequence.current) {
+        voiceSequence.current = value.sequence;
+        setVoiceStatus(value.status);
+      }
     }).catch(() => undefined);
+    void host.onVoiceLifecycle?.((snapshot) => {
+      if (disposed || snapshot.sequence <= voiceSequence.current) return;
+      voiceSequence.current = snapshot.sequence;
+      setVoiceStatus(voiceStatusFromLifecycle(snapshot));
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else stopVoice = unlisten;
+    });
     void host.onPreferences((value) => {
       if (!disposed) setPreferences(value);
     }).then((unlisten) => {
@@ -121,6 +137,7 @@ export function PresenceApp({
     return () => {
       disposed = true;
       stop?.();
+      stopVoice?.();
     };
   }, [host]);
 

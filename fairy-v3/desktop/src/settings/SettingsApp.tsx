@@ -28,6 +28,8 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { m } from "motion/react";
 
@@ -52,9 +54,12 @@ import {
 } from "../presence/transport/rendererHealth";
 import {
   applyDesktopPreferences,
+  mergeVoiceLifecycleSnapshot,
   type DesktopPreferences,
   type SettingsClient,
+  VOICE_WORKER_LIFECYCLE_EVENT,
   type VoiceWorkerHealth,
+  type VoiceWorkerLifecycleSnapshot,
 } from "./client";
 import {
   automaticTrashMaintenanceFailed,
@@ -292,6 +297,30 @@ function SettingsContent({
     staleTime: 30_000,
     queryFn: () => client.voice.health().catch(() => unavailableVoiceHealth()),
   });
+  useEffect(() => {
+    if (!visited.has("voice") || !isTauri()) return;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listen<VoiceWorkerLifecycleSnapshot>(
+      VOICE_WORKER_LIFECYCLE_EVENT,
+      (event) => {
+        if (disposed) return;
+        queryClient.setQueryData<VoiceWorkerHealth>(settingsQueryKeys.voice, (current) => {
+          if (current === undefined || current.sequence >= event.payload.sequence) {
+            return current;
+          }
+          return mergeVoiceLifecycleSnapshot(current, event.payload);
+        });
+      },
+    ).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [queryClient, visited]);
   const permissionsQuery = useQuery({
     queryKey: settingsQueryKeys.permissions,
     enabled: visited.has("permissions"),
@@ -656,10 +685,14 @@ function SettingsCategory(props: SettingsCategoryProps) {
           : voiceOperation === "stopping"
             ? "Stopping"
             : voiceHealthLabel(data.voiceHealth)}
-        tone={data.voiceHealth.status === "ready" ? "success" : ["idle", "warming"].includes(data.voiceHealth.status) ? "neutral" : "error"}
+        tone={["ready", "playing"].includes(data.voiceHealth.lifecycle_state)
+          ? "success"
+          : ["stopped", "starting_worker", "checking_runtime", "warming", "stopping"].includes(data.voiceHealth.lifecycle_state)
+            ? "neutral"
+            : "error"}
       />
       <div className="settings-section-command">
-        <span>{data.voiceHealth.status === "idle"
+        <span>{data.voiceHealth.lifecycle_state === "stopped" && data.voiceHealth.status === "idle"
           ? "Stopped. Start it now, or Fairy will wait for Ready on the first reply."
           : data.voiceHealth.device_name ?? "A CUDA GPU runtime is required"}</span>
         {voiceOperation === "preparing" ? (
@@ -676,7 +709,7 @@ function SettingsCategory(props: SettingsCategoryProps) {
           }}>
             <X size={14} /> Stop warming
           </button>
-        ) : data.voiceHealth.status === "idle" ? (
+        ) : data.voiceHealth.lifecycle_state === "stopped" && data.voiceHealth.status === "idle" ? (
           <button className="secondary-command" type="button" disabled={busy} onClick={() => {
             setVoiceOperation("preparing");
             void props.act(async () => {
@@ -690,7 +723,7 @@ function SettingsCategory(props: SettingsCategoryProps) {
           }}>
             <Play size={14} /> Start Fairy voice
           </button>
-        ) : data.voiceHealth.status === "ready" ? (
+        ) : ["ready", "playing"].includes(data.voiceHealth.lifecycle_state) ? (
           <>
           <button className="secondary-command" type="button" disabled={busy} onClick={() => void props.act(async () => {
             try {
@@ -709,7 +742,7 @@ function SettingsCategory(props: SettingsCategoryProps) {
             <X size={14} /> Stop voice worker
           </button>
           </>
-        ) : data.voiceHealth.status === "warming" ? (
+        ) : ["starting_worker", "checking_runtime", "warming", "stopping"].includes(data.voiceHealth.lifecycle_state) ? (
           <button className="secondary-command" type="button" disabled={busy} onClick={() => void props.act(async () => {
             await props.client.voice.stop();
             await props.reload();
@@ -1054,6 +1087,12 @@ function emptyKnowledgeSettingsData(): KnowledgeSettingsData {
 function unavailableVoiceHealth(): VoiceWorkerHealth {
   return {
     status: "unavailable",
+    sequence: 0,
+    lifecycle_state: "failed",
+    active_consumer_count: 0,
+    queued_playback_count: 0,
+    started_at_unix_ms: null,
+    transitioned_at_unix_ms: 0,
     model_repository: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
     model_installed: false,
     model_ready: false,
@@ -1070,10 +1109,17 @@ function unavailableVoiceHealth(): VoiceWorkerHealth {
 }
 
 function voiceHealthLabel(health: VoiceWorkerHealth): string {
-  if (health.status === "idle") return "Stopped · ready to start";
-  if (health.status === "ready") return `Ready at ${health.sample_rate / 1000} kHz`;
-  if (health.status === "warming") return "Warming model";
   if (health.status === "model_missing") return "Model not installed";
+  if (health.status === "prompt_missing") return "Fairy voice assets are unavailable";
+  if (health.lifecycle_state === "stopped") return "Stopped · ready to start";
+  if (health.lifecycle_state === "starting_worker") return "Starting worker";
+  if (health.lifecycle_state === "checking_runtime") return "Checking GPU runtime";
+  if (health.lifecycle_state === "warming") return "Loading voice model";
+  if (health.lifecycle_state === "playing") {
+    return `Playing · ${health.active_consumer_count} active`;
+  }
+  if (health.lifecycle_state === "stopping") return "Stopping";
+  if (health.lifecycle_state === "ready") return `Ready at ${health.sample_rate / 1000} kHz`;
   if (health.error_code === "VOICE_ONNX_CUDA_PROVIDER_UNAVAILABLE") {
     return "ONNX Runtime CUDA provider unavailable";
   }

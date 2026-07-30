@@ -734,11 +734,25 @@ function settingsInvoke(options: {
     }
     if (command === "voice_worker_health") return voiceHealth;
     if (command === "voice_worker_prepare") {
-      voiceHealth = { ...voiceHealth, status: "ready", model_ready: true, backend: "tensorrt" };
+      voiceHealth = {
+        ...voiceHealth,
+        status: "ready",
+        sequence: voiceHealth.sequence + 1,
+        lifecycle_state: "ready",
+        model_ready: true,
+        backend: "tensorrt",
+      };
       return voiceHealth;
     }
     if (command === "voice_worker_stop") {
-      voiceHealth = { ...voiceHealth, status: "idle", model_ready: false, backend: null };
+      voiceHealth = {
+        ...voiceHealth,
+        status: "idle",
+        sequence: voiceHealth.sequence + 1,
+        lifecycle_state: "stopped",
+        model_ready: false,
+        backend: null,
+      };
       return voiceHealth;
     }
     if (command === "open_companion_window") return undefined;
@@ -768,6 +782,12 @@ function settingsInvoke(options: {
 function idleVoiceHealth(): VoiceWorkerHealth {
   return {
     status: "idle",
+    sequence: 0,
+    lifecycle_state: "stopped",
+    active_consumer_count: 0,
+    queued_playback_count: 0,
+    started_at_unix_ms: null,
+    transitioned_at_unix_ms: 0,
     model_repository: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
     model_installed: true,
     model_ready: false,
@@ -787,6 +807,7 @@ function unavailableVoiceHealth(): VoiceWorkerHealth {
   return {
     ...idleVoiceHealth(),
     status: "unavailable",
+    lifecycle_state: "failed",
     model_installed: false,
     prompt_ready: false,
     error_code: "VOICE_WORKER_UNAVAILABLE",

@@ -4,8 +4,10 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   DesktopPreferences,
   PetAnchorPreference,
+  VoiceWorkerLifecycleSnapshot,
   VoiceWorkerHealth,
 } from "../../settings/client";
+import { VOICE_WORKER_LIFECYCLE_EVENT } from "../../settings/client";
 
 export interface PetPreferencePatch {
   expected_revision: number;
@@ -35,6 +37,9 @@ export interface PetHost {
   ): Promise<PetInputPresentationCommit>;
   resetPosition(expectedRevision: number): Promise<DesktopPreferences>;
   getVoiceHealth(): Promise<VoiceWorkerHealth>;
+  onVoiceLifecycle?(
+    listener: (snapshot: VoiceWorkerLifecycleSnapshot) => void,
+  ): Promise<() => void>;
   prepareVoice(): Promise<VoiceWorkerHealth>;
   stopVoice(): Promise<VoiceWorkerHealth>;
   openMain(): Promise<void>;
@@ -102,6 +107,12 @@ export function createDefaultPetHost(): PetHost {
     resetPosition: (expectedRevision) =>
       invoke("pet_window_group_reset_position", { expectedRevision }),
     getVoiceHealth: () => invoke("voice_worker_health"),
+    async onVoiceLifecycle(listener) {
+      return listen<VoiceWorkerLifecycleSnapshot>(
+        VOICE_WORKER_LIFECYCLE_EVENT,
+        (event) => listener(event.payload),
+      );
+    },
     prepareVoice: () => invoke("voice_worker_prepare"),
     stopVoice: () => invoke("voice_worker_stop"),
     openMain: () => invoke("open_main_window"),
@@ -203,6 +214,12 @@ function createBrowserPetHost(): PetHost {
 function browserVoiceHealth(status: "idle" | "ready"): VoiceWorkerHealth {
   return {
     status,
+    sequence: status === "ready" ? 1 : 0,
+    lifecycle_state: status === "ready" ? "ready" : "stopped",
+    active_consumer_count: 0,
+    queued_playback_count: 0,
+    started_at_unix_ms: null,
+    transitioned_at_unix_ms: 0,
     model_repository: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
     model_installed: true,
     model_ready: status === "ready",

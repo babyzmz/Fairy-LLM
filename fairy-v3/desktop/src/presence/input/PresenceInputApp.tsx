@@ -9,7 +9,11 @@ import {
 } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 
-import type { DesktopPreferences, VoiceWorkerHealth } from "../../settings/client";
+import {
+  type DesktopPreferences,
+  type VoiceWorkerHealth,
+  voiceStatusFromLifecycle,
+} from "../../settings/client";
 import type { PresenceInteractionSnapshot } from "../domain/interaction";
 import {
   advanceFairyMotionSnapshot,
@@ -148,6 +152,7 @@ export function PresenceInputApp({
   );
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceWorkerHealth["status"]>("idle");
+  const voiceSequence = useRef(-1);
   const preferencesRef = useRef(preferences);
   preferencesRef.current = preferences;
   const [settings, setSettings] = useState<PresenceSettings>(() =>
@@ -319,6 +324,7 @@ export function PresenceInputApp({
   useEffect(() => {
     let disposed = false;
     let stopPreferences: (() => void) | undefined;
+    let stopVoice: (() => void) | undefined;
     let stopInput: (() => void) | undefined;
     let stopInputToggle: (() => void) | undefined;
     let stopInputClose: (() => void) | undefined;
@@ -328,8 +334,19 @@ export function PresenceInputApp({
       if (!disposed) setPreferences(value);
     }).catch(() => undefined);
     void host.getVoiceHealth().then((value) => {
-      if (!disposed) setVoiceStatus(value.status);
+      if (!disposed && value.sequence >= voiceSequence.current) {
+        voiceSequence.current = value.sequence;
+        setVoiceStatus(value.status);
+      }
     }).catch(() => undefined);
+    void host.onVoiceLifecycle?.((snapshot) => {
+      if (disposed || snapshot.sequence <= voiceSequence.current) return;
+      voiceSequence.current = snapshot.sequence;
+      setVoiceStatus(voiceStatusFromLifecycle(snapshot));
+    }).then((stop) => {
+      if (disposed) stop();
+      else stopVoice = stop;
+    });
     void host.onPreferences((value) => {
       if (!disposed) setPreferences(value);
     }).then((stop) => {
@@ -390,6 +407,7 @@ export function PresenceInputApp({
     return () => {
       disposed = true;
       stopPreferences?.();
+      stopVoice?.();
       stopInput?.();
       stopInputToggle?.();
       stopInputClose?.();

@@ -123,6 +123,12 @@ export interface DesktopPreferences {
 
 export interface VoiceWorkerHealth {
   status: "idle" | "ready" | "warming" | "model_missing" | "prompt_missing" | "cuda_unavailable" | "acceleration_unavailable" | "error" | "unavailable";
+  sequence: number;
+  lifecycle_state: VoiceWorkerLifecycleState;
+  active_consumer_count: number;
+  queued_playback_count: number;
+  started_at_unix_ms: number | null;
+  transitioned_at_unix_ms: number;
   model_repository: string;
   model_installed: boolean;
   model_ready: boolean;
@@ -135,6 +141,47 @@ export interface VoiceWorkerHealth {
   device_name: string | null;
   sample_rate: number;
   error_code: string | null;
+}
+
+export type VoiceWorkerLifecycleState =
+  | "stopped"
+  | "starting_worker"
+  | "checking_runtime"
+  | "warming"
+  | "ready"
+  | "playing"
+  | "stopping"
+  | "failed";
+
+export interface VoiceWorkerLifecycleSnapshot {
+  sequence: number;
+  lifecycle_state: VoiceWorkerLifecycleState;
+  active_consumer_count: number;
+  queued_playback_count: number;
+  error_code: string | null;
+  started_at_unix_ms: number | null;
+  transitioned_at_unix_ms: number;
+}
+
+export const VOICE_WORKER_LIFECYCLE_EVENT = "voice-worker-lifecycle";
+
+export function voiceStatusFromLifecycle(
+  snapshot: VoiceWorkerLifecycleSnapshot,
+): VoiceWorkerHealth["status"] {
+  if (snapshot.lifecycle_state === "stopped") return "idle";
+  if (snapshot.lifecycle_state === "ready" || snapshot.lifecycle_state === "playing") {
+    return "ready";
+  }
+  if (snapshot.lifecycle_state === "failed") return "error";
+  return "warming";
+}
+
+export function mergeVoiceLifecycleSnapshot(
+  current: VoiceWorkerHealth,
+  snapshot: VoiceWorkerLifecycleSnapshot,
+): VoiceWorkerHealth {
+  if (snapshot.sequence <= current.sequence) return current;
+  return { ...current, ...snapshot };
 }
 
 export interface VoiceModelInstallResult {

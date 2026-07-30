@@ -292,6 +292,15 @@ describe("VoiceController", () => {
       </VoiceController>,
     );
 
+    fireEvent(
+      window,
+      new CustomEvent<DesktopPreferences>(DESKTOP_PREFERENCES_EVENT, {
+        detail: {
+          voice_replies_enabled: true,
+          pet_muted: false,
+        } as DesktopPreferences,
+      }),
+    );
     await waitFor(() => expect(startNativePlayback).toHaveBeenCalledOnce());
     fireEvent(
       window,
@@ -303,6 +312,105 @@ describe("VoiceController", () => {
       }),
     );
     await waitFor(() => expect(stop).toHaveBeenCalledOnce());
+  });
+
+  it("cancels active automatic playback when voice replies are disabled", async () => {
+    const stop = vi.fn();
+    const startNativePlayback = vi.fn(async () => ({
+      finished: new Promise<void>(() => undefined),
+      stop,
+    }));
+    const turn = {
+      id: "turn-disable",
+      task_id: "task-1",
+      status: "running",
+    } as AssistantTurn;
+    const events = [{
+      id: "event-disable",
+      cursor: 1,
+      event_type: "assistant.message.delta",
+      payload: {
+        turn_id: turn.id,
+        model_round: 0,
+        chunk_index: 0,
+        text: "This reply is speaking.",
+      },
+    } as unknown as EventEnvelope];
+    render(
+      <VoiceController
+        client={voiceClient()}
+        conversationId="conversation-1"
+        profile={provider()}
+        health={health()}
+        environment={environment({ startNativePlayback })}
+        turn={turn}
+        events={events}
+      >
+        <span>voice surface</span>
+      </VoiceController>,
+    );
+
+    fireEvent(
+      window,
+      new CustomEvent<DesktopPreferences>(DESKTOP_PREFERENCES_EVENT, {
+        detail: { voice_replies_enabled: true, pet_muted: false } as DesktopPreferences,
+      }),
+    );
+    await waitFor(() => expect(startNativePlayback).toHaveBeenCalledOnce());
+    fireEvent(
+      window,
+      new CustomEvent<DesktopPreferences>(DESKTOP_PREFERENCES_EVENT, {
+        detail: { voice_replies_enabled: false, pet_muted: false } as DesktopPreferences,
+      }),
+    );
+
+    await waitFor(() => expect(stop).toHaveBeenCalledOnce());
+  });
+
+  it("bounds automatic playback accumulated from one large delta", async () => {
+    const startNativePlayback = vi.fn(async () => ({
+      readyForNext: Promise.resolve(),
+      finished: Promise.resolve(),
+      stop: vi.fn(),
+    }));
+    const turn = {
+      id: "turn-bounded",
+      task_id: "task-1",
+      status: "running",
+    } as AssistantTurn;
+    const events = [{
+      id: "event-bounded",
+      cursor: 1,
+      event_type: "assistant.message.delta",
+      payload: {
+        turn_id: turn.id,
+        model_round: 0,
+        chunk_index: 0,
+        text: "One. Two. Three. Four. Five. Six. Seven. Eight. Nine. Ten.",
+      },
+    } as unknown as EventEnvelope];
+    render(
+      <VoiceController
+        client={voiceClient()}
+        conversationId="conversation-1"
+        profile={provider()}
+        health={health()}
+        environment={environment({ startNativePlayback })}
+        turn={turn}
+        events={events}
+      >
+        <span>voice surface</span>
+      </VoiceController>,
+    );
+
+    fireEvent(
+      window,
+      new CustomEvent<DesktopPreferences>(DESKTOP_PREFERENCES_EVENT, {
+        detail: { voice_replies_enabled: true, pet_muted: false } as DesktopPreferences,
+      }),
+    );
+
+    await waitFor(() => expect(startNativePlayback).toHaveBeenCalledTimes(8));
   });
 
   it("plays an ambient projection exactly once without creating Turn voice state", async () => {

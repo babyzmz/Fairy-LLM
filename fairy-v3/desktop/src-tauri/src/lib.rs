@@ -5455,7 +5455,10 @@ pub fn run() {
             } else {
                 bundled_voice_launch(&data_dir, &resource_dir, &desktop_program)
             };
-            let voice = Arc::new(VoiceWorkerManager::new(voice_launch));
+            let voice = Arc::new(VoiceWorkerManager::new_with_app(
+                voice_launch,
+                app.handle().clone(),
+            ));
             let omni_manifest = bundled_minicpm_o45_manifest()
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             let realtime_launch = if cfg!(debug_assertions) {
