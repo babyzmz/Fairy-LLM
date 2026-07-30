@@ -140,9 +140,9 @@ fn main() {
         )
         .join("windows-common-controls.manifest");
         println!("cargo:rerun-if-changed=windows-common-controls.manifest");
-        println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
         println!(
-            "cargo:rustc-link-arg-tests=/MANIFESTINPUT:{}",
+            "cargo:rustc-link-arg=/MANIFESTINPUT:{}",
             common_controls_manifest.display()
         );
     }
@@ -170,5 +170,9 @@ fn main() {
         );
         verify_production_omni_stage(&omni_root);
     }
-    tauri_build::build()
+    let attributes = tauri_build::Attributes::new();
+    #[cfg(target_os = "windows")]
+    let attributes =
+        attributes.windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+    tauri_build::try_build(attributes).expect("failed to build Tauri resources");
 }
