@@ -101,6 +101,40 @@ describe("RealtimeReadinessCard", () => {
     expect(invoke.mock.calls.some(([command]) => command === "omni_model_install_cancel")).toBe(true);
   });
 
+  it("shows model verification as a potentially long indeterminate operation", async () => {
+    renderCard(report({
+      phase: "verifying",
+      reason: "runtime_missing",
+    }));
+
+    const progressbar = await screen.findByRole("progressbar", {
+      name: "Local model operation progress",
+    });
+    expect(progressbar).toHaveAttribute("data-mode", "indeterminate");
+    expect(progressbar).not.toHaveAttribute("aria-valuenow");
+    expect(screen.queryByText("100%")).not.toBeInTheDocument();
+    expect(screen.getByText(
+      "Checking model integrity. Large files can take several minutes.",
+    )).toBeInTheDocument();
+  });
+
+  it("explains the indeterminate runtime self-test boundary", async () => {
+    renderCard(report({
+      phase: "runtime_self_test",
+      runtime: "not_tested",
+      reason: "self_test_failed",
+    }));
+
+    const progressbar = await screen.findByRole("progressbar", {
+      name: "Local model operation progress",
+    });
+    expect(progressbar).toHaveAttribute("data-mode", "indeterminate");
+    expect(progressbar).not.toHaveAttribute("aria-valuenow");
+    expect(screen.getByText(
+      "Testing CUDA and model startup without starting a Realtime session.",
+    )).toBeInTheDocument();
+  });
+
   it("starts an explicit install only after the user presses the action", async () => {
     const installable = report({
       phase: "not_installed",

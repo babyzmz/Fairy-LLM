@@ -27,13 +27,13 @@
 - Consumes: existing `OmniModelInstallPhase`.
 - Produces: assertions for determinate download and indeterminate verification/self-test.
 
-- [ ] Add a verification fixture with full received bytes and assert that the
+- [x] Add a verification fixture with full received bytes and assert that the
   progressbar has `data-mode="indeterminate"`, has no `aria-valuenow`, does not
   show `100%`, and displays
   `Checking model integrity. Large files can take several minutes.`
-- [ ] Add a runtime-self-test fixture and assert indeterminate semantics plus
+- [x] Add a runtime-self-test fixture and assert indeterminate semantics plus
   `Testing CUDA and model startup without starting a Realtime session.`
-- [ ] Run
+- [x] Run
   `npx vitest run src/settings/RealtimeReadinessCard.test.tsx` from `desktop`
   and confirm the new assertions fail against the numeric implementation.
 
@@ -48,24 +48,24 @@
   `{ detail, indicator, mode }`, where mode is `"determinate"` or
   `"indeterminate"`.
 
-- [ ] Add the presentation helper with exhaustive phase copy for checking
+- [x] Add the presentation helper with exhaustive phase copy for checking
   space, downloading, cancelling, verifying, layout check, and runtime
   self-test.
-- [ ] Render numeric text and ARIA values only when mode is determinate.
-- [ ] Add the restrained indeterminate segment animation and a static Reduced
+- [x] Render numeric text and ARIA values only when mode is determinate.
+- [x] Add the restrained indeterminate segment animation and a static Reduced
   Motion fallback.
-- [ ] Re-run the focused Vitest suite and confirm all tests pass.
+- [x] Re-run the focused Vitest suite and confirm all tests pass.
 
 ### Task 3: Verify and commit
 
 **Files:**
 - Verify all files changed in Tasks 1–2 and this tracked plan.
 
-- [ ] Run `npx tsc --noEmit` from `desktop`.
-- [ ] Run `npx vitest run src/settings/RealtimeReadinessCard.test.tsx` from
+- [x] Run `npx tsc --noEmit` from `desktop`.
+- [x] Run `npx vitest run src/settings/RealtimeReadinessCard.test.tsx` from
   `desktop`.
-- [ ] Run `git diff --check` and review the final CSS/DOM diff.
-- [ ] Confirm the original Tauri/Vite session remains alive and no Voice,
+- [x] Run `git diff --check` and review the final CSS/DOM diff.
+- [x] Confirm the original Tauri/Vite session remains alive and no Voice,
   Realtime, or Omni Worker was started.
-- [ ] Commit with
+- [x] Commit with
   `fix(desktop): clarify local model verification progress`.

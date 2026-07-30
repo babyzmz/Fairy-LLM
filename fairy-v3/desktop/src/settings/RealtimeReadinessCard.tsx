@@ -130,6 +130,9 @@ export function RealtimeReadinessCard({
   const progress = model === undefined || model.total_bytes <= 0
     ? 0
     : Math.min(100, Math.max(0, model.received_bytes / model.total_bytes * 100));
+  const operationProgress = model !== undefined && activePhases.has(model.phase)
+    ? operationProgressPresentation(model, progress)
+    : null;
   const canInstall = report !== undefined
     && report.capability.static_eligible
     && report.hardware.disk_available_bytes !== null
@@ -221,21 +224,27 @@ export function RealtimeReadinessCard({
             />
           </dl>
 
-          {model !== undefined && activePhases.has(model.phase) ? (
+          {operationProgress !== null ? (
             <div className="realtime-readiness-progress">
               <span>
-                <strong>{phaseLabel(model.phase)}</strong>
-                <small>{model.current_file ?? "Preparing verified model layout"}</small>
+                <strong>{operationProgress.label}</strong>
+                <small>{operationProgress.detail}</small>
               </span>
-              <span>{progress.toFixed(0)}%</span>
+              <span>{operationProgress.indicator}</span>
               <div
                 role="progressbar"
                 aria-label="Local model operation progress"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(progress)}
+                data-mode={operationProgress.mode}
+                aria-valuemin={operationProgress.mode === "determinate" ? 0 : undefined}
+                aria-valuemax={operationProgress.mode === "determinate" ? 100 : undefined}
+                aria-valuenow={operationProgress.mode === "determinate"
+                  ? Math.round(progress)
+                  : undefined}
               >
-                <span style={{ transform: `scaleX(${progress / 100})` }} />
+                <span style={operationProgress.mode === "determinate"
+                  ? { transform: `scaleX(${progress / 100})` }
+                  : undefined}
+                />
               </div>
             </div>
           ) : null}
@@ -449,6 +458,54 @@ function budgetLabel(report: LocalReadinessReport) {
   const required = report.capability.required_budget_bytes;
   if (available === null || required === null) return "Unknown · refresh required";
   return `${formatBytes(available)} available · ${formatBytes(required)} required`;
+}
+
+function operationProgressPresentation(
+  model: LocalReadinessReport["model"],
+  progress: number,
+) {
+  if (model.phase === "downloading") {
+    return {
+      mode: "determinate",
+      label: phaseLabel(model.phase),
+      detail: model.current_file ?? "Preparing model download",
+      indicator: `${progress.toFixed(0)}%`,
+    } as const;
+  }
+  const phases: Partial<Record<OmniModelInstallPhase, {
+    detail: string;
+    indicator: string;
+  }>> = {
+    checking_space: {
+      detail: "Checking disk capacity before downloading the model.",
+      indicator: "Preparing",
+    },
+    cancelling: {
+      detail: "Stopping safely and preserving resumable model files.",
+      indicator: "Stopping",
+    },
+    verifying: {
+      detail: "Checking model integrity. Large files can take several minutes.",
+      indicator: "Integrity check",
+    },
+    layout_check: {
+      detail: "Finalizing the verified model layout.",
+      indicator: "Finalizing",
+    },
+    runtime_self_test: {
+      detail: "Testing CUDA and model startup without starting a Realtime session.",
+      indicator: "Runtime check",
+    },
+  };
+  const presentation = phases[model.phase] ?? {
+    detail: "Preparing the local model operation.",
+    indicator: "Working",
+  };
+  return {
+    mode: "indeterminate",
+    label: phaseLabel(model.phase),
+    ...presentation,
+  } as const;
 }
 
 function hardwareFailureDetail(report: LocalReadinessReport) {
