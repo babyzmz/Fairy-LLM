@@ -356,6 +356,9 @@ export type BrowserActionKind =
   | "reload"
   | "go_back"
   | "go_forward"
+  | "hover"
+  | "check"
+  | "download"
   | "viewport";
 
 export interface BrowserWorkerHealth {
@@ -384,6 +387,20 @@ export interface BrowserTab {
   revision: number;
 }
 
+export interface BrowserDownload {
+  id: string;
+  session_id: string;
+  tab_id: string;
+  task_id: string;
+  file_name: string;
+  media_type: string;
+  size_bytes: number;
+  sha256: string;
+  source_url: string;
+  local_path: string;
+  created_at: string;
+}
+
 export interface BrowserSession {
   id: string;
   project_id: string | null;
@@ -394,6 +411,7 @@ export interface BrowserSession {
   status: BrowserSessionStatus;
   active_tab_id: string | null;
   tabs: BrowserTab[];
+  downloads: BrowserDownload[];
   revision: number;
   created_at: string;
   updated_at: string;
@@ -419,6 +437,7 @@ export interface BrowserActionInput {
   session_id: string;
   tab_id: string;
   kind: BrowserActionKind;
+  element_ref?: string | null;
   selector?: string | null;
   value?: string | null;
   x?: number | null;
@@ -427,6 +446,9 @@ export interface BrowserActionInput {
   delta_y?: number | null;
   width?: number | null;
   height?: number | null;
+  checked?: boolean | null;
+  timeout_ms?: number | null;
+  download_max_bytes?: number | null;
   expected_page_revision?: number | null;
   idempotency_key: string;
 }
@@ -435,7 +457,18 @@ export interface BrowserActionResult {
   session: BrowserSession;
   tab: BrowserTab;
   public_summary: string;
+  download: BrowserDownload | null;
   replayed: boolean;
+}
+
+export interface BrowserElement {
+  ref: string;
+  role: string;
+  name: string;
+  tag: string;
+  input_type: string | null;
+  checked: boolean | null;
+  disabled: boolean;
 }
 
 export interface BrowserSnapshot {
@@ -445,6 +478,7 @@ export interface BrowserSnapshot {
   url: string;
   title: string;
   aria_snapshot: string;
+  elements: BrowserElement[];
   viewport_width: number;
   viewport_height: number;
   screenshot_data_url: string | null;

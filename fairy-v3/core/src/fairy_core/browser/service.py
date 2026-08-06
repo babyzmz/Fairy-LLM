@@ -24,6 +24,7 @@ from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.contracts.browser import (
     BrowserActionInput,
     BrowserActionResultModel,
+    BrowserDownloadModel,
     BrowserProfileKind,
     BrowserProfileModel,
     BrowserSessionListInput,
@@ -261,6 +262,20 @@ class BrowserService:
             params = request.model_dump(mode="json")
             if request.kind.value == "navigate":
                 params["value"] = _validated_url(request.value or "")
+            if request.kind.value == "download":
+                session = self.get(request.session_id)
+                if session.task_id is None:
+                    raise ValueError("Browser downloads require a task-scoped session")
+                download_root = self._download_root(session.task_id)
+                download_root.mkdir(parents=True, exist_ok=True)
+                params.update(
+                    {
+                        "task_id": str(session.task_id),
+                        "download_dir": str(download_root),
+                        "download_max_bytes": request.download_max_bytes
+                        or 50 * 1024 * 1024,
+                    }
+                )
             result = self._required_worker().call("browser.actions.execute", params)
             session = self._replace_from_worker(request.session_id, result["session"])
             tab = BrowserTabModel.model_validate(result["tab"])
@@ -271,10 +286,15 @@ class BrowserService:
                 raise ValueError("Browser Worker action tab is absent from its session")
             if session_tab != tab:
                 raise ValueError("Browser Worker returned inconsistent action tab state")
+            download = None
+            if result.get("download") is not None:
+                download = BrowserDownloadModel.model_validate(result["download"])
+                session = self._record_download(session, tab, download)
             return BrowserActionResultModel(
                 session=session,
                 tab=tab,
                 public_summary=str(result.get("public_summary", "Browser action completed")),
+                download=download,
                 replayed=bool(result.get("replayed", False)),
             )
         except Exception as error:
@@ -378,6 +398,53 @@ class BrowserService:
                 }
             )
             self._save()
+
+    def _download_root(self, task_id: UUID) -> Path:
+        return (self._profile_root.parent / "downloads" / str(task_id)).resolve()
+
+    def _record_download(
+        self,
+        session: BrowserSessionModel,
+        tab: BrowserTabModel,
+        download: BrowserDownloadModel,
+    ) -> BrowserSessionModel:
+        if session.task_id is None or download.task_id != session.task_id:
+            raise ValueError("Browser Worker returned an out-of-scope download task")
+        if download.session_id != session.id or download.tab_id != tab.id:
+            raise ValueError("Browser Worker returned an out-of-scope download")
+        root = self._download_root(session.task_id)
+        local_path = Path(download.local_path).resolve()
+        if not local_path.is_relative_to(root):
+            raise ValueError("Browser Worker returned an out-of-scope download path")
+        if not local_path.is_file():
+            raise ValueError("Browser Worker download is absent")
+        stat = local_path.stat()
+        if stat.st_size != download.size_bytes or stat.st_size > 50 * 1024 * 1024:
+            local_path.unlink(missing_ok=True)
+            raise ValueError("Browser Worker download size is inconsistent")
+        digest = hashlib.sha256()
+        with local_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != download.sha256:
+            local_path.unlink(missing_ok=True)
+            raise ValueError("Browser Worker download hash is inconsistent")
+        with self._lock:
+            current = self._sessions[session.id]
+            downloads = (
+                *(item for item in current.downloads if item.id != download.id),
+                download,
+            )
+            updated = current.model_copy(
+                update={
+                    "downloads": downloads[-100:],
+                    "revision": current.revision + 1,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+            self._sessions[session.id] = updated
+            self._save()
+            return updated
 
     def _fail(self, session_id: UUID, error: Exception) -> BrowserSessionModel:
         with self._lock:
@@ -518,12 +585,22 @@ class BrowserToolExecutor:
                 if isinstance(capture_label, str)
                 else "Inspected the current web page"
             )
+            element_lines = "\n".join(
+                (
+                    f"[{element.ref}] role={element.role} tag={element.tag} "
+                    f"name={json.dumps(element.name, ensure_ascii=False)}"
+                )
+                for element in snapshot.elements
+            )
+            element_section = (
+                f"\nStable element references:\n{element_lines}" if element_lines else ""
+            )
             return ToolResult.create(
                 public_summary=summary,
                 model_content=(
                     f"URL: {snapshot.url}\nTitle: {snapshot.title}\n"
                     f"Viewport: {snapshot.viewport_width}x{snapshot.viewport_height}\n"
-                    f"{snapshot.aria_snapshot}"
+                    f"{snapshot.aria_snapshot}{element_section}"
                 ),
                 artifact_ids=(),
                 images=images,
@@ -546,12 +623,48 @@ class BrowserToolExecutor:
                     ),
                 ),
             )
-        kind = definition.name.removeprefix("browser.")
+        if definition.name == "browser.tab":
+            action = arguments.get("action")
+            if action == "open":
+                raw_url = arguments.get("url", "about:blank")
+                if not isinstance(raw_url, str):
+                    raise ValueError("Browser tab URL must be a string")
+                session = self._service.open_tab(
+                    BrowserTabOpenInput(session_id=session.id, url=raw_url)
+                )
+            elif action in {"select", "close"}:
+                raw_tab_id = arguments.get("tab_id")
+                if not isinstance(raw_tab_id, str):
+                    raise ValueError(f"Browser tab {action} requires tab_id")
+                request = BrowserTabIdInput(session_id=session.id, tab_id=UUID(raw_tab_id))
+                session = (
+                    self._service.select_tab(request)
+                    if action == "select"
+                    else self._service.close_tab(request)
+                )
+            else:
+                raise ValueError("Browser tab action must be open, select, or close")
+            tabs = "\n".join(
+                f"{item.id} {'active' if item.active else 'inactive'} {item.title}: {item.url}"
+                for item in session.tabs
+            )
+            return ToolResult.create(
+                public_summary=f"Browser tab {action} completed",
+                model_content=f"Browser tab {action} completed\n{tabs}",
+                artifact_ids=(),
+            )
+        kind = {
+            "browser.back": "go_back",
+            "browser.forward": "go_forward",
+        }.get(definition.name, definition.name.removeprefix("browser."))
         result = self._service.execute(
             BrowserActionInput(
                 session_id=session.id,
                 tab_id=tab_id,
                 kind=kind,
+                element_ref=arguments.get("element_ref")
+                if isinstance(arguments.get("element_ref"), str)
+                else None,
                 selector=arguments.get("selector")
                 if isinstance(arguments.get("selector"), str)
                 else None,
@@ -564,6 +677,15 @@ class BrowserToolExecutor:
                 height=arguments.get("height")
                 if isinstance(arguments.get("height"), int)
                 else None,
+                checked=arguments.get("checked")
+                if isinstance(arguments.get("checked"), bool)
+                else None,
+                timeout_ms=arguments.get("timeout_ms")
+                if isinstance(arguments.get("timeout_ms"), int)
+                else None,
+                download_max_bytes=arguments.get("max_bytes")
+                if isinstance(arguments.get("max_bytes"), int)
+                else None,
                 expected_page_revision=self._active_tab_revision(session, tab_id),
                 idempotency_key=_browser_action_key(
                     scope=scope,
@@ -573,10 +695,18 @@ class BrowserToolExecutor:
                 ),
             )
         )
+        download_detail = ""
+        if result.download is not None:
+            download_detail = (
+                f"\nDownloaded: {result.download.file_name} ({result.download.media_type}, "
+                f"{result.download.size_bytes} bytes)\nSHA-256: {result.download.sha256}\n"
+                f"Source: {result.download.source_url}\nStored: {result.download.local_path}"
+            )
         return ToolResult.create(
             public_summary=result.public_summary,
             model_content=(
                 f"{result.public_summary}\nURL: {result.tab.url}\nTitle: {result.tab.title}"
+                f"{download_detail}"
             ),
             artifact_ids=(),
         )

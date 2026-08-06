@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from base64 import b64encode
 from datetime import UTC, datetime
@@ -60,6 +61,17 @@ class FakeBrowserWorker:
                 "url": "about:blank",
                 "title": "New tab",
                 "aria_snapshot": "- document",
+                "elements": [
+                    {
+                        "ref": "e:session:tab:2:0:stable",
+                        "role": "button",
+                        "name": "Continue",
+                        "tag": "button",
+                        "input_type": None,
+                        "checked": None,
+                        "disabled": False,
+                    }
+                ],
                 "viewport_width": 1 if include_screenshot else 1365,
                 "viewport_height": 1 if include_screenshot else 768,
                 "screenshot_data_url": (
@@ -151,6 +163,7 @@ def test_browser_action_and_snapshot_preserve_page_revision(tmp_path: Path) -> N
     assert action.public_summary == "Browser reload completed"
     assert snapshot.page_revision == 2
     assert snapshot.aria_snapshot == "- document"
+    assert snapshot.elements[0].ref == "e:session:tab:2:0:stable"
     assert snapshot.viewport_width == 1365
     assert snapshot.viewport_height == 768
     assert browser.get(session.id).tabs[0].revision == snapshot.page_revision
@@ -182,6 +195,19 @@ def test_browser_tools_use_risk_based_approval() -> None:
     assert tools["browser.snapshot"].approval_policy is ApprovalPolicy.NEVER
     assert tools["browser.click"].side_effect is SideEffect.WRITE
     assert tools["browser.click"].approval_policy is ApprovalPolicy.PROFILE
+    assert tools["browser.hover"].side_effect is SideEffect.READ
+    assert tools["browser.download"].approval_policy is ApprovalPolicy.PROFILE
+    assert {
+        "browser.wait",
+        "browser.reload",
+        "browser.back",
+        "browser.forward",
+        "browser.hover",
+        "browser.select",
+        "browser.check",
+        "browser.tab",
+        "browser.download",
+    }.issubset(tools)
 
 
 def test_browser_session_list_can_require_an_exact_task_scope(tmp_path: Path) -> None:
@@ -240,10 +266,11 @@ def test_agent_action_is_fenced_by_the_current_page_revision(tmp_path: Path) -> 
     definition = build_default_registry().get("browser.click")
     executor = BrowserToolExecutor(service=browser, delegate=None)
 
-    executor.execute(definition, scope, {"selector": "button"})
+    executor.execute(definition, scope, {"element_ref": "e:session:tab:2:0:stable"})
 
     action = next(params for method, params in worker.calls if method == "browser.actions.execute")
     assert action["expected_page_revision"] == 2
+    assert action["element_ref"] == "e:session:tab:2:0:stable"
 
 
 def test_agent_can_set_viewport_and_receive_transient_visual_evidence(tmp_path: Path) -> None:
@@ -280,6 +307,74 @@ def test_agent_can_set_viewport_and_receive_transient_visual_evidence(tmp_path: 
     assert evidence.content_hash is not None
     assert evidence.source_revision is not None
     assert evidence.expires_at is not None
+
+
+def test_agent_can_manage_scoped_tabs_without_a_second_scheduler(tmp_path: Path) -> None:
+    worker = FakeBrowserWorker()
+    browser = service(tmp_path, worker)
+    scope = _scope(tmp_path)
+    executor = BrowserToolExecutor(service=browser, delegate=None)
+
+    result = executor.execute(
+        build_default_registry().get("browser.tab"),
+        scope,
+        {"action": "open", "url": "about:blank"},
+    )
+
+    assert result.public_summary == "Browser tab open completed"
+    assert any(method == "browser.tabs.open" for method, _params in worker.calls)
+
+
+def test_governed_download_is_task_scoped_hashed_and_recorded(tmp_path: Path) -> None:
+    class DownloadWorker(FakeBrowserWorker):
+        def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+            result = super().call(method, params)
+            if method != "browser.actions.execute" or params.get("kind") != "download":
+                return result
+            payload = b"bounded browser evidence"
+            download_id = uuid4()
+            download_dir = Path(str(params["download_dir"]))
+            download_dir.mkdir(parents=True, exist_ok=True)
+            local_path = download_dir / f"{download_id}.txt"
+            local_path.write_bytes(payload)
+            result["download"] = {
+                "id": str(download_id),
+                "session_id": str(params["session_id"]),
+                "tab_id": str(params["tab_id"]),
+                "task_id": str(params["task_id"]),
+                "file_name": "evidence.txt",
+                "media_type": "text/plain",
+                "size_bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "source_url": "https://example.com/evidence.txt",
+                "local_path": str(local_path),
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+            result["public_summary"] = "Downloaded evidence.txt"
+            return result
+
+    worker = DownloadWorker()
+    browser = service(tmp_path, worker)
+    scope = _scope(tmp_path)
+    executor = BrowserToolExecutor(service=browser, delegate=None)
+
+    result = executor.execute(
+        build_default_registry().get("browser.download"),
+        scope,
+        {"element_ref": "e:session:tab:2:0:download", "max_bytes": 1024},
+    )
+
+    action = next(params for method, params in worker.calls if method == "browser.actions.execute")
+    assert action["download_max_bytes"] == 1024
+    assert Path(str(action["download_dir"])).is_relative_to(
+        (tmp_path / "browser" / "downloads" / str(scope.task_id)).resolve()
+    )
+    assert "SHA-256" in result.model_content
+    session = browser.session_for_scope(scope)
+    assert len(session.downloads) == 1
+    assert session.downloads[0].sha256 == hashlib.sha256(
+        b"bounded browser evidence"
+    ).hexdigest()
 
 
 def test_resume_recreates_all_tabs_and_restores_the_active_tab(tmp_path: Path) -> None:

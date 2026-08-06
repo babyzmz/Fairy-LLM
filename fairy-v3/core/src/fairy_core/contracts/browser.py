@@ -34,6 +34,9 @@ class BrowserActionKind(StrEnum):
     RELOAD = "reload"
     GO_BACK = "go_back"
     GO_FORWARD = "go_forward"
+    HOVER = "hover"
+    CHECK = "check"
+    DOWNLOAD = "download"
     VIEWPORT = "viewport"
 
 
@@ -63,6 +66,20 @@ class BrowserTabModel(ContractModel):
     revision: int = Field(default=0, ge=0)
 
 
+class BrowserDownloadModel(ContractModel):
+    id: UUID
+    session_id: UUID
+    tab_id: UUID
+    task_id: UUID
+    file_name: str = Field(min_length=1, max_length=255)
+    media_type: str = Field(min_length=1, max_length=255)
+    size_bytes: int = Field(ge=0, le=50 * 1024 * 1024)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_url: str = Field(max_length=4096)
+    local_path: str = Field(min_length=1, max_length=32_000)
+    created_at: datetime
+
+
 class BrowserSessionModel(ContractModel):
     id: UUID
     project_id: UUID | None = None
@@ -73,6 +90,7 @@ class BrowserSessionModel(ContractModel):
     status: BrowserSessionStatus
     active_tab_id: UUID | None = None
     tabs: tuple[BrowserTabModel, ...] = ()
+    downloads: tuple[BrowserDownloadModel, ...] = ()
     revision: int = Field(default=0, ge=0)
     created_at: datetime
     updated_at: datetime
@@ -115,6 +133,7 @@ class BrowserTabIdInput(BrowserSessionIdInput):
 
 class BrowserActionInput(BrowserTabIdInput):
     kind: BrowserActionKind
+    element_ref: str | None = Field(default=None, min_length=1, max_length=255)
     selector: str | None = Field(default=None, max_length=2048)
     value: str | None = Field(default=None, max_length=32_000)
     x: float | None = None
@@ -123,6 +142,13 @@ class BrowserActionInput(BrowserTabIdInput):
     delta_y: float | None = None
     width: int | None = Field(default=None, ge=320, le=3840)
     height: int | None = Field(default=None, ge=240, le=2160)
+    checked: bool | None = None
+    timeout_ms: int | None = Field(default=None, ge=0, le=30_000)
+    download_max_bytes: int | None = Field(
+        default=None,
+        ge=1,
+        le=50 * 1024 * 1024,
+    )
     expected_page_revision: int | None = Field(default=None, ge=0)
     idempotency_key: str = Field(min_length=1, max_length=255)
 
@@ -131,11 +157,22 @@ class BrowserActionResultModel(ContractModel):
     session: BrowserSessionModel
     tab: BrowserTabModel
     public_summary: str
+    download: BrowserDownloadModel | None = None
     replayed: bool = False
 
 
 class BrowserSnapshotInput(BrowserTabIdInput):
     include_screenshot: bool = True
+
+
+class BrowserElementModel(ContractModel):
+    ref: str = Field(min_length=1, max_length=255)
+    role: str = Field(min_length=1, max_length=64)
+    name: str = Field(default="", max_length=512)
+    tag: str = Field(min_length=1, max_length=32)
+    input_type: str | None = Field(default=None, max_length=64)
+    checked: bool | None = None
+    disabled: bool = False
 
 
 class BrowserSnapshotModel(ContractModel):
@@ -145,6 +182,7 @@ class BrowserSnapshotModel(ContractModel):
     url: str
     title: str
     aria_snapshot: str = Field(max_length=200_000)
+    elements: tuple[BrowserElementModel, ...] = ()
     viewport_width: int = Field(default=1365, ge=1, le=16_384)
     viewport_height: int = Field(default=768, ge=1, le=16_384)
     screenshot_data_url: str | None = None
@@ -155,6 +193,8 @@ __all__ = [
     "BrowserActionInput",
     "BrowserActionKind",
     "BrowserActionResultModel",
+    "BrowserDownloadModel",
+    "BrowserElementModel",
     "BrowserProfileKind",
     "BrowserProfileModel",
     "BrowserSessionIdInput",

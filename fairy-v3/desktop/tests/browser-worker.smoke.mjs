@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { readdir, rm } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -63,6 +63,12 @@ const server = createServer((request, response) => {
     <h1>Browser ready</h1>
     <a id="popup" href="/popup" target="_blank">Open popup</a>
     <a id="download" href="/download" download>Download</a>
+    <label>Password <input id="password" type="password"></label>
+    <label>Search <input id="search-field" name="q"></label>
+    <button id="search" type="button">Search</button>
+    <button id="send" type="button">Send message</button>
+    <label>Category <select id="category"><option value="all">All</option><option value="docs">Docs</option></select></label>
+    <label>Only current <input id="current" type="checkbox"></label>
   </main>`);
 });
 
@@ -96,6 +102,7 @@ try {
   assert.match(snapshot.aria_snapshot, /Browser ready/);
   assert.match(snapshot.screenshot_data_url, /^data:image\/png;base64,/);
   assert.equal(snapshot.viewport_width, 1365);
+  assert(snapshot.elements.some((element) => element.name === "Download"));
 
   persistentSessionId = crypto.randomUUID();
   secondPersistentSessionId = crypto.randomUUID();
@@ -137,6 +144,73 @@ try {
   const profileFiles = await readdir(profileRoot, { recursive: true });
   assert.equal(profileFiles.some((entry) => String(entry).endsWith("blocked.txt")), false);
 
+  const governedSnapshot = await call("browser.snapshots.get", {
+    session_id: sessionId,
+    tab_id: tabId,
+    include_screenshot: false,
+  });
+  const refNamed = (name) => governedSnapshot.elements.find((element) => element.name === name)?.ref;
+  const downloadResult = await call("browser.actions.execute", {
+    session_id: sessionId,
+    tab_id: tabId,
+    kind: "download",
+    element_ref: refNamed("Download"),
+    expected_page_revision: governedSnapshot.page_revision,
+    idempotency_key: "controlled-download",
+    task_id: crypto.randomUUID(),
+    download_dir: path.join(profileRoot, "downloads", sessionId),
+    download_max_bytes: 50 * 1024 * 1024,
+  });
+  assert.equal(downloadResult.download.file_name, "blocked.txt");
+  assert.equal((await readFile(downloadResult.download.local_path, "utf8")), "must not persist");
+  assert.match(downloadResult.download.sha256, /^[0-9a-f]{64}$/);
+
+  const policySnapshot = await call("browser.snapshots.get", {
+    session_id: sessionId,
+    tab_id: tabId,
+    include_screenshot: false,
+  });
+  const policyRef = (name) => policySnapshot.elements.find((element) => element.name === name)?.ref;
+  await assert.rejects(
+    call("browser.actions.execute", {
+      session_id: sessionId,
+      tab_id: tabId,
+      kind: "download",
+      element_ref: policyRef("Download"),
+      expected_page_revision: policySnapshot.page_revision,
+      idempotency_key: "oversized-download",
+      task_id: crypto.randomUUID(),
+      download_dir: path.join(profileRoot, "downloads", "oversized"),
+      download_max_bytes: 5,
+    }),
+    /byte limit/,
+  );
+  const downloadFiles = await readdir(path.join(profileRoot, "downloads"), { recursive: true });
+  assert.equal(downloadFiles.some((entry) => String(entry).endsWith(".part")), false);
+  await assert.rejects(
+    call("browser.actions.execute", {
+      session_id: sessionId,
+      tab_id: tabId,
+      kind: "fill",
+      element_ref: policyRef("Password"),
+      value: "do-not-enter",
+      expected_page_revision: policySnapshot.page_revision,
+      idempotency_key: "blocked-secret",
+    }),
+    /Secret, authentication/,
+  );
+  await assert.rejects(
+    call("browser.actions.execute", {
+      session_id: sessionId,
+      tab_id: tabId,
+      kind: "click",
+      element_ref: policyRef("Send message"),
+      expected_page_revision: policySnapshot.page_revision,
+      idempotency_key: "blocked-send",
+    }),
+    /Purchases, publishing/,
+  );
+
   const dynamicSession = await call("browser.tabs.open", {
     session_id: sessionId,
     url: `${url}dynamic`,
@@ -153,7 +227,7 @@ try {
       session_id: sessionId,
       tab_id: dynamicTabId,
       kind: "click",
-      selector: "#stable",
+      element_ref: dynamicSnapshot.elements.find((element) => element.name === "Stable action")?.ref,
       expected_page_revision: dynamicSnapshot.page_revision,
       idempotency_key: "stale-dynamic-page",
     }),

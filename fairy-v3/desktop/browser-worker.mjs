@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { mkdir } from "node:fs/promises";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -13,6 +13,11 @@ const dnsCache = new Map();
 let persistentContext = null;
 let persistentProfileDir = null;
 const persistentSessionIds = new Set();
+const MAX_ELEMENT_REFS = 200;
+const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+const SECRET_FIELD_PATTERN = /(?:pass(?:word|code)?|secret|token|api[ _-]?key|otp|one[ _-]?time|verification[ _-]?code|2fa|cvv|cvc|card[ _-]?number|密码|验证码|令牌)/i;
+const SECRET_QUERY_KEY_PATTERN = /(?:auth|credential|key|pass|secret|session|signature|sig|token)/i;
+const DANGEROUS_ACTION_PATTERN = /(?:buy|purchase|checkout|place order|confirm order|pay now|publish|post now|send (?:message|email|invite)|create account|delete account|close account|change password|grant access|revoke access|make admin|permission|购买|付款|结账|发布|发送|创建账户|删除账户|权限|管理员)/i;
 
 function isBlockedIp(address) {
   const normalized = address.replace(/^::ffff:/, "");
@@ -145,9 +150,18 @@ async function synchronizePageRevision(tab) {
     .update("\0")
     .update(aria)
     .digest("hex");
-  if (tab.lastSignature !== null && tab.lastSignature !== signature) tab.revision += 1;
+  if (tab.lastSignature !== null && tab.lastSignature !== signature) {
+    tab.revision += 1;
+    invalidateElementRefs(tab);
+  }
   tab.lastSignature = signature;
   return { title, aria };
+}
+
+function invalidateElementRefs(tab) {
+  tab.elementRefs.clear();
+  tab.elementModels = [];
+  tab.elementRefRevision = null;
 }
 
 async function sessionResult(session, status = "active") {
@@ -168,6 +182,10 @@ function attachPage(session, page, id = randomUUID(), allowedLoopbackOrigin = nu
     loading: false,
     lastSignature: null,
     allowedLoopbackOrigin,
+    elementRefs: new Map(),
+    elementModels: [],
+    elementRefRevision: null,
+    authorizedDownloads: 0,
   };
   tab.websocketBoundaryReady = page.routeWebSocket("**/*", async (websocket) => {
     try {
@@ -185,12 +203,15 @@ function attachPage(session, page, id = randomUUID(), allowedLoopbackOrigin = nu
     tab.loading = false;
     tab.revision += 1;
     tab.lastSignature = null;
+    invalidateElementRefs(tab);
   });
   page.on("close", () => {
     session.tabs.delete(id);
     if (session.activeTabId === id) session.activeTabId = session.tabs.keys().next().value ?? null;
   });
-  page.on("download", (download) => void download.cancel().catch(() => undefined));
+  page.on("download", (download) => {
+    if (tab.authorizedDownloads < 1) void download.cancel().catch(() => undefined);
+  });
   page.on("popup", (popup) => {
     const popupTab = attachPage(session, popup, randomUUID(), tab.allowedLoopbackOrigin);
     session.activeTabId = popupTab.id;
@@ -206,7 +227,7 @@ async function createContext(profileDir) {
     headless: true,
     viewport: { width: 1365, height: 768 },
     locale: "zh-CN",
-    acceptDownloads: false,
+    acceptDownloads: true,
     ignoreHTTPSErrors: false,
   });
   await installNetworkBoundary(context);
@@ -325,6 +346,227 @@ async function clickAndSettlePopup(page, click) {
   await popup;
 }
 
+async function buildElementRefs(session, tab) {
+  if (tab.elementRefRevision === tab.revision && tab.elementModels.length > 0) {
+    return tab.elementModels;
+  }
+  invalidateElementRefs(tab);
+  const candidates = tab.page.locator(
+    "a,button,input:not([type=hidden]),textarea,select,[role],[contenteditable=true]",
+  );
+  const count = Math.min(await candidates.count(), MAX_ELEMENT_REFS);
+  for (let index = 0; index < count; index += 1) {
+    const locator = candidates.nth(index);
+    if (!await locator.isVisible().catch(() => false)) continue;
+    const descriptor = await locator.evaluate((element) => {
+      const tag = element.tagName.toLowerCase();
+      const input = element instanceof HTMLInputElement ? element : null;
+      const explicitRole = element.getAttribute("role");
+      const implicitRole = tag === "a" ? "link"
+        : tag === "button" ? "button"
+          : tag === "select" ? "combobox"
+            : tag === "textarea" ? "textbox"
+              : input?.type === "checkbox" ? "checkbox"
+                : input?.type === "radio" ? "radio"
+                  : input ? "textbox" : "generic";
+      const label = "labels" in element && element.labels?.length
+        ? [...element.labels].map((item) => item.textContent ?? "").join(" ")
+        : "";
+      const name = element.getAttribute("aria-label")
+        || element.getAttribute("alt")
+        || label
+        || element.getAttribute("placeholder")
+        || element.getAttribute("title")
+        || element.textContent
+        || "";
+      return {
+        role: explicitRole || implicitRole,
+        name: name.replace(/\s+/g, " ").trim().slice(0, 512),
+        tag,
+        input_type: input?.type ?? null,
+        checked: input && ["checkbox", "radio"].includes(input.type) ? input.checked : null,
+        disabled: "disabled" in element ? Boolean(element.disabled) : false,
+      };
+    }).catch(() => null);
+    if (!descriptor) continue;
+    const ref = `e:${session.id}:${tab.id}:${tab.revision}:${index}:${randomUUID().slice(0, 8)}`;
+    tab.elementRefs.set(ref, { revision: tab.revision, locator });
+    tab.elementModels.push({ ref, ...descriptor });
+  }
+  tab.elementRefRevision = tab.revision;
+  return tab.elementModels;
+}
+
+function actionLocator(tab, params) {
+  if (params.element_ref) {
+    const referenced = tab.elementRefs.get(params.element_ref);
+    if (!referenced || referenced.revision !== tab.revision) {
+      throw Object.assign(
+        new Error("Element reference expired after the page changed"),
+        { code: "VERSION_CONFLICT" },
+      );
+    }
+    return referenced.locator;
+  }
+  return params.selector ? tab.page.locator(params.selector).first() : null;
+}
+
+async function inspectActionTarget(locator) {
+  if (!locator) return null;
+  return locator.evaluate((element) => {
+    const input = element instanceof HTMLInputElement ? element : null;
+    const form = "form" in element ? element.form : element.closest("form");
+    const label = "labels" in element && element.labels?.length
+      ? [...element.labels].map((item) => item.textContent ?? "").join(" ")
+      : "";
+    const targetText = [
+      element.getAttribute("aria-label"),
+      element.getAttribute("name"),
+      element.getAttribute("autocomplete"),
+      element.getAttribute("placeholder"),
+      element.getAttribute("title"),
+      label,
+      element.textContent,
+    ].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 4_000);
+    const formText = form
+      ? `${form.getAttribute("aria-label") ?? ""} ${form.getAttribute("action") ?? ""} ${form.textContent ?? ""}`
+        .replace(/\s+/g, " ").slice(0, 8_000)
+      : "";
+    return {
+      inputType: input?.type ?? null,
+      autocomplete: element.getAttribute("autocomplete") ?? "",
+      targetText,
+      formText,
+      isSubmit: (element instanceof HTMLButtonElement && element.type === "submit")
+        || (input && ["submit", "image"].includes(input.type)),
+    };
+  });
+}
+
+function assertNonSecretTarget(target) {
+  if (!target) return;
+  const autocomplete = target.autocomplete.toLowerCase();
+  if (
+    target.inputType === "password"
+    || ["current-password", "new-password", "one-time-code", "cc-number", "cc-csc"].includes(autocomplete)
+    || SECRET_FIELD_PATTERN.test(target.targetText)
+  ) {
+    throw Object.assign(
+      new Error("Secret, authentication, and payment fields cannot be filled by Fairy Browser"),
+      { code: "SECRET_INPUT_BLOCKED" },
+    );
+  }
+}
+
+function assertNonDangerousAction(target, includeForm = false) {
+  const inspectedText = target
+    ? `${target.targetText} ${includeForm ? target.formText : ""}`
+    : "";
+  if (DANGEROUS_ACTION_PATTERN.test(inspectedText)) {
+    throw Object.assign(
+      new Error("Purchases, publishing, sending, account, and permission changes are blocked"),
+      { code: "DANGEROUS_BROWSER_ACTION_BLOCKED" },
+    );
+  }
+}
+
+function mediaTypeFor(fileName) {
+  const extension = path.extname(fileName).toLowerCase();
+  return new Map([
+    [".pdf", "application/pdf"],
+    [".json", "application/json"],
+    [".csv", "text/csv"],
+    [".txt", "text/plain"],
+    [".html", "text/html"],
+    [".png", "image/png"],
+    [".jpg", "image/jpeg"],
+    [".jpeg", "image/jpeg"],
+    [".webp", "image/webp"],
+    [".zip", "application/zip"],
+  ]).get(extension) ?? "application/octet-stream";
+}
+
+function redactedSourceUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    url.username = "";
+    url.password = "";
+    url.hash = "";
+    for (const key of [...url.searchParams.keys()]) {
+      if (SECRET_QUERY_KEY_PATTERN.test(key)) url.searchParams.set(key, "[redacted]");
+    }
+    return url.toString();
+  } catch {
+    return "download:unavailable";
+  }
+}
+
+async function captureDownload(session, tab, locator, params) {
+  if (!locator || !params.download_dir || !params.task_id) {
+    throw Object.assign(new Error("Browser download requires a referenced task target"), { code: "SCOPE_MISMATCH" });
+  }
+  const maxBytes = Math.min(
+    MAX_DOWNLOAD_BYTES,
+    Math.max(1, Number(params.download_max_bytes ?? MAX_DOWNLOAD_BYTES)),
+  );
+  const downloadDir = path.resolve(params.download_dir);
+  await mkdir(downloadDir, { recursive: true });
+  const downloadId = randomUUID();
+  let temporaryPath = path.join(downloadDir, `${downloadId}.part`);
+  let destinationPath = null;
+  let handle = null;
+  tab.authorizedDownloads += 1;
+  try {
+    const pending = tab.page.waitForEvent("download", { timeout: 15_000 });
+    await locator.click({ timeout: 10_000 });
+    const download = await pending;
+    const suggested = path.basename(download.suggestedFilename() || "download.bin")
+      .replace(/[^\p{L}\p{N}._ -]/gu, "_")
+      .slice(0, 255) || "download.bin";
+    const extension = path.extname(suggested).slice(0, 16);
+    destinationPath = path.join(downloadDir, `${downloadId}${extension}`);
+    const stream = await download.createReadStream();
+    if (!stream) throw new Error("Browser download stream is unavailable");
+    handle = await open(temporaryPath, "wx");
+    const hash = createHash("sha256");
+    let size = 0;
+    for await (const chunk of stream) {
+      size += chunk.length;
+      if (size > maxBytes) {
+        stream.destroy();
+        throw Object.assign(new Error("Browser download exceeds the configured byte limit"), { code: "DOWNLOAD_TOO_LARGE" });
+      }
+      hash.update(chunk);
+      await handle.write(chunk);
+    }
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await rename(temporaryPath, destinationPath);
+    temporaryPath = null;
+    return {
+      id: downloadId,
+      session_id: session.id,
+      tab_id: tab.id,
+      task_id: params.task_id,
+      file_name: suggested,
+      media_type: mediaTypeFor(suggested),
+      size_bytes: size,
+      sha256: hash.digest("hex"),
+      source_url: redactedSourceUrl(download.url()),
+      local_path: destinationPath,
+      created_at: new Date().toISOString(),
+    };
+  } catch (error) {
+    if (handle) await handle.close().catch(() => undefined);
+    if (temporaryPath) await rm(temporaryPath, { force: true }).catch(() => undefined);
+    if (destinationPath) await rm(destinationPath, { force: true }).catch(() => undefined);
+    throw error;
+  } finally {
+    tab.authorizedDownloads -= 1;
+  }
+}
+
 async function executeAction(params) {
   const resultKey = `${params.session_id}:${params.idempotency_key}`;
   const cached = actionResults.get(resultKey);
@@ -336,7 +578,13 @@ async function executeAction(params) {
     throw Object.assign(new Error("Page changed before the action could be applied"), { code: "VERSION_CONFLICT" });
   }
   const page = tab.page;
-  const locator = params.selector ? page.locator(params.selector).first() : null;
+  const locator = actionLocator(tab, params);
+  const target = await inspectActionTarget(locator);
+  if (["fill", "select", "check"].includes(params.kind)) assertNonSecretTarget(target);
+  if (params.kind === "click") assertNonDangerousAction(target, target?.isSubmit);
+  if (params.kind === "press") assertNonDangerousAction(target, true);
+  if (["select", "check"].includes(params.kind)) assertNonDangerousAction(target);
+  let downloadResult = null;
   switch (params.kind) {
     case "navigate":
       await authorizeNavigation(tab, params.value);
@@ -353,22 +601,36 @@ async function executeAction(params) {
       }
       break;
     case "fill":
-      if (!locator) throw Object.assign(new Error("Browser fill requires a selector"), { code: "SCOPE_MISMATCH" });
+      if (!locator) throw Object.assign(new Error("Browser fill requires an element reference"), { code: "SCOPE_MISMATCH" });
       await locator.fill(params.value ?? "", { timeout: 10_000 });
       break;
     case "press":
-      if (!locator) throw Object.assign(new Error("Browser press requires a selector"), { code: "SCOPE_MISMATCH" });
+      if (!locator) throw Object.assign(new Error("Browser press requires an element reference"), { code: "SCOPE_MISMATCH" });
       await locator.press(params.value ?? "Enter", { timeout: 10_000 });
       break;
     case "select":
-      if (!locator) throw Object.assign(new Error("Browser select requires a selector"), { code: "SCOPE_MISMATCH" });
+      if (!locator) throw Object.assign(new Error("Browser select requires an element reference"), { code: "SCOPE_MISMATCH" });
       await locator.selectOption(params.value ?? "", { timeout: 10_000 });
       break;
+    case "check":
+      if (!locator || typeof params.checked !== "boolean") {
+        throw Object.assign(new Error("Browser check requires an element reference and state"), { code: "SCOPE_MISMATCH" });
+      }
+      if (params.checked) await locator.check({ timeout: 10_000 });
+      else await locator.uncheck({ timeout: 10_000 });
+      break;
+    case "hover":
+      if (!locator) throw Object.assign(new Error("Browser hover requires an element reference"), { code: "SCOPE_MISMATCH" });
+      await locator.hover({ timeout: 10_000 });
+      break;
     case "scroll": await page.mouse.wheel(params.delta_x ?? 0, params.delta_y ?? 0); break;
-    case "wait": await page.waitForTimeout(Math.min(10_000, Math.max(0, Number(params.value ?? 250)))); break;
+    case "wait": await page.waitForTimeout(Math.min(10_000, Math.max(0, Number(params.timeout_ms ?? 250)))); break;
     case "reload": await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
     case "go_back": await page.goBack({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
     case "go_forward": await page.goForward({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
+    case "download":
+      downloadResult = await captureDownload(session, tab, locator, params);
+      break;
     case "viewport":
       if (!Number.isInteger(params.width) || !Number.isInteger(params.height)) {
         throw Object.assign(new Error("Browser viewport requires integer dimensions"), { code: "SCOPE_MISMATCH" });
@@ -379,11 +641,15 @@ async function executeAction(params) {
   }
   tab.revision += 1;
   tab.lastSignature = null;
+  invalidateElementRefs(tab);
   await synchronizePageRevision(tab);
   const result = {
     session: await sessionResult(session),
     tab: await tabModel(session, tab),
-    public_summary: `Browser ${params.kind.replaceAll("_", " ")} completed`,
+    public_summary: downloadResult
+      ? `Downloaded ${downloadResult.file_name}`
+      : `Browser ${params.kind.replaceAll("_", " ")} completed`,
+    download: downloadResult,
     replayed: false,
   };
   actionResults.set(resultKey, result);
@@ -396,6 +662,7 @@ async function snapshot(params) {
   const tab = requiredTab(session, params.tab_id);
   const page = tab.page;
   const state = await synchronizePageRevision(tab);
+  const elements = await buildElementRefs(session, tab);
   const screenshot = params.include_screenshot
     ? await page.screenshot({ type: "png", animations: "disabled" })
     : null;
@@ -406,6 +673,7 @@ async function snapshot(params) {
     url: page.url(),
     title: state.title,
     aria_snapshot: state.aria.slice(0, 200_000),
+    elements,
     viewport_width: page.viewportSize()?.width ?? 1365,
     viewport_height: page.viewportSize()?.height ?? 768,
     screenshot_data_url: screenshot ? `data:image/png;base64,${screenshot.toString("base64")}` : null,

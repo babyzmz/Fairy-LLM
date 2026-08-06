@@ -10,19 +10,24 @@ from fairy_core.commanding.types import PermissionProfile
 
 
 def browser_definitions(profiles: frozenset[PermissionProfile]) -> tuple[ToolDefinition, ...]:
+    target_properties = {
+        "element_ref": {"type": "string", "minLength": 1, "maxLength": 255},
+        "selector": {"type": "string", "minLength": 1, "maxLength": 2048},
+    }
     selector_schema = {
         "type": "object",
-        "properties": {"selector": {"type": "string", "minLength": 1, "maxLength": 2048}},
-        "required": ["selector"],
+        "properties": target_properties,
+        "anyOf": [{"required": ["element_ref"]}, {"required": ["selector"]}],
         "additionalProperties": False,
     }
     value_schema = {
         "type": "object",
         "properties": {
-            "selector": {"type": "string", "minLength": 1, "maxLength": 2048},
+            **target_properties,
             "value": {"type": "string", "maxLength": 32000},
         },
-        "required": ["selector", "value"],
+        "required": ["value"],
+        "anyOf": [{"required": ["element_ref"]}, {"required": ["selector"]}],
         "additionalProperties": False,
     }
     return (
@@ -87,13 +92,75 @@ def browser_definitions(profiles: frozenset[PermissionProfile]) -> tuple[ToolDef
             },
         ),
         ToolDefinition(
+            name="browser.wait",
+            side_effect=SideEffect.READ,
+            risk_level=RiskLevel.LOW,
+            approval_policy=ApprovalPolicy.NEVER,
+            profiles=profiles,
+            executor="browser_worker",
+            idempotent=True,
+            description="Wait briefly for the scoped Browser page to settle.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "timeout_ms": {"type": "integer", "minimum": 0, "maximum": 10000},
+                },
+                "required": ["timeout_ms"],
+                "additionalProperties": False,
+            },
+        ),
+        ToolDefinition(
+            name="browser.reload",
+            side_effect=SideEffect.READ,
+            risk_level=RiskLevel.LOW,
+            approval_policy=ApprovalPolicy.NEVER,
+            profiles=profiles,
+            executor="browser_worker",
+            description="Reload the current scoped Browser tab.",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        ),
+        ToolDefinition(
+            name="browser.back",
+            side_effect=SideEffect.READ,
+            risk_level=RiskLevel.LOW,
+            approval_policy=ApprovalPolicy.NEVER,
+            profiles=profiles,
+            executor="browser_worker",
+            description="Navigate the current scoped Browser tab back one history entry.",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        ),
+        ToolDefinition(
+            name="browser.forward",
+            side_effect=SideEffect.READ,
+            risk_level=RiskLevel.LOW,
+            approval_policy=ApprovalPolicy.NEVER,
+            profiles=profiles,
+            executor="browser_worker",
+            description="Navigate the current scoped Browser tab forward one history entry.",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        ),
+        ToolDefinition(
+            name="browser.hover",
+            side_effect=SideEffect.READ,
+            risk_level=RiskLevel.LOW,
+            approval_policy=ApprovalPolicy.NEVER,
+            profiles=profiles,
+            executor="browser_worker",
+            idempotent=True,
+            description="Hover a stable element reference from the latest Browser snapshot.",
+            input_schema=selector_schema,
+        ),
+        ToolDefinition(
             name="browser.click",
             side_effect=SideEffect.WRITE,
             risk_level=RiskLevel.MEDIUM,
             approval_policy=ApprovalPolicy.PROFILE,
             profiles=profiles,
             executor="browser_worker",
-            description="Click a referenced element in the scoped Fairy browser tab.",
+            description=(
+                "Click a stable element reference from the latest Browser snapshot. "
+                "Purchases, publishing, sending, and account or permission changes are blocked."
+            ),
             input_schema=selector_schema,
         ),
         ToolDefinition(
@@ -103,7 +170,10 @@ def browser_definitions(profiles: frozenset[PermissionProfile]) -> tuple[ToolDef
             approval_policy=ApprovalPolicy.PROFILE,
             profiles=profiles,
             executor="browser_worker",
-            description="Fill a non-secret value into a referenced form control.",
+            description=(
+                "Fill a non-secret value into a stable form-control reference. Passwords, tokens, "
+                "one-time codes, and payment secrets are blocked."
+            ),
             input_schema=value_schema,
         ),
         ToolDefinition(
@@ -115,6 +185,79 @@ def browser_definitions(profiles: frozenset[PermissionProfile]) -> tuple[ToolDef
             executor="browser_worker",
             description="Press a key in a referenced element.",
             input_schema=value_schema,
+        ),
+        ToolDefinition(
+            name="browser.select",
+            side_effect=SideEffect.WRITE,
+            risk_level=RiskLevel.MEDIUM,
+            approval_policy=ApprovalPolicy.PROFILE,
+            profiles=profiles,
+            executor="browser_worker",
+            description="Select a non-secret option in a stable form-control reference.",
+            input_schema=value_schema,
+        ),
+        ToolDefinition(
+            name="browser.check",
+            side_effect=SideEffect.WRITE,
+            risk_level=RiskLevel.MEDIUM,
+            approval_policy=ApprovalPolicy.PROFILE,
+            profiles=profiles,
+            executor="browser_worker",
+            description="Set a non-secret checkbox or radio control to a requested state.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    **target_properties,
+                    "checked": {"type": "boolean"},
+                },
+                "required": ["checked"],
+                "anyOf": [{"required": ["element_ref"]}, {"required": ["selector"]}],
+                "additionalProperties": False,
+            },
+        ),
+        ToolDefinition(
+            name="browser.tab",
+            side_effect=SideEffect.READ,
+            risk_level=RiskLevel.LOW,
+            approval_policy=ApprovalPolicy.NEVER,
+            profiles=profiles,
+            executor="browser_worker",
+            description="Open, select, or close a tab inside the scoped Fairy Browser session.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["open", "select", "close"]},
+                    "tab_id": {"type": "string", "format": "uuid"},
+                    "url": {"type": "string", "minLength": 1, "maxLength": 4096},
+                },
+                "required": ["action"],
+                "additionalProperties": False,
+            },
+        ),
+        ToolDefinition(
+            name="browser.download",
+            side_effect=SideEffect.WRITE,
+            risk_level=RiskLevel.MEDIUM,
+            approval_policy=ApprovalPolicy.PROFILE,
+            profiles=profiles,
+            executor="browser_worker",
+            description=(
+                "Download a referenced file into the current task's isolated download directory. "
+                "The file is limited to 50 MiB, hashed, recorded, and never opened or executed."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    **target_properties,
+                    "max_bytes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50 * 1024 * 1024,
+                    },
+                },
+                "anyOf": [{"required": ["element_ref"]}, {"required": ["selector"]}],
+                "additionalProperties": False,
+            },
         ),
         ToolDefinition(
             name="browser.scroll",
