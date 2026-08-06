@@ -37,6 +37,7 @@ from fairy_core.storage.realtime_schema import build_realtime_tables
 from fairy_core.storage.runtime_index_schema import build_runtime_scope_indexes
 from fairy_core.storage.turn_trace_schema import build_turn_trace_tables
 from fairy_core.storage.types import UTCDateTime
+from fairy_core.storage.workflow_schema import build_workflow_schema
 
 ID_LENGTH = 36
 
@@ -228,6 +229,20 @@ tasks = Table(
         name="fk_core_tasks_conversation",
         ondelete="CASCADE",
     ),
+)
+
+(
+    workflow_runs,
+    workflow_plan_revisions,
+    workflow_nodes,
+    workflow_edges,
+    workflow_attempts,
+    workflow_instructions,
+) = build_workflow_schema(
+    state_metadata,
+    projects=projects,
+    conversations=conversations,
+    tasks=tasks,
 )
 
 execution_plans, task_steps = build_planning_schema(

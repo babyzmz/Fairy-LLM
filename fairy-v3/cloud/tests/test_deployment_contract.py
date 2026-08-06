@@ -21,7 +21,7 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260806_0044"]
+    assert scripts.get_heads() == ["20260807_0045"]
     assert scripts.get_revision("20260724_0043").down_revision == "20260723_0042"
     assert scripts.get_revision("20260723_0042").down_revision == "20260723_0041"
     assert scripts.get_revision("20260723_0041").down_revision == "20260722_0040"

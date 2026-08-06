@@ -6,8 +6,8 @@ from logging.config import fileConfig
 
 from alembic import context
 from fairy_core.commanding.schema import command_metadata
-from fairy_core.memory.schema import memory_metadata
 from fairy_core.knowledge.schema import knowledge_metadata
+from fairy_core.memory.schema import memory_metadata
 from fairy_core.storage.schema import state_metadata
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config

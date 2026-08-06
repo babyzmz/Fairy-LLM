@@ -64,6 +64,12 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
         "core_documents",
         "core_document_revisions",
         "core_document_chunks",
+        "core_workflow_runs",
+        "core_workflow_plan_revisions",
+        "core_workflow_nodes",
+        "core_workflow_edges",
+        "core_workflow_attempts",
+        "core_workflow_instructions",
         "command_runs",
         "domain_events",
         "event_ledgers",
@@ -211,6 +217,21 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "ck_execution_jobs_result_evidence",
         "ck_execution_jobs_result_status",
         "ck_execution_jobs_network_policy",
+        "ck_core_workflow_runs_budget_usage",
+        "pk_core_workflow_runs",
+        "pk_core_workflow_plan_revisions",
+        "pk_core_workflow_nodes",
+        "pk_core_workflow_edges",
+        "pk_core_workflow_attempts",
+        "pk_core_workflow_instructions",
+        "uq_core_workflow_runs_tenant_idempotency",
+        "uq_core_workflow_runs_owner_engine",
+        "uq_core_workflow_nodes_plan_key",
+        "uq_core_workflow_instructions_idempotency",
+        "fk_core_workflow_runs_parent",
+        "fk_core_workflow_nodes_plan",
+        "fk_core_workflow_attempts_node",
+        "fk_core_workflow_instructions_run",
     } <= constraint_names
     assert "fk_domain_events_run" not in constraint_names
     index_names = {
@@ -229,6 +250,9 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "ix_core_project_indexes_tenant_project",
         "ix_execution_jobs_claim",
         "ix_execution_jobs_tenant_task",
+        "ix_core_workflow_runs_claim",
+        "ix_core_workflow_nodes_claim",
+        "ix_core_workflow_attempts_lease",
     } <= index_names
 
 

@@ -43,6 +43,8 @@ from fairy_core.realtime.ports import RealtimeRepository
 from fairy_core.realtime.repository import SqlAlchemyRealtimeRepository
 from fairy_core.storage.ports import StateStore
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
+from fairy_core.workflow.ports import WorkflowRepository
+from fairy_core.workflow.repository import SqlAlchemyWorkflowRepository
 from fairy_core.workspace.ports import ProjectIndexRepository, WorkspaceRepository
 from fairy_core.workspace.repository import (
     SqlAlchemyProjectIndexRepository,
@@ -70,6 +72,7 @@ class CoreUnitOfWork(Protocol):
     presentations: PresentationRepository
     model_catalog: ModelCatalogRepository
     realtime: RealtimeRepository
+    workflows: WorkflowRepository
 
     def __enter__(self) -> Self: ...
 
@@ -172,6 +175,10 @@ class SqlAlchemyUnitOfWork:
                 tenant_id=self._tenant_id,
             )
             self.realtime = SqlAlchemyRealtimeRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.workflows = SqlAlchemyWorkflowRepository(
                 connection,
                 tenant_id=self._tenant_id,
             )
