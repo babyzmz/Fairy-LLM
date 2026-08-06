@@ -372,9 +372,7 @@ def test_governed_download_is_task_scoped_hashed_and_recorded(tmp_path: Path) ->
     assert "SHA-256" in result.model_content
     session = browser.session_for_scope(scope)
     assert len(session.downloads) == 1
-    assert session.downloads[0].sha256 == hashlib.sha256(
-        b"bounded browser evidence"
-    ).hexdigest()
+    assert session.downloads[0].sha256 == hashlib.sha256(b"bounded browser evidence").hexdigest()
 
 
 def test_resume_recreates_all_tabs_and_restores_the_active_tab(tmp_path: Path) -> None:

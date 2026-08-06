@@ -152,9 +152,7 @@ def model_tools_for_definitions(
             "minItems": 1,
             "maxItems": 32,
             "uniqueItems": True,
-            "description": (
-                "Receipt IDs from this Turn that directly support the final answer."
-            ),
+            "description": ("Receipt IDs from this Turn that directly support the final answer."),
         }
         direct_required.append("evidence_receipt_ids")
     direct_answer = ModelTool.create(

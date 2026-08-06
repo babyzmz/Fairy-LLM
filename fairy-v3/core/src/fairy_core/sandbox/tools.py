@@ -162,9 +162,7 @@ class SandboxToolExecutor:
                 "output_limit_bytes",
                 default=65_536 if is_inspection else 262_144,
             ),
-            network_policy=(
-                SandboxNetworkPolicy.NONE if is_inspection else _network_policy(scope)
-            ),
+            network_policy=(SandboxNetworkPolicy.NONE if is_inspection else _network_policy(scope)),
             purpose=SandboxPurpose.INSPECT if is_inspection else SandboxPurpose.RAW,
             workspace_archive=archive.content,
         )

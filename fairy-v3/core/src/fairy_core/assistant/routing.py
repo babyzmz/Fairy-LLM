@@ -464,9 +464,7 @@ def manual_routing_decision(
             if evidence is not None
             else f"Using {allowed.display_name} for this turn."
         ),
-        evidence_requirements=(
-            evidence.evidence_requirements if evidence is not None else ()
-        ),
+        evidence_requirements=(evidence.evidence_requirements if evidence is not None else ()),
         evidence_classified=evidence is not None,
     )
 
@@ -524,9 +522,7 @@ def build_manual_evidence_request(
                 input_schema=schema,
             ),
         ),
-        required_capabilities=frozenset(
-            {ProviderCapability.TEXT, ProviderCapability.TOOLS}
-        ),
+        required_capabilities=frozenset({ProviderCapability.TEXT, ProviderCapability.TOOLS}),
         max_output_tokens=ROUTER_MAX_OUTPUT_TOKENS,
         model_role=ModelExecutionRole.COORDINATOR,
         fallback_profile_ids=(),
@@ -642,8 +638,7 @@ def routing_decision_from_record(record: object) -> RoutingDecision | None:
         requires_workspace_changes=bool(record.get("requires_workspace_changes", False)),
         public_summary=str(record["public_summary"]),
         evidence_requirements=tuple(
-            EvidenceRequirementKind(str(value))
-            for value in record.get("evidence_requirements", ())
+            EvidenceRequirementKind(str(value)) for value in record.get("evidence_requirements", ())
         ),
         evidence_classified=bool(record.get("evidence_classified", True)),
     )

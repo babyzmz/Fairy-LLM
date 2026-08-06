@@ -272,8 +272,7 @@ class BrowserService:
                     {
                         "task_id": str(session.task_id),
                         "download_dir": str(download_root),
-                        "download_max_bytes": request.download_max_bytes
-                        or 50 * 1024 * 1024,
+                        "download_max_bytes": request.download_max_bytes or 50 * 1024 * 1024,
                     }
                 )
             result = self._required_worker().call("browser.actions.execute", params)
@@ -610,9 +609,7 @@ class BrowserToolExecutor:
                         source_kind=EvidenceSourceKind.RUNTIME_SNAPSHOT,
                         public_label=snapshot.title or "Current Browser page",
                         content_hash=hashlib.sha256(
-                            (
-                                f"{snapshot.url}\n{snapshot.title}\n{snapshot.aria_snapshot}"
-                            ).encode()
+                            (f"{snapshot.url}\n{snapshot.title}\n{snapshot.aria_snapshot}").encode()
                         ).hexdigest(),
                         source_revision=(
                             f"browser:{snapshot.session_id}:{snapshot.tab_id}:"

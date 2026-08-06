@@ -223,9 +223,7 @@ class AssistantContextBuilder:
             # workspace tools available here lets a provider accidentally reopen execution.
             tool_definitions = ()
         evidence_requirements = (
-            turn.routing_decision.evidence_requirements
-            if turn.routing_decision is not None
-            else ()
+            turn.routing_decision.evidence_requirements if turn.routing_decision is not None else ()
         )
         tools = (
             model_tools_for_definitions(

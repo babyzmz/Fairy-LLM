@@ -221,9 +221,7 @@ class ProjectToolExecutor:
             for line_index in range(start_line, len(lines)):
                 line = lines[line_index]
                 start_column = (
-                    column_offset
-                    if file_index == file_offset and line_index == start_line
-                    else 0
+                    column_offset if file_index == file_offset and line_index == start_line else 0
                 )
                 for match in pattern.finditer(line, pos=start_column):
                     candidate = {
@@ -890,8 +888,7 @@ def _decode_discovery_cursor(
             or not isinstance(position, list)
             or len(position) != expected_size
             or any(
-                isinstance(item, bool) or not isinstance(item, int) or item < 0
-                for item in position
+                isinstance(item, bool) or not isinstance(item, int) or item < 0 for item in position
             )
         ):
             raise ValueError

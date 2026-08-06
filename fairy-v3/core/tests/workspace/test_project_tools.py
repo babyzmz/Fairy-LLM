@@ -399,9 +399,7 @@ def test_project_list_and_search_are_task_bound_and_emit_evidence(tmp_path: Path
                     sequence=1,
                     tool_call_id="call-search",
                     tool_name="project.search",
-                    arguments_fragment=(
-                        '{"query":"fairy_needle","glob":"*.py","limit":10}'
-                    ),
+                    arguments_fragment=('{"query":"fairy_needle","glob":"*.py","limit":10}'),
                 ),
                 ModelDelta.done(
                     profile_id="scripted",

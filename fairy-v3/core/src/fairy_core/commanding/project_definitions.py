@@ -40,9 +40,7 @@ def project_definitions(
             all_profiles,
             "project_tools",
             idempotent=True,
-            description=(
-                "List a stable page of files from the Task-bound managed Project Index."
-            ),
+            description=("List a stable page of files from the Task-bound managed Project Index."),
             input_schema=tool_schemas.project_list_tool_schema(),
         ),
         _tool(

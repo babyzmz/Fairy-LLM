@@ -105,10 +105,14 @@ class EvidenceDraft:
             raise ValueError("only Workspace evidence can carry a relative path")
         if self.safe_url is not None and self.source_kind not in _WEB_SOURCES:
             raise ValueError("only public web evidence can carry a URL")
-        if self.requirement_kind in {
-            EvidenceRequirementKind.WORKSPACE_STRUCTURE,
-            EvidenceRequirementKind.WORKSPACE_CONTENT,
-        } and self.source_kind not in _WORKSPACE_SOURCES:
+        if (
+            self.requirement_kind
+            in {
+                EvidenceRequirementKind.WORKSPACE_STRUCTURE,
+                EvidenceRequirementKind.WORKSPACE_CONTENT,
+            }
+            and self.source_kind not in _WORKSPACE_SOURCES
+        ):
             raise ValueError("Workspace requirements require a Workspace source")
         if self.requirement_kind is EvidenceRequirementKind.WEB_CURRENT and (
             self.source_kind not in _WEB_SOURCES
@@ -286,9 +290,7 @@ def evidence_receipt_record(receipt: EvidenceReceipt) -> dict[str, object]:
         ),
         "knowledge_snapshot_hash": receipt.knowledge_snapshot_hash,
         "document_snapshot_id": (
-            str(receipt.document_snapshot_id)
-            if receipt.document_snapshot_id is not None
-            else None
+            str(receipt.document_snapshot_id) if receipt.document_snapshot_id is not None else None
         ),
         "document_snapshot_hash": receipt.document_snapshot_hash,
         "relative_path": receipt.relative_path,
@@ -363,15 +365,11 @@ def evidence_receipt_from_record(record: object) -> EvidenceReceipt:
             str(record["content_hash"]) if record.get("content_hash") is not None else None
         ),
         source_revision=(
-            str(record["source_revision"])
-            if record.get("source_revision") is not None
-            else None
+            str(record["source_revision"]) if record.get("source_revision") is not None else None
         ),
         observed_at=_parse_datetime(record["observed_at"]),
         expires_at=(
-            _parse_datetime(record["expires_at"])
-            if record.get("expires_at") is not None
-            else None
+            _parse_datetime(record["expires_at"]) if record.get("expires_at") is not None else None
         ),
         truncated=bool(record.get("truncated", False)),
     )
@@ -451,11 +449,7 @@ def _line_range(start: int | None, end: int | None) -> None:
     if (start is None) != (end is None):
         raise ValueError("evidence line range must be complete")
     if start is not None and (
-        isinstance(start, bool)
-        or isinstance(end, bool)
-        or start < 1
-        or end is None
-        or end < start
+        isinstance(start, bool) or isinstance(end, bool) or start < 1 or end is None or end < start
     ):
         raise ValueError("evidence line range is invalid")
 

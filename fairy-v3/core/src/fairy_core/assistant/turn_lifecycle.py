@@ -226,7 +226,6 @@ class AssistantTurnLifecycleMixin:
             unit_of_work.commit()
             return turn
 
-
     def _cancel_turn(
         self,
         turn_id: UUID,
@@ -489,9 +488,7 @@ def _evidence_completion_issue(
     cited_values: tuple[str, ...] | None,
 ) -> str | None:
     requirements = (
-        turn.routing_decision.evidence_requirements
-        if turn.routing_decision is not None
-        else ()
+        turn.routing_decision.evidence_requirements if turn.routing_decision is not None else ()
     )
     if not requirements and cited_values is None:
         return None
