@@ -506,7 +506,7 @@ def health_document() -> dict[str, object]:
             "pnpm": _tool_version(("/usr/local/bin/pnpm", "--version")),
             "yarn": _tool_version(("/usr/local/bin/yarn", "--version")),
             "uv": _tool_version(("/usr/local/bin/uv", "--version")),
-            "rg": _tool_version(("/usr/bin/rg", "--version")),
+            "rg": _tool_version(("/usr/bin/rg", "--version"), first_line_only=True),
         },
         "files": {
             "runner": _file_attestation(runner_path),
@@ -1105,7 +1105,11 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _tool_version(argv: tuple[str, ...]) -> str:
+def _tool_version(
+    argv: tuple[str, ...],
+    *,
+    first_line_only: bool = False,
+) -> str:
     try:
         completed = subprocess.run(
             argv,
@@ -1122,10 +1126,16 @@ def _tool_version(argv: tuple[str, ...]) -> str:
         )
     except (OSError, subprocess.SubprocessError) as error:
         raise RunnerProtocolError("Sandbox toolchain could not be attested") from error
-    value = completed.stdout.decode("utf-8", errors="strict").strip()
-    if completed.returncode != 0 or not value or "\n" in value:
+    if completed.returncode != 0 or len(completed.stdout) > 4096:
         raise RunnerProtocolError("Sandbox toolchain version is invalid")
-    return value
+    value = completed.stdout.decode("utf-8", errors="strict").strip()
+    lines = value.splitlines()
+    if not lines or (not first_line_only and len(lines) != 1):
+        raise RunnerProtocolError("Sandbox toolchain version is invalid")
+    selected = lines[0].strip()
+    if not selected or len(selected) > 256 or any(ord(character) < 32 for character in selected):
+        raise RunnerProtocolError("Sandbox toolchain version is invalid")
+    return selected
 
 
 def _file_attestation(path: Path) -> dict[str, int]:

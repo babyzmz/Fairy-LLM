@@ -89,6 +89,24 @@ def test_runner_parses_a_bounded_structured_request() -> None:
     assert decoded_archive == archive
 
 
+def test_tool_version_accepts_a_bounded_multiline_banner_only_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+
+    class Completed:
+        returncode = 0
+        stdout = b"ripgrep 14.1.0\n\nfeatures:+pcre2\n"
+
+    monkeypatch.setattr(runner.subprocess, "run", lambda *_args, **_kwargs: Completed())
+
+    assert runner._tool_version(("/usr/bin/rg", "--version"), first_line_only=True) == (
+        "ripgrep 14.1.0"
+    )
+    with pytest.raises(runner.RunnerProtocolError, match="version is invalid"):
+        runner._tool_version(("/usr/local/bin/node", "--version"))
+
+
 @pytest.mark.parametrize(
     ("override", "message"),
     (
