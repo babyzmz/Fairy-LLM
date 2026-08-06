@@ -73,6 +73,18 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "assistant.turns.pause",
+      "request_model": "AssistantTurnIdInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "assistant.turns.resume",
+      "request_model": "AssistantTurnIdInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_and_cloud"
+    },
+    {
       "name": "assistant.turns.retry",
       "request_model": "AssistantTurnRetryInput",
       "response_model": "AssistantTurnModel",
@@ -91,9 +103,21 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "assistant.turns.steer",
+      "request_model": "AssistantTurnSteerInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_and_cloud"
+    },
+    {
       "name": "assistant.turns.trace.list",
       "request_model": "AssistantTurnIdInput",
       "response_model": "TurnTraceModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "assistant.turns.workflow.get",
+      "request_model": "AssistantTurnIdInput",
+      "response_model": "AssistantWorkflowSummaryModel",
       "transport": "local_and_cloud"
     },
     {

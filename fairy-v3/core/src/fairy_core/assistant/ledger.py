@@ -15,7 +15,13 @@ from fairy_core.assistant.models import (
 )
 from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus, TurnTrace
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
+from fairy_core.assistant.turn_reader import require_turn
 from fairy_core.assistant.work_queue import AssistantTurnWorkClaim
+from fairy_core.assistant.workflow_plan import (
+    ASSISTANT_WORKFLOW_ENGINE_VERSION,
+    apply_pending_assistant_steering,
+    assistant_workflow_node,
+)
 from fairy_core.commanding.models import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
@@ -32,13 +38,11 @@ from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.storage.pagination import StatePage
 from fairy_core.storage.ports import StateStore
 from fairy_core.workflow.models import (
-    WorkflowNode,
+    WorkflowInstructionStatus,
     WorkflowRun,
+    WorkflowRunStatus,
     WorkflowTriggerKind,
 )
-
-ASSISTANT_WORKFLOW_ENGINE_VERSION = 2
-ASSISTANT_WORKFLOW_NODE_KIND = "assistant.turn.execute"
 
 ScopeResolver = Callable[[StateStore, Task], ScopeContract]
 
@@ -430,15 +434,10 @@ class AssistantLedgerApplication:
             project_id=task.project_id,
             engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION,
         )
-        node = WorkflowNode.create(
+        node = assistant_workflow_node(
             run_id=run.id,
-            plan_revision=1,
-            node_key="execute",
-            kind=ASSISTANT_WORKFLOW_NODE_KIND,
-            payload={"turn_id": str(turn.id)},
-            public_summary="Preparing Fairy's response",
-            resource_keys=(f"assistant-turn:{turn.id}",),
-            max_attempts=128,
+            revision=1,
+            turn_id=turn.id,
         )
         unit_of_work.workflows.create(run, nodes=(node,), edges=())
         unit_of_work.workflows.request_pause(run.id)
@@ -571,6 +570,89 @@ class AssistantLedgerApplication:
     def resumable_workflow_turn_ids(self) -> tuple[UUID, ...]:
         with self._unit_of_work_factory() as unit_of_work:
             return unit_of_work.assistant.resumable_workflow_turn_ids()
+
+    def steer_turn(
+        self,
+        *,
+        turn_id: UUID,
+        instruction: str,
+        expected_revision: int,
+        idempotency_key: str,
+    ) -> AssistantTurn:
+        with self._unit_of_work_factory() as unit_of_work:
+            turn = require_turn(unit_of_work, turn_id)
+            if turn.workflow_run_id is None:
+                raise InvalidTransitionError("Legacy Assistant Turn cannot be steered")
+            snapshot = unit_of_work.workflows.get(turn.workflow_run_id)
+            if snapshot is None:
+                raise RuntimeError("Assistant Workflow is unavailable")
+            replay = next(
+                (
+                    value
+                    for value in snapshot.instructions
+                    if value.idempotency_key == idempotency_key
+                ),
+                None,
+            )
+            if replay is not None:
+                unit_of_work.workflows.add_instruction(
+                    turn.workflow_run_id,
+                    instruction=instruction,
+                    expected_revision=expected_revision,
+                    idempotency_key=idempotency_key,
+                )
+                unit_of_work.commit()
+                return turn
+            if turn.status not in {
+                AssistantTurnStatus.RUNNING,
+                AssistantTurnStatus.WAITING_FOR_TOOL,
+            }:
+                raise InvalidTransitionError("Only an active Assistant Turn can be steered")
+            if replay is None and any(
+                value.status is WorkflowInstructionStatus.PENDING for value in snapshot.instructions
+            ):
+                raise InvalidTransitionError("Assistant Workflow already has a pending update")
+            if replay is None and snapshot.run.status is WorkflowRunStatus.WAITING_FOR_APPROVAL:
+                raise InvalidTransitionError(
+                    "Resolve the current approval before updating this task"
+                )
+            workflow_instruction = unit_of_work.workflows.add_instruction(
+                turn.workflow_run_id,
+                instruction=instruction,
+                expected_revision=expected_revision,
+                idempotency_key=idempotency_key,
+            )
+            if replay is None:
+                message = Message.create(
+                    conversation_id=turn.conversation_id,
+                    task_id=turn.task_id,
+                    turn_id=turn.id,
+                    sequence=unit_of_work.assistant.next_message_sequence(turn.conversation_id),
+                    role=MessageRole.USER,
+                    visibility=MessageVisibility.USER,
+                    content=instruction,
+                )
+                unit_of_work.assistant.append_message(message)
+                paused = unit_of_work.workflows.request_pause(turn.workflow_run_id)
+                unit_of_work.commands.append_domain_event(
+                    event_type="assistant.turn.steered",
+                    visibility=EventVisibility.USER,
+                    message="Assistant task requirements updated",
+                    payload={
+                        "turn_id": str(turn.id),
+                        "message_id": str(message.id),
+                        "workflow_run_id": str(turn.workflow_run_id),
+                        "instruction_id": str(workflow_instruction.id),
+                    },
+                    actor="user",
+                    project_id=snapshot.run.project_id,
+                    conversation_id=turn.conversation_id,
+                    task_id=turn.task_id,
+                )
+                if paused.run.status is WorkflowRunStatus.PAUSED:
+                    apply_pending_assistant_steering(unit_of_work, turn.workflow_run_id)
+            unit_of_work.commit()
+        return self.get_turn(turn_id)
 
     def _interrupt_command(self, unit_of_work, turn_id: UUID, run: CommandRun) -> None:
         if run.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}:

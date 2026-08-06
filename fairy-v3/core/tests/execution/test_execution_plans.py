@@ -118,6 +118,46 @@ def test_task_step_and_plan_budgets_reject_invalid_transitions(tmp_path: Path) -
         service.close()
 
 
+def test_execution_plan_budget_only_upgrades_and_persists(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path / "data")
+    try:
+        task = _scratch_task(service)
+        created = service.invoke(
+            "execution_plans.create",
+            _plan_request(task["task"]["id"]),
+        )
+        with service._unit_of_work_factory() as unit_of_work:
+            plan = unit_of_work.state.get_execution_plan(created["plan"]["id"])
+            assert plan is not None
+            expected_revision = plan.revision
+            assert plan.upgrade_budget(
+                max_model_calls=24,
+                max_tool_calls=96,
+                max_duration_seconds=7_200,
+            )
+            unit_of_work.state.update_execution_plan(
+                plan,
+                expected_revision=expected_revision,
+            )
+            unit_of_work.commit()
+
+        fetched = service.invoke(
+            "execution_plans.get",
+            {"task_id": task["task"]["id"]},
+        )["plan"]
+        assert fetched["max_model_calls"] == 24
+        assert fetched["max_tool_calls"] == 96
+        assert fetched["max_duration_seconds"] == 7_200
+        with pytest.raises(ValueError, match="cannot be reduced"):
+            plan.upgrade_budget(
+                max_model_calls=12,
+                max_tool_calls=32,
+                max_duration_seconds=1_800,
+            )
+    finally:
+        service.close()
+
+
 def test_file_batches_are_complete_and_run_in_order(tmp_path: Path) -> None:
     service = build_local_service(tmp_path / "data")
     try:

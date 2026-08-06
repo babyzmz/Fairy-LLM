@@ -3,12 +3,14 @@ from __future__ import annotations
 from uuid import UUID
 
 from fairy_core.assistant.application import AssistantApplication
-from fairy_core.assistant.ledger import (
-    ASSISTANT_WORKFLOW_NODE_KIND,
-    AssistantLedgerApplication,
-)
+from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import AssistantTurnStatus
 from fairy_core.assistant.work_queue import assistant_command_lease_until
+from fairy_core.assistant.workflow_plan import (
+    ASSISTANT_WORKFLOW_NODE_KIND,
+    apply_pending_assistant_steering,
+)
+from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.providers import CancellationToken
 from fairy_core.workflow.models import WorkflowNode
 from fairy_core.workflow.scheduler import (
@@ -31,9 +33,11 @@ class AssistantTurnWorkflowAdapter:
         self,
         application: AssistantApplication,
         ledger: AssistantLedgerApplication,
+        unit_of_work_factory: CoreUnitOfWorkFactory,
     ) -> None:
         self._application = application
         self._ledger = ledger
+        self._unit_of_work_factory = unit_of_work_factory
 
     def heartbeat(self, node: WorkflowNode) -> bool:
         try:
@@ -82,6 +86,13 @@ class AssistantTurnWorkflowAdapter:
             public_summary="Fairy completed the response",
         )
 
+    def replan_after_pause(self, node: WorkflowNode) -> bool:
+        with self._unit_of_work_factory() as unit_of_work:
+            changed = apply_pending_assistant_steering(unit_of_work, node.run_id)
+            if changed:
+                unit_of_work.commit()
+            return changed
+
 
 def build_assistant_workflow_scheduler(
     *,
@@ -92,7 +103,7 @@ def build_assistant_workflow_scheduler(
     adapters = WorkflowAdapterRegistry()
     adapters.register(
         ASSISTANT_WORKFLOW_NODE_KIND,
-        AssistantTurnWorkflowAdapter(application, ledger),
+        AssistantTurnWorkflowAdapter(application, ledger, unit_of_work_factory),
     )
     return WorkflowScheduler(unit_of_work_factory=unit_of_work_factory, adapters=adapters)
 

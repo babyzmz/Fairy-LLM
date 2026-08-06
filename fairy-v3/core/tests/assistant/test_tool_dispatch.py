@@ -1,13 +1,118 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from threading import Barrier, Lock
 from typing import Any
 
+from fairy_core.assistant.candidates import ToolCandidate
+from fairy_core.assistant.parallel_tools import _candidate_batches
 from fairy_core.assistant.tools import ToolResult
+from fairy_core.commanding.registry import build_default_registry
 from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.transports.stdio import build_local_service
 from tests.assistant.support import RecordingToolExecutor, ScriptedProvider
 from tests.assistant.test_application import _scratch_task, _turn
+
+
+class _ParallelReadExecutor:
+    def __init__(self) -> None:
+        self._barrier = Barrier(2)
+        self._lock = Lock()
+        self.calls: list[str] = []
+
+    def execute(self, definition, scope, arguments) -> ToolResult:
+        del scope
+        assert definition.name == "web.search"
+        query = str(arguments["query"])
+        with self._lock:
+            self.calls.append(query)
+        self._barrier.wait(timeout=1.0)
+        return ToolResult.create(
+            public_summary=f"Found {query}",
+            model_content=f"Evidence for {query}",
+            artifact_ids=(),
+        )
+
+
+def test_parallel_read_candidates_with_a_shared_resource_are_serialized() -> None:
+    definition = build_default_registry().get("web.search")
+    assert definition is not None
+    conflicted = replace(
+        definition,
+        concurrency_resource_keys=("external-account:search",),
+    )
+    candidates = (
+        ToolCandidate(call_id="first", name="web.search"),
+        ToolCandidate(call_id="second", name="web.search"),
+    )
+
+    batches = _candidate_batches(
+        candidates,
+        {"web.search": conflicted},
+        max_parallel=2,
+    )
+
+    assert batches == ((candidates[0],), (candidates[1],))
+
+
+def test_independent_read_tools_execute_in_parallel_and_join_in_call_order(
+    tmp_path: Path,
+) -> None:
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-first",
+                    tool_name="web.search",
+                    arguments_fragment='{"query":"first"}',
+                ),
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=2,
+                    tool_call_id="call-second",
+                    tool_name="web.search",
+                    arguments_fragment='{"query":"second"}',
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=3,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(profile_id="scripted", sequence=1, text="Joined"),
+                ModelDelta.done(profile_id="scripted", sequence=2, finish_reason="stop"),
+            ),
+        ]
+    )
+    executor = _ParallelReadExecutor()
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((provider,)),
+        tool_executor=executor,
+    )
+    try:
+        task = _scratch_task(service, "Compare two current sources")
+        turn = _turn(service, task, "turn:parallel-reads")
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+
+        assert completed["status"] == "completed"
+        assert sorted(executor.calls) == ["first", "second"]
+        tool_messages = [
+            message for message in provider.requests[1].messages if message.role.value == "tool"
+        ]
+        assert [message.tool_call_id for message in tool_messages] == [
+            "call-first",
+            "call-second",
+        ]
+        assert completed["workflow_summary"]["tool_invocations_used"] == 2
+        assert completed["workflow_summary"]["model_rounds_used"] == 2
+    finally:
+        service.close()
 
 
 def test_tool_candidates_receive_core_scope_and_repeated_arguments_are_rejected(

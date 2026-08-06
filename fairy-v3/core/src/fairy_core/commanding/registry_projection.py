@@ -27,6 +27,8 @@ def frontend_metadata(
             "profiles": sorted(profile.value for profile in definition.profiles),
             "requires_sandbox": definition.requires_sandbox,
             "idempotent": definition.idempotent,
+            "concurrency_policy": definition.concurrency_policy.value,
+            "concurrency_resource_keys": list(definition.concurrency_resource_keys),
             "model_visible": definition.model_visible,
             "description": definition.description,
             "source": definition.source,

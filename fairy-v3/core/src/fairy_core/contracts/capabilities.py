@@ -15,6 +15,8 @@ class ToolDefinitionMetadataModel(ContractModel):
     profiles: tuple[PermissionProfileModel, ...] = Field(min_length=1, max_length=3)
     requires_sandbox: bool
     idempotent: bool
+    concurrency_policy: Literal["serial", "parallel_read"] = "serial"
+    concurrency_resource_keys: tuple[str, ...] = Field(default=(), max_length=32)
     model_visible: bool
     description: str = Field(min_length=1, max_length=1_000)
     source: Literal["builtin", "skill", "mcp"] = "builtin"

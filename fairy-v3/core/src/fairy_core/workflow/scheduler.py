@@ -57,6 +57,10 @@ class WorkflowCancelled(RuntimeError):
     pass
 
 
+class WorkflowPaused(RuntimeError):
+    pass
+
+
 class WorkflowAdapterRegistry:
     def __init__(self, adapters: Mapping[str, WorkflowNodeAdapter] | None = None) -> None:
         self._adapters = dict(adapters or {})
@@ -346,6 +350,13 @@ class WorkflowScheduler:
                 settled = True
             except Exception:
                 logger.exception("Workflow Run %s could not be cancelled", claim.run_id)
+        except WorkflowPaused:
+            abandoned = self._abandon(claim)
+            settled = abandoned
+            if abandoned:
+                replan = getattr(self._adapters.require(node.kind), "replan_after_pause", None)
+                if callable(replan) and replan(node):
+                    self._wake.set()
         except ProviderCancelledError:
             if active.cancellation.is_interrupted:
                 self._abandon(claim)
@@ -382,13 +393,16 @@ class WorkflowScheduler:
             self._changed.set()
             self._wake.set()
 
-    def _abandon(self, claim: WorkflowAttemptClaim) -> None:
+    def _abandon(self, claim: WorkflowAttemptClaim) -> bool:
         try:
             with self._unit_of_work_factory() as unit_of_work:
-                if unit_of_work.workflows.abandon(claim):
+                abandoned = unit_of_work.workflows.abandon(claim)
+                if abandoned:
                     unit_of_work.commit()
+                return abandoned
         except Exception:
             logger.exception("Workflow node %s could not be abandoned", claim.node_id)
+            return False
 
     def _new_lease_until(self) -> datetime:
         return datetime.now(UTC) + self._lease_duration
@@ -400,6 +414,7 @@ __all__ = [
     "WorkflowCancelled",
     "WorkflowNodeAdapter",
     "WorkflowNodeResult",
+    "WorkflowPaused",
     "WorkflowRetryableError",
     "WorkflowScheduler",
     "WorkflowWaitingForApproval",

@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fairy_core.workflow.models import (
     WorkflowAttemptClaim,
+    WorkflowBudget,
     WorkflowEdge,
     WorkflowInstruction,
     WorkflowNode,
@@ -62,6 +63,13 @@ class WorkflowRepository(Protocol):
         *,
         model_rounds: int = 0,
         tool_invocations: int = 0,
+    ) -> WorkflowSnapshot: ...
+
+    def upgrade_budget(
+        self,
+        run_id: UUID,
+        *,
+        budget: WorkflowBudget,
     ) -> WorkflowSnapshot: ...
 
     def complete(

@@ -109,6 +109,37 @@ class AssistantTurnScheduler:
         self._wake.set()
         return active is not None or cancelled
 
+    def pause(self, turn_id: UUID) -> AssistantTurn:
+        turn = self._ledger.get_turn(turn_id)
+        if turn.workflow_run_id is None:
+            raise ValueError("Legacy Assistant Turn cannot be paused")
+        self._workflow_scheduler.pause(turn.workflow_run_id)
+        return self._ledger.get_turn(turn_id)
+
+    def resume(self, turn_id: UUID) -> AssistantTurn:
+        turn = self._ledger.get_turn(turn_id)
+        if turn.workflow_run_id is None:
+            raise ValueError("Legacy Assistant Turn cannot be resumed")
+        self._workflow_scheduler.resume(turn.workflow_run_id)
+        return self._ledger.get_turn(turn_id)
+
+    def steer(
+        self,
+        *,
+        turn_id: UUID,
+        instruction: str,
+        expected_revision: int,
+        idempotency_key: str,
+    ) -> AssistantTurn:
+        turn = self._ledger.steer_turn(
+            turn_id=turn_id,
+            instruction=instruction,
+            expected_revision=expected_revision,
+            idempotency_key=idempotency_key,
+        )
+        self._workflow_scheduler.wake()
+        return turn
+
     def run(self, turn_id: UUID) -> AssistantTurn:
         turn = self._ledger.get_turn(turn_id)
         if turn.workflow_run_id is not None:

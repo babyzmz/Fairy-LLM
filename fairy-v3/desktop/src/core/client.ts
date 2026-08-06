@@ -10,6 +10,7 @@ import type {
   AssistantTurnCancelInput,
   AssistantTurnCreateInput,
   AssistantTurnRetryInput,
+  AssistantTurnSteerInput,
   ChangesetProposal,
   ConversationCreateInput,
   ConversationDeleteInput,
@@ -727,12 +728,19 @@ export class CoreClient {
     turns: {
       create: (input: AssistantTurnCreateInput) => this.transport.call("assistant.turns.create", input),
       get: (turnId: string) => this.transport.call("assistant.turns.get", { turn_id: turnId }),
+      pause: (turnId: string) => this.transport.call("assistant.turns.pause", { turn_id: turnId }),
       cancel: (input: AssistantTurnCancelInput) => this.transport.call("assistant.turns.cancel", input),
       run: (turnId: string) => this.transport.call("assistant.turns.run", { turn_id: turnId }),
       start: (turnId: string) => this.transport.call("assistant.turns.start", { turn_id: turnId }),
       retry: (input: AssistantTurnRetryInput) => this.transport.call("assistant.turns.retry", input),
+      resume: (turnId: string) => this.transport.call("assistant.turns.resume", { turn_id: turnId }),
+      steer: (input: AssistantTurnSteerInput) => this.transport.call("assistant.turns.steer", input),
       trace: (turnId: string) =>
         this.transport.call("assistant.turns.trace.list", { turn_id: turnId }),
+      workflow: {
+        get: (turnId: string) =>
+          this.transport.call("assistant.turns.workflow.get", { turn_id: turnId }),
+      },
     },
   };
 

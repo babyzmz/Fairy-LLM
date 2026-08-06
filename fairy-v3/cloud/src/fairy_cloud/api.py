@@ -16,10 +16,13 @@ from fairy_core.contracts.models import (
     ArtifactPageModel,
     AssistantTurnCancelInput,
     AssistantTurnCreateInput,
+    AssistantTurnIdInput,
     AssistantTurnModel,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
     AssistantTurnStartInput,
+    AssistantTurnSteerInput,
+    AssistantWorkflowSummaryModel,
     ChangesetProposal,
     CheckpointModel,
     ConversationCreate,
@@ -434,6 +437,14 @@ def create_cloud_app(
         return invoke("assistant.turns.get", {"turn_id": str(turn_id)})
 
     @protected.get(
+        "/assistant/turns/{turn_id}/workflow",
+        operation_id="assistant.turns.workflow.get",
+        response_model=AssistantWorkflowSummaryModel,
+    )
+    def get_assistant_turn_workflow(turn_id: UUID) -> dict[str, Any]:
+        return invoke("assistant.turns.workflow.get", {"turn_id": str(turn_id)})
+
+    @protected.get(
         "/assistant/turns/{turn_id}/trace",
         operation_id="assistant.turns.trace.list",
         response_model=TurnTraceModel,
@@ -464,6 +475,47 @@ def create_cloud_app(
     ) -> dict[str, Any]:
         require_turn_match(turn_id, request.turn_id)
         return invoke("assistant.turns.start", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/assistant/turns/{turn_id}/pause",
+        operation_id="assistant.turns.pause",
+        response_model=AssistantTurnModel,
+    )
+    def pause_assistant_turn(
+        turn_id: UUID,
+        request: AssistantTurnIdInput,
+    ) -> dict[str, Any]:
+        require_turn_match(turn_id, request.turn_id)
+        return invoke("assistant.turns.pause", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/assistant/turns/{turn_id}/resume",
+        operation_id="assistant.turns.resume",
+        response_model=AssistantTurnModel,
+    )
+    def resume_assistant_turn(
+        turn_id: UUID,
+        request: AssistantTurnIdInput,
+    ) -> dict[str, Any]:
+        require_turn_match(turn_id, request.turn_id)
+        return invoke("assistant.turns.resume", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/assistant/turns/{turn_id}/steer",
+        operation_id="assistant.turns.steer",
+        response_model=AssistantTurnModel,
+    )
+    def steer_assistant_turn(
+        turn_id: UUID,
+        request: AssistantTurnSteerInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=512),
+        ],
+    ) -> dict[str, Any]:
+        require_turn_match(turn_id, request.turn_id)
+        require_idempotency_match(request.idempotency_key, idempotency_key)
+        return invoke("assistant.turns.steer", request.model_dump(mode="json"))
 
     @protected.post(
         "/assistant/turns/{turn_id}/run",

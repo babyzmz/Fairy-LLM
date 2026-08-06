@@ -971,6 +971,11 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
                 raise RuntimeError("model generation cannot require approval")
             reclaimed = dispatch.run.status is CommandStatus.RUNNING
             if dispatch.run.status is CommandStatus.QUEUED:
+                self._reserve_workflow_budget_in_unit(
+                    unit_of_work,
+                    turn,
+                    model_rounds=1,
+                )
                 consume_model_budget(unit_of_work, task.id)
                 running = bus.start(
                     dispatch.run.id,

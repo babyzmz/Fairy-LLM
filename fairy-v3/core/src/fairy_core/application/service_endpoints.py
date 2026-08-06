@@ -12,9 +12,11 @@ from fairy_core.contracts.methods import EventListInput, EventSubscribeInput
 from fairy_core.contracts.models import (
     ArtifactIdInput,
     ArtifactListInput,
+    AssistantTurnIdInput,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
     AssistantTurnStartInput,
+    AssistantTurnSteerInput,
     ChangesetProposal,
     DocumentDeleteInput,
     DocumentIdInput,
@@ -51,6 +53,14 @@ from fairy_core.runtime.models import RuntimeExecutorError
 
 
 class CoreServiceEndpointsMixin:
+    def _assistant_workflow_handlers(self) -> dict[str, Any]:
+        return {
+            "assistant.turns.pause": self._pause_assistant_turn,
+            "assistant.turns.resume": self._resume_assistant_turn,
+            "assistant.turns.steer": self._steer_assistant_turn,
+            "assistant.turns.workflow.get": self._get_assistant_turn_workflow,
+        }
+
     def _run_assistant_turn(self, request: BaseModel) -> Any:
         self._extension_service.refresh_registry()
         turn_id = cast(AssistantTurnRunInput, request).turn_id
@@ -60,6 +70,27 @@ class CoreServiceEndpointsMixin:
         self._extension_service.refresh_registry()
         turn_id = cast(AssistantTurnStartInput, request).turn_id
         return self._assistant_scheduler.start(turn_id)
+
+    def _pause_assistant_turn(self, request: BaseModel) -> Any:
+        return self._assistant_scheduler.pause(cast(AssistantTurnIdInput, request).turn_id)
+
+    def _resume_assistant_turn(self, request: BaseModel) -> Any:
+        return self._assistant_scheduler.resume(cast(AssistantTurnIdInput, request).turn_id)
+
+    def _steer_assistant_turn(self, request: BaseModel) -> Any:
+        validated = cast(AssistantTurnSteerInput, request)
+        return self._assistant_scheduler.steer(
+            turn_id=validated.turn_id,
+            instruction=validated.instruction,
+            expected_revision=validated.expected_revision,
+            idempotency_key=validated.idempotency_key,
+        )
+
+    def _get_assistant_turn_workflow(self, request: BaseModel) -> Any:
+        turn = self._assistant_ledger.get_turn(cast(AssistantTurnStartInput, request).turn_id)
+        if turn.workflow_summary is None:
+            raise ValueError("Assistant Turn has no Workflow")
+        return turn.workflow_summary
 
     def _retry_assistant_turn(self, request: BaseModel) -> Any:
         validated = cast(AssistantTurnRetryInput, request)

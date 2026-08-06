@@ -1135,6 +1135,8 @@ const manifest: CapabilityManifest = {
     profiles: ["observe", "standard", "autonomous"],
     requires_sandbox: false,
     idempotent: true,
+    concurrency_policy: "parallel_read",
+    concurrency_resource_keys: [],
     model_visible: true,
     description: "Search public sources.",
     input_schema: { type: "object" },

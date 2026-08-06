@@ -197,6 +197,28 @@ class ExecutionPlan:
         self.repairs_used += 1
         self._touch()
 
+    def upgrade_budget(
+        self,
+        *,
+        max_model_calls: int,
+        max_tool_calls: int,
+        max_duration_seconds: int,
+    ) -> bool:
+        self._require_active()
+        current = (
+            self.max_model_calls,
+            self.max_tool_calls,
+            self.max_duration_seconds,
+        )
+        requested = (max_model_calls, max_tool_calls, max_duration_seconds)
+        if any(value < existing for value, existing in zip(requested, current, strict=True)):
+            raise ValueError("Execution Plan budget cannot be reduced")
+        if requested == current:
+            return False
+        self.max_model_calls, self.max_tool_calls, self.max_duration_seconds = requested
+        self._touch()
+        return True
+
     def pause(self) -> None:
         if self.status is not ExecutionPlanStatus.ACTIVE:
             raise InvalidTransitionError("only an active Execution Plan can pause")

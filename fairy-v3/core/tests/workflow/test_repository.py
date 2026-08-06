@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -316,3 +317,65 @@ def test_budget_reservations_are_durable_and_never_overdraw(tmp_path: Path) -> N
         persisted = unit_of_work.workflows.get(run.id)
     assert persisted is not None
     assert persisted.run.model_rounds_used == 1
+
+
+def test_workflow_budget_only_upgrades_from_normal_to_deep(tmp_path: Path) -> None:
+    factory = _factory(tmp_path / "core.db")
+    run = _run("deep-budget")
+    node = _node(run, "node")
+    with factory() as unit_of_work:
+        unit_of_work.workflows.create(run, nodes=(node,), edges=())
+        upgraded = unit_of_work.workflows.upgrade_budget(
+            run.id,
+            budget=WorkflowBudget.deep(),
+        )
+        unit_of_work.commit()
+
+    assert upgraded.run.budget == WorkflowBudget.deep()
+    with (
+        factory() as unit_of_work,
+        pytest.raises(
+            ValueError,
+            match="only upgrade from normal to deep",
+        ),
+    ):
+        unit_of_work.workflows.upgrade_budget(
+            run.id,
+            budget=WorkflowBudget.normal(),
+        )
+
+
+def test_overdue_workflow_fails_before_claiming_more_work(tmp_path: Path) -> None:
+    factory = _factory(tmp_path / "core.db")
+    budget = WorkflowBudget(
+        tier=WorkflowBudget.normal().tier,
+        max_model_rounds=12,
+        max_tool_invocations=32,
+        max_duration_seconds=1,
+        max_parallel_nodes=2,
+    )
+    now = datetime.now(UTC)
+    run = replace(
+        _run("deadline", budget=budget),
+        created_at=now - timedelta(seconds=2),
+        updated_at=now - timedelta(seconds=2),
+    )
+    node = _node(run, "node")
+    with factory() as unit_of_work:
+        unit_of_work.workflows.create(run, nodes=(node,), edges=())
+        unit_of_work.commit()
+
+    with factory() as unit_of_work:
+        claims = unit_of_work.workflows.claim_ready(
+            worker_id="late-worker",
+            lease_until=now + timedelta(seconds=30),
+            limit=1,
+        )
+        snapshot = unit_of_work.workflows.get(run.id)
+        unit_of_work.commit()
+
+    assert claims == ()
+    assert snapshot is not None
+    assert snapshot.run.status is WorkflowRunStatus.FAILED
+    assert snapshot.run.error_code == "WORKFLOW_DEADLINE_EXCEEDED"
+    assert snapshot.nodes[0].status is WorkflowNodeStatus.CANCELLED

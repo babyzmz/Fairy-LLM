@@ -466,6 +466,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             "assistant.turns.retry": self._retry_assistant_turn,
             "assistant.turns.run": self._run_assistant_turn,
             "assistant.turns.start": self._start_assistant_turn,
+            **self._assistant_workflow_handlers(),
             **self._turn_trace_service.handlers,
             "capabilities.get": self._get_capabilities,
             "changesets.propose": self._propose_changeset,

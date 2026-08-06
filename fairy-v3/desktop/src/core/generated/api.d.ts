@@ -191,6 +191,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/assistant/turns/{turn_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause Assistant Turn */
+        post: operations["assistant.turns.pause"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assistant/turns/{turn_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Assistant Turn */
+        post: operations["assistant.turns.resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/assistant/turns/{turn_id}/retry": {
         parameters: {
             query?: never;
@@ -242,6 +276,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/assistant/turns/{turn_id}/steer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Steer Assistant Turn */
+        post: operations["assistant.turns.steer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/assistant/turns/{turn_id}/trace": {
         parameters: {
             query?: never;
@@ -251,6 +302,23 @@ export interface paths {
         };
         /** Get Assistant Turn Trace */
         get: operations["assistant.turns.trace.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assistant/turns/{turn_id}/workflow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Assistant Turn Workflow */
+        get: operations["assistant.turns.workflow.get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2846,6 +2914,14 @@ export interface components {
              */
             task_id: string;
         };
+        /** AssistantTurnIdInput */
+        AssistantTurnIdInput: {
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+        };
         /** AssistantTurnModel */
         AssistantTurnModel: {
             /** Budget Approval Run Id */
@@ -2956,6 +3032,20 @@ export interface components {
          * @enum {string}
          */
         AssistantTurnStatus: "created" | "running" | "waiting_for_tool" | "completed" | "cancelled" | "failed";
+        /** AssistantTurnSteerInput */
+        AssistantTurnSteerInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Instruction */
+            instruction: string;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+        };
         /** AssistantWorkflowSummaryModel */
         AssistantWorkflowSummaryModel: {
             /** Active Plan Revision */
@@ -7381,6 +7471,17 @@ export interface components {
              * @enum {string}
              */
             approval_policy: "never" | "profile" | "always";
+            /**
+             * Concurrency Policy
+             * @default serial
+             * @enum {string}
+             */
+            concurrency_policy: "serial" | "parallel_read";
+            /**
+             * Concurrency Resource Keys
+             * @default []
+             */
+            concurrency_resource_keys: string[];
             /** Definition Digest */
             definition_digest: string;
             /** Description */
@@ -8493,6 +8594,80 @@ export interface operations {
             };
         };
     };
+    "assistant.turns.pause": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantTurnIdInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantTurnModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "assistant.turns.resume": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantTurnIdInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantTurnModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "assistant.turns.retry": {
         parameters: {
             query?: never;
@@ -8605,6 +8780,44 @@ export interface operations {
             };
         };
     };
+    "assistant.turns.steer": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantTurnSteerInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantTurnModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "assistant.turns.trace.list": {
         parameters: {
             query?: never;
@@ -8625,6 +8838,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TurnTraceModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "assistant.turns.workflow.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantWorkflowSummaryModel"];
                 };
             };
             /** @description Validation Error */

@@ -32,6 +32,11 @@ class ApprovalPolicy(StrEnum):
     ALWAYS = "always"
 
 
+class ToolConcurrency(StrEnum):
+    SERIAL = "serial"
+    PARALLEL_READ = "parallel_read"
+
+
 _TOOL_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _EXTENSION_KEY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9][a-z0-9_-]{0,63}$")
 _CLOSED_INPUT_SCHEMA = MappingProxyType({"type": "object", "additionalProperties": False})
@@ -61,6 +66,8 @@ class ToolDefinition:
     executor: str
     requires_sandbox: bool = False
     idempotent: bool = False
+    concurrency_policy: ToolConcurrency = ToolConcurrency.SERIAL
+    concurrency_resource_keys: tuple[str, ...] = ()
     model_visible: bool = True
     description: str = ""
     source: str = "builtin"
@@ -69,6 +76,7 @@ class ToolDefinition:
     required_extensions: frozenset[str] = frozenset()
     input_schema: Mapping[str, object] = field(default_factory=lambda: _CLOSED_INPUT_SCHEMA)
     definition_digest: str = field(init=False)
+    legacy_definition_digest: str = field(init=False)
 
     def __post_init__(self) -> None:
         if _TOOL_NAME.fullmatch(self.name) is None:
@@ -100,6 +108,17 @@ class ToolDefinition:
             raise ValueError("extension tools require an origin_id")
         if self.name in self.required_operations:
             raise ValueError("tool cannot depend on itself")
+        if self.concurrency_policy is ToolConcurrency.PARALLEL_READ and (
+            self.side_effect not in {SideEffect.NONE, SideEffect.READ}
+            or not self.idempotent
+            or self.approval_policy is not ApprovalPolicy.NEVER
+        ):
+            raise ValueError(
+                "parallel tools must be idempotent, approval-free, and have no write effect"
+            )
+        resource_keys = tuple(sorted({value.strip() for value in self.concurrency_resource_keys}))
+        if any(not value or len(value) > 255 for value in resource_keys):
+            raise ValueError("tool concurrency resource keys are invalid")
         for dependency in self.required_operations:
             if _TOOL_NAME.fullmatch(dependency) is None:
                 raise ValueError("required operation name is invalid")
@@ -115,6 +134,8 @@ class ToolDefinition:
             "executor": self.executor,
             "requires_sandbox": self.requires_sandbox,
             "idempotent": self.idempotent,
+            "concurrency_policy": self.concurrency_policy.value,
+            "concurrency_resource_keys": list(resource_keys),
             "model_visible": self.model_visible,
             "description": description,
             "source": source,
@@ -132,11 +153,25 @@ class ToolDefinition:
                 sort_keys=True,
             ).encode("ascii")
         ).hexdigest()
+        legacy_digest_payload = dict(digest_payload)
+        legacy_digest_payload.pop("concurrency_policy")
+        legacy_digest_payload.pop("concurrency_resource_keys")
+        legacy_digest = hashlib.sha256(
+            json.dumps(
+                legacy_digest_payload,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("ascii")
+        ).hexdigest()
         object.__setattr__(self, "description", description)
         object.__setattr__(self, "source", source)
         object.__setattr__(self, "origin_id", self.origin_id.strip() if self.origin_id else None)
+        object.__setattr__(self, "concurrency_resource_keys", resource_keys)
         object.__setattr__(self, "input_schema", MappingProxyType(schema))
         object.__setattr__(self, "definition_digest", digest)
+        object.__setattr__(self, "legacy_definition_digest", legacy_digest)
 
 
 class ToolRegistry:
@@ -290,6 +325,8 @@ def _tool(
     *,
     sandbox: bool = False,
     idempotent: bool = False,
+    concurrency_policy: ToolConcurrency = ToolConcurrency.SERIAL,
+    concurrency_resource_keys: tuple[str, ...] = (),
     model_visible: bool = True,
     description: str = "",
     input_schema: Mapping[str, object] | None = None,
@@ -303,6 +340,8 @@ def _tool(
         executor=executor,
         requires_sandbox=sandbox,
         idempotent=idempotent,
+        concurrency_policy=concurrency_policy,
+        concurrency_resource_keys=concurrency_resource_keys,
         model_visible=model_visible,
         description=description,
         input_schema=(
@@ -451,6 +490,7 @@ def build_default_registry() -> ToolRegistry:
             all_profiles,
             "web_search",
             idempotent=True,
+            concurrency_policy=ToolConcurrency.PARALLEL_READ,
             description="Search public web or news sources.",
             input_schema={
                 "type": "object",
@@ -473,6 +513,7 @@ def build_default_registry() -> ToolRegistry:
             all_profiles,
             "web_fetch",
             idempotent=True,
+            concurrency_policy=ToolConcurrency.PARALLEL_READ,
             description="Fetch bounded text from one authorized public URL.",
             input_schema={
                 "type": "object",

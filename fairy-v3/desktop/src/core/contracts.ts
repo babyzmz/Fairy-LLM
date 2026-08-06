@@ -110,9 +110,11 @@ export type ArtifactPage = Schemas["ArtifactPageModel"];
 export type AssistantTurn = Schemas["AssistantTurnModel"];
 export type AssistantTurnCancelInput = Schemas["AssistantTurnCancelInput"];
 export type AssistantTurnCreateInput = Schemas["AssistantTurnCreateInput"];
+export type AssistantTurnSteerInput = Schemas["AssistantTurnSteerInput"];
 export type AssistantTurnRetryInput = Schemas["AssistantTurnRetryInput"];
 export type AssistantTurnRunInput = Schemas["AssistantTurnRunInput"];
 export type AssistantTurnStartInput = Schemas["AssistantTurnStartInput"];
+export type AssistantWorkflowSummary = Schemas["AssistantWorkflowSummaryModel"];
 export type CapabilityManifest = Schemas["CapabilityManifestModel"];
 export type SlashCommandMetadata = Schemas["SlashCommandMetadataModel"];
 export type ToolDefinitionMetadata = Schemas["ToolDefinitionMetadataModel"];
@@ -692,6 +694,7 @@ export interface CoreMethodMap {
     result: AssistantTurn;
   };
   "assistant.turns.get": { params: { turn_id: string }; result: AssistantTurn };
+  "assistant.turns.pause": { params: { turn_id: string }; result: AssistantTurn };
   "assistant.turns.cancel": {
     params: AssistantTurnCancelInput;
     result: AssistantTurn;
@@ -707,6 +710,15 @@ export interface CoreMethodMap {
   "assistant.turns.retry": {
     params: AssistantTurnRetryInput;
     result: AssistantTurn;
+  };
+  "assistant.turns.resume": { params: { turn_id: string }; result: AssistantTurn };
+  "assistant.turns.steer": {
+    params: AssistantTurnSteerInput;
+    result: AssistantTurn;
+  };
+  "assistant.turns.workflow.get": {
+    params: { turn_id: string };
+    result: AssistantWorkflowSummary;
   };
   "assistant.turns.trace.list": {
     params: { turn_id: string };

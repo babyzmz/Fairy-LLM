@@ -141,6 +141,8 @@ from fairy_core.contracts.models import (
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
     AssistantTurnStartInput,
+    AssistantTurnSteerInput,
+    AssistantWorkflowSummaryModel,
     CapabilityRequest,
     ChangesetProposal,
     CheckpointModel,
@@ -401,6 +403,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             AssistantTurnIdInput,
             AssistantTurnModel,
         ),
+        "assistant.turns.pause": CoreMethod(
+            "assistant.turns.pause",
+            AssistantTurnIdInput,
+            AssistantTurnModel,
+        ),
         "assistant.turns.retry": CoreMethod(
             "assistant.turns.retry",
             AssistantTurnRetryInput,
@@ -415,6 +422,21 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "assistant.turns.start",
             AssistantTurnStartInput,
             AssistantTurnModel,
+        ),
+        "assistant.turns.resume": CoreMethod(
+            "assistant.turns.resume",
+            AssistantTurnIdInput,
+            AssistantTurnModel,
+        ),
+        "assistant.turns.steer": CoreMethod(
+            "assistant.turns.steer",
+            AssistantTurnSteerInput,
+            AssistantTurnModel,
+        ),
+        "assistant.turns.workflow.get": CoreMethod(
+            "assistant.turns.workflow.get",
+            AssistantTurnIdInput,
+            AssistantWorkflowSummaryModel,
         ),
         "assistant.turns.trace.list": CoreMethod(
             "assistant.turns.trace.list",

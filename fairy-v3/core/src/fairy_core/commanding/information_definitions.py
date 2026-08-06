@@ -4,6 +4,7 @@ from fairy_core.commanding.registry import (
     ApprovalPolicy,
     RiskLevel,
     SideEffect,
+    ToolConcurrency,
     ToolDefinition,
     _tool,
 )
@@ -19,6 +20,7 @@ def build_information_definitions(
         "approval": ApprovalPolicy.NEVER,
         "profiles": profiles,
         "executor": "information_tools",
+        "concurrency_policy": ToolConcurrency.PARALLEL_READ,
     }
     return [
         _tool(
@@ -29,6 +31,7 @@ def build_information_definitions(
             shared["profiles"],
             shared["executor"],
             idempotent=True,
+            concurrency_policy=shared["concurrency_policy"],
             description="Get current weather for an explicitly resolved location.",
             input_schema={
                 "type": "object",
@@ -50,6 +53,7 @@ def build_information_definitions(
             shared["profiles"],
             shared["executor"],
             idempotent=True,
+            concurrency_policy=shared["concurrency_policy"],
             description="Search current news sources with publication provenance.",
             input_schema={
                 "type": "object",
@@ -70,6 +74,7 @@ def build_information_definitions(
             shared["profiles"],
             shared["executor"],
             idempotent=True,
+            concurrency_policy=shared["concurrency_policy"],
             description="Convert the current instant to an IANA time zone.",
             input_schema={
                 "type": "object",
@@ -86,6 +91,7 @@ def build_information_definitions(
             shared["profiles"],
             shared["executor"],
             idempotent=True,
+            concurrency_policy=shared["concurrency_policy"],
             description="Generate an encoded OpenStreetMap search link.",
             input_schema={
                 "type": "object",
@@ -102,6 +108,7 @@ def build_information_definitions(
             shared["profiles"],
             shared["executor"],
             idempotent=True,
+            concurrency_policy=shared["concurrency_policy"],
             description="Get a delayed or last-close stock quote.",
             input_schema={
                 "type": "object",
@@ -118,6 +125,7 @@ def build_information_definitions(
             shared["profiles"],
             shared["executor"],
             idempotent=True,
+            concurrency_policy=shared["concurrency_policy"],
             description="Convert currencies using a dated central-bank reference rate.",
             input_schema={
                 "type": "object",
@@ -138,6 +146,7 @@ def build_information_definitions(
             shared["profiles"],
             shared["executor"],
             idempotent=True,
+            concurrency_policy=shared["concurrency_policy"],
             description="Get a dated cryptocurrency close in the requested market currency.",
             input_schema={
                 "type": "object",

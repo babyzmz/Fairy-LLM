@@ -10,6 +10,7 @@ from fairy_core.commanding.registry import (
     ApprovalPolicy,
     RiskLevel,
     SideEffect,
+    ToolConcurrency,
     ToolDefinition,
 )
 from fairy_core.commanding.types import PermissionProfile
@@ -25,6 +26,8 @@ class ToolDefinitionSnapshot:
     executor: str
     requires_sandbox: bool
     idempotent: bool
+    concurrency_policy: str
+    concurrency_resource_keys: tuple[str, ...]
     model_visible: bool
     description: str
     source: str
@@ -53,6 +56,8 @@ class ToolDefinitionSnapshot:
             executor=self.executor,
             requires_sandbox=self.requires_sandbox,
             idempotent=self.idempotent,
+            concurrency_policy=ToolConcurrency(self.concurrency_policy),
+            concurrency_resource_keys=self.concurrency_resource_keys,
             model_visible=self.model_visible,
             description=self.description,
             source=self.source,
@@ -61,7 +66,12 @@ class ToolDefinitionSnapshot:
             required_extensions=frozenset(self.required_extensions),
             input_schema=schema,
         )
-        if definition.definition_digest != self.definition_digest:
+        compatible_digest = definition.definition_digest == self.definition_digest or (
+            definition.concurrency_policy is ToolConcurrency.SERIAL
+            and not definition.concurrency_resource_keys
+            and definition.legacy_definition_digest == self.definition_digest
+        )
+        if not compatible_digest:
             raise ValueError("Harness Tool Definition digest does not match its content")
         object.__setattr__(self, "profiles", tuple(sorted(self.profiles)))
         object.__setattr__(
@@ -73,6 +83,11 @@ class ToolDefinitionSnapshot:
             self,
             "required_extensions",
             tuple(sorted(self.required_extensions)),
+        )
+        object.__setattr__(
+            self,
+            "concurrency_resource_keys",
+            tuple(sorted(self.concurrency_resource_keys)),
         )
         object.__setattr__(self, "input_schema", MappingProxyType(schema))
 
@@ -87,6 +102,8 @@ class ToolDefinitionSnapshot:
             executor=definition.executor,
             requires_sandbox=definition.requires_sandbox,
             idempotent=definition.idempotent,
+            concurrency_policy=definition.concurrency_policy.value,
+            concurrency_resource_keys=definition.concurrency_resource_keys,
             model_visible=definition.model_visible,
             description=definition.description,
             source=definition.source,
@@ -108,6 +125,10 @@ class ToolDefinitionSnapshot:
             executor=str(payload["executor"]),
             requires_sandbox=bool(payload["requires_sandbox"]),
             idempotent=bool(payload["idempotent"]),
+            concurrency_policy=str(payload.get("concurrency_policy", ToolConcurrency.SERIAL.value)),
+            concurrency_resource_keys=tuple(
+                str(value) for value in payload.get("concurrency_resource_keys", ())
+            ),
             model_visible=bool(payload["model_visible"]),
             description=str(payload["description"]),
             source=str(payload["source"]),
@@ -128,6 +149,8 @@ class ToolDefinitionSnapshot:
             executor=self.executor,
             requires_sandbox=self.requires_sandbox,
             idempotent=self.idempotent,
+            concurrency_policy=ToolConcurrency(self.concurrency_policy),
+            concurrency_resource_keys=self.concurrency_resource_keys,
             model_visible=self.model_visible,
             description=self.description,
             source=self.source,
@@ -147,6 +170,8 @@ class ToolDefinitionSnapshot:
             "executor": self.executor,
             "requires_sandbox": self.requires_sandbox,
             "idempotent": self.idempotent,
+            "concurrency_policy": self.concurrency_policy,
+            "concurrency_resource_keys": list(self.concurrency_resource_keys),
             "model_visible": self.model_visible,
             "description": self.description,
             "source": self.source,

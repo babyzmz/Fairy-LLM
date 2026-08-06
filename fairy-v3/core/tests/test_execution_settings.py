@@ -134,6 +134,8 @@ def test_capability_manifest_uses_persisted_policy_and_core_health(tmp_path: Pat
             "profiles": ["autonomous"],
             "requires_sandbox": True,
             "idempotent": False,
+            "concurrency_policy": "serial",
+            "concurrency_resource_keys": [],
             "model_visible": True,
             "description": (
                 "Run a terminating validation or build argv inside the attested Task-bound "

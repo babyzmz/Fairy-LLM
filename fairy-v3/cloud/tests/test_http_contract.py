@@ -449,6 +449,25 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
         created_response.raise_for_status()
         created = created_response.json()
         fetched = await client.get(f"/v1/assistant/turns/{created['id']}")
+        paused = await client.post(
+            f"/v1/assistant/turns/{created['id']}/pause",
+            json={"turn_id": created["id"]},
+        )
+        workflow = await client.get(f"/v1/assistant/turns/{created['id']}/workflow")
+        resumed = await client.post(
+            f"/v1/assistant/turns/{created['id']}/resume",
+            json={"turn_id": created["id"]},
+        )
+        mismatched_steer = await client.post(
+            f"/v1/assistant/turns/{created['id']}/steer",
+            headers={"Idempotency-Key": "different"},
+            json={
+                "turn_id": created["id"],
+                "instruction": "Use current implementation evidence.",
+                "expected_revision": 1,
+                "idempotency_key": "http:assistant:steer",
+            },
+        )
         messages = await client.get(
             "/v1/messages",
             params={"conversation_id": conversation_id},
@@ -490,6 +509,11 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
     assert mismatched_header.status_code == 409
     assert mismatched_header.json()["detail"]["code"] == "SCOPE_MISMATCH"
     assert fetched.json() == created
+    assert paused.json()["workflow_summary"]["status"] == "paused"
+    assert workflow.json()["status"] == "paused"
+    assert resumed.json()["workflow_summary"]["status"] == "queued"
+    assert mismatched_steer.status_code == 409
+    assert mismatched_steer.json()["detail"]["code"] == "SCOPE_MISMATCH"
     assert [(item["role"], item["content"]) for item in messages.json()["items"]] == [
         ("user", "Explain Fairy")
     ]

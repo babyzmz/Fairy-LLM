@@ -7,6 +7,7 @@ from fairy_core.commanding.registry import (
     ApprovalPolicy,
     RiskLevel,
     SideEffect,
+    ToolConcurrency,
     ToolDefinition,
     ToolRegistry,
     build_default_registry,
@@ -58,6 +59,33 @@ def test_tool_definition_rejects_permissive_argument_schemas() -> None:
             executor="unsafe",
             input_schema={"type": "object", "additionalProperties": True},
         )
+
+
+def test_parallel_tool_metadata_requires_a_safe_idempotent_read() -> None:
+    with pytest.raises(ValueError, match="parallel tools"):
+        ToolDefinition(
+            name="unsafe.parallel_write",
+            side_effect=SideEffect.WRITE,
+            risk_level=RiskLevel.LOW,
+            approval_policy=ApprovalPolicy.NEVER,
+            profiles=frozenset({PermissionProfile.AUTONOMOUS}),
+            executor="unsafe",
+            idempotent=True,
+            concurrency_policy=ToolConcurrency.PARALLEL_READ,
+        )
+
+    registry = build_default_registry()
+    web_search = registry.get("web.search")
+    weather = registry.get("info.weather")
+    browser_snapshot = registry.get("browser.snapshot")
+    assert web_search is not None
+    assert weather is not None
+    assert browser_snapshot is not None
+    assert web_search.concurrency_policy is ToolConcurrency.PARALLEL_READ
+    assert weather.concurrency_policy is ToolConcurrency.PARALLEL_READ
+    assert browser_snapshot.concurrency_policy is ToolConcurrency.SERIAL
+    metadata = {item["name"]: item for item in registry.frontend_metadata()}
+    assert metadata["web.search"]["concurrency_policy"] == "parallel_read"
 
 
 def test_tool_definition_bounds_untrusted_public_descriptions() -> None:

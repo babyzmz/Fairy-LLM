@@ -468,9 +468,7 @@ def test_manual_model_classifies_evidence_and_rejects_uncited_plain_text(
 
         assert failed["status"] == "failed"
         assert failed["error_code"] == "EVIDENCE_CITATION_REQUIRED"
-        assert failed["routing_decision"]["evidence_requirements"] == [
-            "workspace_structure"
-        ]
+        assert failed["routing_decision"]["evidence_requirements"] == ["workspace_structure"]
         assert failed["routing_decision"]["evidence_classified"] is True
         direct_answer_tool = qwen.requests[1].tools[0]
         assert direct_answer_tool.name == "direct_answer"
@@ -871,6 +869,9 @@ def test_multi_model_review_streams_only_the_single_final_answer(tmp_path: Path)
         assert completed["status"] == "completed"
         assert completed["routing_decision"]["primary_model_id"] == GLM_MODEL_ID
         assert completed["routing_decision"]["reviewer_model_id"] == DEEPSEEK_MODEL_ID
+        assert completed["workflow_summary"]["budget_tier"] == "deep"
+        assert completed["workflow_summary"]["max_model_rounds"] == 24
+        assert completed["workflow_summary"]["max_tool_invocations"] == 96
         assert [(item["role"], item["content"]) for item in messages] == [
             ("user", "Resolve a difficult design tradeoff"),
             ("assistant", "Reviewed final answer."),

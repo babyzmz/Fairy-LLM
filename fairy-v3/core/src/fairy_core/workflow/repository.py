@@ -19,6 +19,8 @@ from fairy_core.storage.schema import (
     workflow_runs,
 )
 from fairy_core.workflow.approval_repository import WorkflowApprovalRepositoryMixin
+from fairy_core.workflow.budget_repository import WorkflowBudgetRepositoryMixin
+from fairy_core.workflow.deadline_repository import WorkflowDeadlineRepositoryMixin
 from fairy_core.workflow.errors import (
     WorkflowBudgetExceeded,
     WorkflowFenceError,
@@ -63,7 +65,11 @@ _NODE_TERMINAL = {
 }
 
 
-class SqlAlchemyWorkflowRepository(WorkflowApprovalRepositoryMixin):
+class SqlAlchemyWorkflowRepository(
+    WorkflowApprovalRepositoryMixin,
+    WorkflowBudgetRepositoryMixin,
+    WorkflowDeadlineRepositoryMixin,
+):
     def __init__(self, connection: Connection, *, tenant_id: str) -> None:
         self._connection = connection
         self._tenant_id = normalize_tenant_id(tenant_id)
@@ -255,6 +261,7 @@ class SqlAlchemyWorkflowRepository(WorkflowApprovalRepositoryMixin):
         now = datetime.now(UTC)
         if not worker_id.strip() or limit < 1 or lease_until <= now:
             raise ValueError("Workflow claim parameters are invalid")
+        self._expire_overdue(now)
         self._reclaim_expired(now)
         rows = (
             self._connection.execute(
@@ -408,49 +415,13 @@ class SqlAlchemyWorkflowRepository(WorkflowApprovalRepositoryMixin):
         now = datetime.now(UTC)
         if lease_until <= now:
             raise ValueError("Workflow lease renewal must extend into the future")
+        self._expire_overdue(now)
         changed = self._connection.execute(
             update(workflow_attempts)
             .where(*self._claim_predicates(claim, require_live=True))
             .values(lease_until=lease_until)
         ).rowcount
         return changed == 1
-
-    def reserve_budget(
-        self,
-        run_id: UUID,
-        *,
-        model_rounds: int = 0,
-        tool_invocations: int = 0,
-    ) -> WorkflowSnapshot:
-        if model_rounds < 0 or tool_invocations < 0 or not (model_rounds or tool_invocations):
-            raise ValueError("Workflow budget reservation must be positive")
-        run = run_from_row(self._locked_run(run_id))
-        if run.status in _RUN_TERMINAL:
-            raise WorkflowBudgetExceeded("Terminal Workflow cannot reserve budget")
-        next_model_rounds = run.model_rounds_used + model_rounds
-        next_tool_invocations = run.tool_invocations_used + tool_invocations
-        if (
-            next_model_rounds > run.budget.max_model_rounds
-            or next_tool_invocations > run.budget.max_tool_invocations
-        ):
-            raise WorkflowBudgetExceeded("Workflow execution budget is exhausted")
-        self._connection.execute(
-            update(workflow_runs)
-            .where(
-                workflow_runs.c.tenant_id == self._tenant_id,
-                workflow_runs.c.id == str(run_id),
-                workflow_runs.c.model_rounds_used == run.model_rounds_used,
-                workflow_runs.c.tool_invocations_used == run.tool_invocations_used,
-            )
-            .values(
-                model_rounds_used=next_model_rounds,
-                tool_invocations_used=next_tool_invocations,
-                updated_at=datetime.now(UTC),
-            )
-        )
-        snapshot = self.get(run_id)
-        assert snapshot is not None
-        return snapshot
 
     def complete(
         self,

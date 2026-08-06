@@ -323,6 +323,12 @@ class AssistantTurnRetryInput(AssistantTurnIdInput):
     idempotency_key: str = Field(min_length=1, max_length=512)
 
 
+class AssistantTurnSteerInput(AssistantTurnIdInput):
+    instruction: str = Field(min_length=1, max_length=8_000)
+    expected_revision: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
 class MessageListInput(CollectionPageInput):
     conversation_id: UUID
 
