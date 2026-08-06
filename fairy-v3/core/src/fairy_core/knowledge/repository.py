@@ -29,6 +29,18 @@ from fairy_core.knowledge.models import (
     KnowledgeSyncRun,
     KnowledgeSyncStatus,
 )
+from fairy_core.knowledge.repository_records import (
+    collection_from_row,
+    collection_values,
+    manifest_values,
+    revision_from_row,
+    revision_values,
+    snapshot_values,
+    source_from_row,
+    source_values,
+    sync_run_from_row,
+    sync_run_values,
+)
 from fairy_core.knowledge.schema import (
     harness_context_manifests,
     knowledge_collections,
@@ -75,7 +87,7 @@ class SqlAlchemyKnowledgeRepository:
             raise ValueError("Knowledge Source and Collection do not share a Scope")
         with self._session.write() as connection:
             existing = self._source_row(connection, source.id)
-            values = self._source_values(source)
+            values = source_values(self._tenant_id, source)
             if existing is None:
                 connection.execute(self._insert(knowledge_sources).values(**values))
             else:
@@ -113,9 +125,9 @@ class SqlAlchemyKnowledgeRepository:
                 .mappings()
                 .first()
             )
-            collection_values = self._collection_values(collection)
+            collection_record = collection_values(self._tenant_id, collection)
             if collection_row is None:
-                connection.execute(self._insert(knowledge_collections).values(**collection_values))
+                connection.execute(self._insert(knowledge_collections).values(**collection_record))
             else:
                 connection.execute(
                     update(knowledge_collections)
@@ -126,7 +138,7 @@ class SqlAlchemyKnowledgeRepository:
                     .values(
                         **{
                             key: value
-                            for key, value in collection_values.items()
+                            for key, value in collection_record.items()
                             if key not in {"id", "source_id", "created_at"}
                         }
                     )
@@ -135,7 +147,7 @@ class SqlAlchemyKnowledgeRepository:
     def get_source(self, source_id: UUID) -> KnowledgeSource | None:
         with self._session.read() as connection:
             row = self._source_row(connection, source_id)
-        return self._source_from_row(row) if row is not None else None
+        return source_from_row(row) if row is not None else None
 
     def list_sources(self, project_id: UUID) -> tuple[KnowledgeSource, ...]:
         with self._session.read() as connection:
@@ -151,7 +163,7 @@ class SqlAlchemyKnowledgeRepository:
                 .mappings()
                 .all()
             )
-        return tuple(self._source_from_row(row) for row in rows)
+        return tuple(source_from_row(row) for row in rows)
 
     def get_collection_for_source(self, source_id: UUID) -> KnowledgeCollection | None:
         with self._session.read() as connection:
@@ -165,7 +177,7 @@ class SqlAlchemyKnowledgeRepository:
                 .mappings()
                 .first()
             )
-        return self._collection_from_row(row) if row is not None else None
+        return collection_from_row(row) if row is not None else None
 
     def list_collections(self, project_id: UUID) -> tuple[KnowledgeCollection, ...]:
         with self._session.read() as connection:
@@ -184,12 +196,12 @@ class SqlAlchemyKnowledgeRepository:
                 .mappings()
                 .all()
             )
-        return tuple(self._collection_from_row(row) for row in rows)
+        return tuple(collection_from_row(row) for row in rows)
 
     def enqueue_sync_run(self, run: KnowledgeSyncRun) -> KnowledgeSyncRun:
         if run.status is not KnowledgeSyncStatus.QUEUED:
             raise ValueError("Only a queued Knowledge Sync can be enqueued")
-        values = self._sync_run_values(run)
+        values = sync_run_values(self._tenant_id, run)
         with self._session.write() as connection:
             inserted = connection.execute(
                 self._insert(knowledge_sync_runs)
@@ -215,7 +227,7 @@ class SqlAlchemyKnowledgeRepository:
             )
         if row is None:
             raise VersionConflictError("Knowledge Sync could not be enqueued")
-        recovered = self._sync_run_from_row(row)
+        recovered = sync_run_from_row(row)
         if (
             recovered.source_id != run.source_id
             or recovered.expected_source_revision != run.expected_source_revision
@@ -235,7 +247,7 @@ class SqlAlchemyKnowledgeRepository:
                 .mappings()
                 .first()
             )
-        return self._sync_run_from_row(row) if row is not None else None
+        return sync_run_from_row(row) if row is not None else None
 
     def resumable_sync_runs(self) -> tuple[KnowledgeSyncRun, ...]:
         with self._session.read() as connection:
@@ -257,7 +269,7 @@ class SqlAlchemyKnowledgeRepository:
                 .mappings()
                 .all()
             )
-        return tuple(self._sync_run_from_row(row) for row in rows)
+        return tuple(sync_run_from_row(row) for row in rows)
 
     def claim_next_sync_run(
         self,
@@ -409,7 +421,7 @@ class SqlAlchemyKnowledgeRepository:
             KnowledgeSyncStatus.FAILED,
         }:
             raise ValueError("Knowledge Sync result must be completed or failed")
-        values = self._sync_run_values(run)
+        values = sync_run_values(self._tenant_id, run)
         with self._session.write() as connection:
             result = connection.execute(
                 update(knowledge_sync_runs)
@@ -510,7 +522,7 @@ class SqlAlchemyKnowledgeRepository:
                 .mappings()
                 .one()
             )
-        return self._sync_run_from_row(updated)
+        return sync_run_from_row(updated)
 
     def synchronize(
         self,
@@ -626,7 +638,9 @@ class SqlAlchemyKnowledgeRepository:
                     source_cursor=source.sync_cursor,
                 )
                 connection.execute(
-                    self._insert(knowledge_revisions).values(**self._revision_values(revision))
+                    self._insert(knowledge_revisions).values(
+                        **revision_values(self._tenant_id, revision)
+                    )
                 )
                 connection.execute(
                     update(knowledge_items)
@@ -702,7 +716,7 @@ class SqlAlchemyKnowledgeRepository:
                 .mappings()
                 .all()
             )
-        return tuple(self._revision_from_row(row) for row in rows)
+        return tuple(revision_from_row(row) for row in rows)
 
     def append_snapshot(
         self,
@@ -711,7 +725,11 @@ class SqlAlchemyKnowledgeRepository:
         request_fingerprint: str,
     ) -> KnowledgeSnapshot:
         _digest(request_fingerprint, "request_fingerprint")
-        values = self._snapshot_values(snapshot, request_fingerprint=request_fingerprint)
+        values = snapshot_values(
+            self._tenant_id,
+            snapshot,
+            request_fingerprint=request_fingerprint,
+        )
         with self._session.write() as connection:
             inserted = connection.execute(
                 self._insert(knowledge_snapshots).values(**values).on_conflict_do_nothing()
@@ -797,7 +815,7 @@ class SqlAlchemyKnowledgeRepository:
             return self._snapshot_from_row(connection, row) if row is not None else None
 
     def append_manifest(self, manifest: HarnessContextManifest) -> HarnessContextManifest:
-        values = self._manifest_values(manifest)
+        values = manifest_values(self._tenant_id, manifest)
         with self._session.write() as connection:
             inserted = connection.execute(
                 self._insert(harness_context_manifests).values(**values).on_conflict_do_nothing()
@@ -890,7 +908,7 @@ class SqlAlchemyKnowledgeRepository:
                 .mappings()
                 .first()
             )
-        return self._revision_from_row(row) if row is not None else None
+        return revision_from_row(row) if row is not None else None
 
     def search_snapshot(
         self,
@@ -932,7 +950,7 @@ class SqlAlchemyKnowledgeRepository:
                 .all()
             )
         matches = [
-            self._revision_from_row(row)
+            revision_from_row(row)
             for row in rows
             if normalized
             in " ".join(
@@ -1029,133 +1047,6 @@ class SqlAlchemyKnowledgeRepository:
             if self._session.dialect_name == "postgresql"
             else sqlite_insert(table)
         )
-
-    def _source_values(self, source: KnowledgeSource) -> dict[str, Any]:
-        return {
-            "tenant_id": self._tenant_id,
-            "id": str(source.id),
-            "project_id": str(source.project_id),
-            "kind": source.kind.value,
-            "device_id": source.device_id,
-            "display_name": source.display_name,
-            "display_path": source.display_path,
-            "status": source.status.value,
-            "revision": source.revision,
-            "sync_cursor": source.sync_cursor,
-            "created_at": source.created_at,
-            "updated_at": source.updated_at,
-        }
-
-    def _collection_values(self, collection: KnowledgeCollection) -> dict[str, Any]:
-        return {
-            "tenant_id": self._tenant_id,
-            "id": str(collection.id),
-            "source_id": str(collection.source_id),
-            "project_id": str(collection.project_id),
-            "read_scope": collection.read_scope,
-            "allowed_directories": list(collection.allowed_directories),
-            "filters": dict(collection.filters),
-            "managed_directory": collection.managed_directory,
-            "scope_kind": collection.scope_kind,
-            "revision": collection.revision,
-            "created_at": collection.created_at,
-            "updated_at": collection.updated_at,
-        }
-
-    def _revision_values(self, revision: KnowledgeRevision) -> dict[str, Any]:
-        return {
-            "tenant_id": self._tenant_id,
-            "id": str(revision.id),
-            "item_id": str(revision.item_id),
-            "source_id": str(revision.source_id),
-            "project_id": str(revision.project_id),
-            "revision": revision.revision,
-            "relative_path": revision.relative_path,
-            "title": revision.title,
-            "kind": revision.kind,
-            "content": revision.content,
-            "content_hash": revision.content_hash,
-            "revision_hash": revision.revision_hash,
-            "links": list(revision.links),
-            "frontmatter": dict(revision.frontmatter),
-            "provenance": dict(revision.provenance),
-            "source_cursor": revision.source_cursor,
-            "created_at": revision.created_at,
-        }
-
-    def _snapshot_values(
-        self,
-        snapshot: KnowledgeSnapshot,
-        *,
-        request_fingerprint: str,
-    ) -> dict[str, Any]:
-        return {
-            "tenant_id": self._tenant_id,
-            "id": str(snapshot.id),
-            "project_id": str(snapshot.project_id) if snapshot.project_id else None,
-            "conversation_id": str(snapshot.conversation_id),
-            "task_id": str(snapshot.task_id),
-            "source_cursor": snapshot.source_cursor,
-            "status": snapshot.status.value,
-            "degraded_reason": snapshot.degraded_reason,
-            "content_hash": snapshot.content_hash,
-            "request_fingerprint": request_fingerprint,
-            "created_at": snapshot.created_at,
-        }
-
-    def _manifest_values(self, manifest: HarnessContextManifest) -> dict[str, Any]:
-        return {
-            "tenant_id": self._tenant_id,
-            "id": str(manifest.id),
-            "task_id": str(manifest.task_id),
-            "scope_digest": manifest.scope_digest,
-            "workspace_id": str(manifest.workspace_id),
-            "workspace_version_id": (
-                str(manifest.workspace_version_id) if manifest.workspace_version_id else None
-            ),
-            "memory_snapshot_id": str(manifest.memory_snapshot_id),
-            "memory_snapshot_hash": manifest.memory_snapshot_hash,
-            "knowledge_snapshot_id": str(manifest.knowledge_snapshot_id),
-            "knowledge_snapshot_hash": manifest.knowledge_snapshot_hash,
-            "tool_registry_generation": manifest.tool_registry_generation,
-            "tool_registry_digest": manifest.tool_registry_digest,
-            "tool_definitions": [
-                snapshot.canonical_payload() for snapshot in manifest.tool_definitions
-            ],
-            "skill_package_digests": list(manifest.skill_package_digests),
-            "mcp_capability_snapshot": list(manifest.mcp_capability_snapshot),
-            "model_selection": dict(manifest.model_selection),
-            "budget": dict(manifest.budget),
-            "persona_version": manifest.persona_version,
-            "persona_digest": manifest.persona_digest,
-            "persona_instruction": manifest.persona_instruction,
-            "content_hash": manifest.content_hash,
-            "created_at": manifest.created_at,
-        }
-
-    def _sync_run_values(self, run: KnowledgeSyncRun) -> dict[str, Any]:
-        return {
-            "tenant_id": self._tenant_id,
-            "id": str(run.id),
-            "source_id": str(run.source_id),
-            "project_id": str(run.project_id),
-            "status": run.status.value,
-            "expected_source_revision": run.expected_source_revision,
-            "request_fingerprint": run.request_fingerprint,
-            "source_cursor": run.source_cursor,
-            "scanned_count": run.scanned_count,
-            "changed_count": run.changed_count,
-            "deleted_count": run.deleted_count,
-            "failed_count": run.failed_count,
-            "error_code": run.error_code,
-            "lease_owner": run.lease_owner,
-            "lease_until": run.lease_until,
-            "lease_fence": run.lease_fence,
-            "attempts": run.attempts,
-            "cancellation_revision": run.cancellation_revision,
-            "started_at": run.started_at,
-            "completed_at": run.completed_at,
-        }
 
     @staticmethod
     def _source_from_row(row: Mapping[str, Any]) -> KnowledgeSource:

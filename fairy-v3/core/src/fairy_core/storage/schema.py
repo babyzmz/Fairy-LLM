@@ -18,7 +18,6 @@ from sqlalchemy import (
 
 from fairy_core.persistence.tenant import TENANT_ID_LENGTH
 from fairy_core.storage.assistant_attempt_schema import build_assistant_attempt_tables
-from fairy_core.storage.assistant_work_schema import build_assistant_work_table
 from fairy_core.storage.execution_settings_schema import build_execution_settings_tables
 from fairy_core.storage.history_schema import (
     build_history_indexes,
@@ -444,8 +443,6 @@ assistant_turns = Table(
         name="fk_core_assistant_turns_workflow_run",
     ),
 )
-
-assistant_turn_work = build_assistant_work_table(state_metadata, assistant_turns)
 
 assistant_provider_attempts, assistant_message_sequences = build_assistant_attempt_tables(
     state_metadata,

@@ -11,6 +11,10 @@ from pydantic import BaseModel, ValidationError
 from fairy_core.application.ambient_dialogue_service import AmbientDialogueService
 from fairy_core.application.assistant_cancellation import AssistantCancellationMixin
 from fairy_core.application.core import CoreApplication
+from fairy_core.application.execution_helpers import (
+    execution_plan_requests_preview,
+    tool_result_changeset_id,
+)
 from fairy_core.application.extension_service import ExtensionService
 from fairy_core.application.history_service import history_service_handlers
 from fairy_core.application.knowledge_service import knowledge_service_handlers
@@ -445,7 +449,6 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         )
         self._workflow_scheduler.start()
         self._assistant_scheduler = AssistantTurnScheduler(
-            application=self._assistant_application,
             ledger=self._assistant_ledger,
             workflow_scheduler=self._workflow_scheduler,
         )
@@ -849,7 +852,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
                 execution_target=scope.execution_target,
             )
         except RuntimeTemplateError as error:
-            if _execution_plan_requests_preview(manifest):
+            if execution_plan_requests_preview(manifest):
                 return (
                     "The generated files do not form a runnable Preview "
                     f"({error.error_code}). Create the complete planned entrypoint before "
@@ -1162,7 +1165,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
                 if (
                     invocation.tool_name == "edit.propose_changeset"
                     and invocation.status is ToolInvocationStatus.COMPLETED
-                    and _tool_result_changeset_id(invocation.model_content) == approval.changeset_id
+                    and tool_result_changeset_id(invocation.model_content) == approval.changeset_id
                 ):
                     matches.append(invocation)
         if len(matches) > 1:
@@ -1170,45 +1173,6 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
                 "Changeset approval matches multiple Assistant Tool Invocations"
             )
         return matches[0] if matches else None
-
-
-def _execution_plan_requests_preview(manifest: Mapping[str, Any]) -> bool:
-    entrypoints = manifest.get("entrypoints")
-    if isinstance(entrypoints, list) and any(
-        isinstance(value, str) and value.strip() for value in entrypoints
-    ):
-        return True
-    files = manifest.get("files")
-    if not isinstance(files, list):
-        return False
-    preview_markers = {
-        "index.html",
-        "package.json",
-        "pyproject.toml",
-        "requirements.txt",
-        "fairy.runtime.json",
-    }
-    return any(
-        isinstance(item, dict)
-        and isinstance(item.get("path"), str)
-        and str(item["path"]).replace("\\", "/").rsplit("/", 1)[-1] in preview_markers
-        for item in files
-    )
-
-
-def _tool_result_changeset_id(content: str | None) -> UUID | None:
-    if not content:
-        return None
-    try:
-        payload = json.loads(content)
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    try:
-        return UUID(str(payload.get("changeset_id")))
-    except (TypeError, ValueError):
-        return None
 
 
 __all__ = ["CoreMethodNotFoundError", "CoreResponseValidationError", "CoreService"]

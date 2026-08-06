@@ -4,7 +4,10 @@ from pathlib import Path
 
 from sqlalchemy.engine import Engine
 
-from fairy_core.assistant.sqlite_migrations import migrate_assistant_workflow_binding
+from fairy_core.assistant.sqlite_migrations import (
+    migrate_assistant_workflow_binding,
+    remove_legacy_assistant_turn_work,
+)
 from fairy_core.commanding.schema import command_metadata
 from fairy_core.commanding.sqlite_migrations import (
     migrate_pre_tenant_ledger,
@@ -54,6 +57,7 @@ def create_sqlite_core_engine(
         state_metadata.create_all(engine)
         migrate_assistant_model_routing(engine)
         migrate_assistant_workflow_binding(engine)
+        remove_legacy_assistant_turn_work(engine)
         migrate_assistant_evidence(engine)
         migrate_workspace_identity(engine)
         migrate_runtime_workspace_binding(engine)

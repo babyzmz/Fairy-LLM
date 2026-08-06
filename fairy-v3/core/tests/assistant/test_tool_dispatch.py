@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from statistics import median
 from threading import Barrier, Lock
+from time import monotonic, sleep
 from typing import Any
 
 from fairy_core.assistant.candidates import ToolCandidate
@@ -20,14 +22,20 @@ class _ParallelReadExecutor:
         self._barrier = Barrier(2)
         self._lock = Lock()
         self.calls: list[str] = []
+        self.timings: dict[str, tuple[float, float]] = {}
 
     def execute(self, definition, scope, arguments) -> ToolResult:
         del scope
         assert definition.name == "web.search"
         query = str(arguments["query"])
+        started_at = monotonic()
         with self._lock:
             self.calls.append(query)
         self._barrier.wait(timeout=1.0)
+        sleep(0.06)
+        finished_at = monotonic()
+        with self._lock:
+            self.timings[query] = (started_at, finished_at)
         return ToolResult.create(
             public_summary=f"Found {query}",
             model_content=f"Evidence for {query}",
@@ -62,23 +70,19 @@ def test_independent_read_tools_execute_in_parallel_and_join_in_call_order(
     provider = ScriptedProvider(
         [
             (
-                ModelDelta.tool_call(
-                    profile_id="scripted",
-                    sequence=1,
-                    tool_call_id="call-first",
-                    tool_name="web.search",
-                    arguments_fragment='{"query":"first"}',
-                ),
-                ModelDelta.tool_call(
-                    profile_id="scripted",
-                    sequence=2,
-                    tool_call_id="call-second",
-                    tool_name="web.search",
-                    arguments_fragment='{"query":"second"}',
+                *(
+                    ModelDelta.tool_call(
+                        profile_id="scripted",
+                        sequence=index + 1,
+                        tool_call_id=f"call-{index}",
+                        tool_name="web.search",
+                        arguments_fragment=f'{{"query":"query-{index}"}}',
+                    )
+                    for index in range(6)
                 ),
                 ModelDelta.done(
                     profile_id="scripted",
-                    sequence=3,
+                    sequence=7,
                     finish_reason="tool_calls",
                 ),
             ),
@@ -101,15 +105,25 @@ def test_independent_read_tools_execute_in_parallel_and_join_in_call_order(
         completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
 
         assert completed["status"] == "completed"
-        assert sorted(executor.calls) == ["first", "second"]
+        assert sorted(executor.calls) == [f"query-{index}" for index in range(6)]
         tool_messages = [
             message for message in provider.requests[1].messages if message.role.value == "tool"
         ]
         assert [message.tool_call_id for message in tool_messages] == [
-            "call-first",
-            "call-second",
+            f"call-{index}" for index in range(6)
         ]
-        assert completed["workflow_summary"]["tool_invocations_used"] == 2
+        ratios = []
+        for first_index in range(0, 6, 2):
+            pair = [
+                executor.timings[f"query-{index}"] for index in range(first_index, first_index + 2)
+            ]
+            serial_baseline = sum(finished - started for started, finished in pair)
+            parallel_elapsed = max(finished for _started, finished in pair) - min(
+                started for started, _finished in pair
+            )
+            ratios.append(parallel_elapsed / serial_baseline)
+        assert median(ratios) <= 0.75
+        assert completed["workflow_summary"]["tool_invocations_used"] == 6
         assert completed["workflow_summary"]["model_rounds_used"] == 2
     finally:
         service.close()

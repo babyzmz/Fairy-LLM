@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy import inspect, text
 
-from fairy_core.assistant.sqlite_migrations import migrate_assistant_workflow_binding
+from fairy_core.assistant.sqlite_migrations import (
+    migrate_assistant_workflow_binding,
+    remove_legacy_assistant_turn_work,
+)
 from fairy_core.commanding import SqlAlchemyCommandLedger
 from fairy_core.commanding.registry import RiskLevel
 from fairy_core.commanding.schema import command_metadata
@@ -234,6 +237,69 @@ def test_assistant_workflow_binding_preserves_legacy_turn_engine(tmp_path: Path)
     assert {"workflow_run_id", "execution_engine_version"} <= columns.keys()
     assert row.workflow_run_id is None
     assert row.execution_engine_version == 1
+    engine.dispose()
+
+
+def test_assistant_turn_work_cleanup_preserves_terminal_history(tmp_path: Path) -> None:
+    engine = create_sqlite_engine(tmp_path / "terminal-assistant.db")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE core_assistant_turns ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "status VARCHAR(32) NOT NULL, workflow_run_id VARCHAR(36), "
+            "execution_engine_version INTEGER NOT NULL DEFAULT 1, "
+            "created_at DATETIME NOT NULL, PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE core_assistant_turn_work ("
+            "tenant_id VARCHAR(128) NOT NULL, turn_id VARCHAR(36) NOT NULL, "
+            "PRIMARY KEY (tenant_id, turn_id))"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_assistant_turns VALUES "
+            "('local', 'turn-terminal', 'completed', NULL, 1, "
+            "'2026-08-07T00:00:00+00:00')"
+        )
+
+    remove_legacy_assistant_turn_work(engine)
+    remove_legacy_assistant_turn_work(engine)
+
+    assert "core_assistant_turn_work" not in inspect(engine).get_table_names()
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT status FROM core_assistant_turns WHERE id = 'turn-terminal'")
+            ).scalar_one()
+            == "completed"
+        )
+    engine.dispose()
+
+
+def test_assistant_turn_work_cleanup_blocks_nonterminal_legacy_turn(tmp_path: Path) -> None:
+    engine = create_sqlite_engine(tmp_path / "active-assistant.db")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE core_assistant_turns ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "status VARCHAR(32) NOT NULL, workflow_run_id VARCHAR(36), "
+            "execution_engine_version INTEGER NOT NULL DEFAULT 1, "
+            "created_at DATETIME NOT NULL, PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE core_assistant_turn_work ("
+            "tenant_id VARCHAR(128) NOT NULL, turn_id VARCHAR(36) NOT NULL, "
+            "PRIMARY KEY (tenant_id, turn_id))"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_assistant_turns VALUES "
+            "('local', 'turn-active', 'running', NULL, 1, "
+            "'2026-08-07T00:00:00+00:00')"
+        )
+
+    with pytest.raises(RuntimeError, match="turn-active"):
+        remove_legacy_assistant_turn_work(engine)
+
+    assert "core_assistant_turn_work" in inspect(engine).get_table_names()
     engine.dispose()
 
 

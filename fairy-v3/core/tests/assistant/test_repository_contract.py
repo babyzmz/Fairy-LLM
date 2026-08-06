@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
 import pytest
-from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from fairy_core.assistant.ledger import AssistantLedgerApplication
@@ -25,11 +23,6 @@ from fairy_core.assistant.trace_models import (
     TraceStepStatus,
     TurnTrace,
 )
-from fairy_core.assistant.work_queue import AssistantTurnWorkClaim
-from fairy_core.commanding.bus import CommandBus, CommandRequest
-from fairy_core.commanding.policy import PermissionProfile, PolicyEngine
-from fairy_core.commanding.registry import build_default_registry
-from fairy_core.commanding.schema import command_runs
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.models import (
     Conversation,
@@ -103,97 +96,6 @@ def _turn(task: Task, scope: ScopeContract, *, key: str) -> AssistantTurn:
         profile_id="local-default",
         idempotency_key=key,
     )
-
-
-def test_turn_work_queue_is_idempotent_fenced_and_preserves_a_newer_request(
-    tmp_path: Path,
-) -> None:
-    engine = create_sqlite_core_engine(tmp_path / "turn-work.sqlite3")
-    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
-    task, scope = _seed_task(factory, label="turn-work")
-    turn = _turn(task, scope, key="turn-work:turn")
-    with factory() as unit_of_work:
-        unit_of_work.assistant.save_turn(turn)
-        unit_of_work.commit()
-
-    ledger = AssistantLedgerApplication(
-        unit_of_work_factory=factory,
-        scope_resolver=lambda _state, _task: scope,
-    )
-    first_revision = ledger.enqueue_turn_work(turn.id)
-    replayed_revision = ledger.enqueue_turn_work(turn.id)
-    first_claim = ledger.claim_turn_work(
-        turn.id,
-        worker_id="worker-a",
-        lease_until=datetime.now(UTC) + timedelta(seconds=30),
-    )
-
-    assert first_revision == replayed_revision == 1
-    assert isinstance(first_claim, AssistantTurnWorkClaim)
-    assert first_claim.request_revision == 1
-    assert (
-        ledger.claim_next_turn_work(
-            worker_id="worker-b",
-            lease_until=datetime.now(UTC) + timedelta(seconds=30),
-        )
-        is None
-    )
-
-    second_revision = ledger.enqueue_turn_work(turn.id, force=True)
-    assert second_revision == 2
-    assert ledger.release_turn_work(first_claim)
-
-    second_claim = ledger.claim_next_turn_work(
-        worker_id="worker-b",
-        lease_until=datetime.now(UTC) + timedelta(seconds=30),
-    )
-    assert second_claim is not None
-    assert second_claim.request_revision == 2
-    assert second_claim.lease_fence > first_claim.lease_fence
-    assert not ledger.renew_turn_work(
-        first_claim,
-        lease_until=datetime.now(UTC) + timedelta(seconds=60),
-    )
-    assert ledger.release_turn_work(second_claim)
-    assert ledger.pending_turn_work_ids() == ()
-
-
-def test_abandoning_turn_work_preserves_the_request_and_fences_the_old_worker(
-    tmp_path: Path,
-) -> None:
-    engine = create_sqlite_core_engine(tmp_path / "abandoned-turn-work.sqlite3")
-    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
-    task, scope = _seed_task(factory, label="abandoned-turn-work")
-    turn = _turn(task, scope, key="abandoned-turn-work:turn")
-    with factory() as unit_of_work:
-        unit_of_work.assistant.save_turn(turn)
-        unit_of_work.commit()
-    ledger = AssistantLedgerApplication(
-        unit_of_work_factory=factory,
-        scope_resolver=lambda _state, _task: scope,
-    )
-    ledger.enqueue_turn_work(turn.id)
-    first_claim = ledger.claim_turn_work(
-        turn.id,
-        worker_id="worker-before-restart",
-        lease_until=datetime.now(UTC) + timedelta(seconds=30),
-    )
-    assert first_claim is not None
-
-    assert ledger.abandon_turn_work(first_claim)
-    assert ledger.pending_turn_work_ids() == (turn.id,)
-    assert not ledger.release_turn_work(first_claim)
-
-    recovered_claim = ledger.claim_turn_work(
-        turn.id,
-        worker_id="worker-after-restart",
-        lease_until=datetime.now(UTC) + timedelta(seconds=30),
-    )
-    assert recovered_claim is not None
-    assert recovered_claim.request_revision == first_claim.request_revision
-    assert recovered_claim.lease_fence > first_claim.lease_fence
-
-    engine.dispose()
 
 
 def test_repository_persists_turn_messages_and_tool_invocations(tmp_path: Path) -> None:
@@ -431,127 +333,24 @@ def test_repository_constraints_reject_duplicate_sequences_and_keys(tmp_path: Pa
         unit_of_work.assistant.save_tool_invocation(duplicate_invocation)
 
 
-def test_repository_interrupts_only_orphaned_active_turns(tmp_path: Path) -> None:
-    engine = create_sqlite_core_engine(tmp_path / "recovery.db")
+def test_repository_reports_nonterminal_legacy_turns(tmp_path: Path) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "legacy-turns.db")
     factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
-    task, scope = _seed_task(factory, label="one")
-    live = _turn(task, scope, key="turn:live")
-    orphaned = _turn(task, scope, key="turn:orphaned")
-    live.start()
-    orphaned.start()
+    task, scope = _seed_task(factory, label="legacy")
+    active = _turn(task, scope, key="turn:legacy-active")
+    completed = _turn(task, scope, key="turn:legacy-completed")
+    active.start()
+    completed.start()
+    completed.complete(usage={"input_tokens": 1, "output_tokens": 1})
 
     with factory() as unit_of_work:
-        unit_of_work.assistant.save_turn(live)
-        unit_of_work.assistant.save_turn(orphaned)
+        unit_of_work.assistant.save_turn(active)
+        unit_of_work.assistant.save_turn(completed)
         unit_of_work.commit()
     with factory() as unit_of_work:
-        interrupted = unit_of_work.assistant.interrupt_orphaned_turns(
-            live_turn_ids=(live.id,),
-        )
-        unit_of_work.commit()
+        legacy_ids = unit_of_work.assistant.legacy_nonterminal_turn_ids()
 
-    with factory() as unit_of_work:
-        restored_live = unit_of_work.assistant.get_turn(live.id)
-        restored_orphaned = unit_of_work.assistant.get_turn(orphaned.id)
-
-    assert tuple(turn.id for turn in interrupted) == (orphaned.id,)
-    assert interrupted[0].status is AssistantTurnStatus.FAILED
-    assert restored_live is not None
-    assert restored_live.status is AssistantTurnStatus.RUNNING
-    assert restored_orphaned is not None
-    assert restored_orphaned.status is AssistantTurnStatus.FAILED
-    assert restored_orphaned.error_code == "WORKER_INTERRUPTED"
-
-
-def test_ledger_recovery_honors_live_command_lease_then_interrupts_expired_run(
-    tmp_path: Path,
-) -> None:
-    engine = create_sqlite_core_engine(tmp_path / "lease-recovery.db")
-    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
-    task, scope = _seed_task(factory, label="lease")
-    turn = _turn(task, scope, key="turn:leased")
-    turn.start()
-    registry = build_default_registry()
-
-    with factory() as unit_of_work:
-        unit_of_work.assistant.save_turn(turn)
-        bus = CommandBus(
-            registry=registry,
-            policy=PolicyEngine(registry),
-            ledger=unit_of_work.commands,
-        )
-        dispatch = bus.submit(
-            CommandRequest(
-                tool_name="model.generate",
-                actor="assistant",
-                scope=scope,
-                payload={"turn_id": str(turn.id), "profile_id": "local-default"},
-                idempotency_key="assistant:leased:model:1",
-            ),
-            profile=PermissionProfile.STANDARD,
-            capability_overrides={},
-            sandbox_healthy=False,
-        )
-        assert dispatch.run is not None
-        running = bus.start(
-            dispatch.run.id,
-            worker_id="core-live",
-            lease_until=datetime.now(UTC) + timedelta(minutes=1),
-        )
-        trace = TurnTrace.create(
-            turn_id=turn.id,
-            conversation_id=turn.conversation_id,
-            task_id=turn.task_id,
-        )
-        trace.start()
-        unit_of_work.assistant.create_trace_if_absent(trace)
-        step = TraceStep.create(
-            trace_id=trace.id,
-            turn_id=turn.id,
-            sequence=unit_of_work.assistant.allocate_trace_sequence(trace.id),
-            kind=TraceStepKind.MODEL,
-            status=TraceStepStatus.RUNNING,
-            public_summary="Generating the response",
-            model_id="local-default",
-            model_role=ModelExecutionRole.PRIMARY,
-            command_run_id=running.id,
-        )
-        unit_of_work.assistant.append_trace_step(step)
-        unit_of_work.commit()
-
-    recovery = AssistantLedgerApplication(
-        unit_of_work_factory=factory,
-        scope_resolver=lambda _state, _task: scope,
-    )
-
-    assert recovery.recover_orphaned_turns() == ()
-
-    with engine.begin() as connection:
-        connection.execute(
-            update(command_runs)
-            .where(command_runs.c.id == str(running.id))
-            .values(lease_until=datetime.now(UTC) - timedelta(seconds=1))
-        )
-
-    assert tuple(item.id for item in recovery.recover_orphaned_turns()) == (turn.id,)
-    with factory() as unit_of_work:
-        recovered_turn = unit_of_work.assistant.get_turn(turn.id)
-        recovered_run = unit_of_work.commands.get_run(running.id)
-        events = unit_of_work.commands.events_for_run(running.id)
-        recovered_trace = unit_of_work.assistant.get_trace_by_turn_id(turn.id)
-        recovered_steps = unit_of_work.assistant.list_trace_steps(turn.id)
-
-    assert recovered_turn is not None
-    assert recovered_turn.status is AssistantTurnStatus.FAILED
-    assert recovered_turn.error_code == "WORKER_INTERRUPTED"
-    assert recovered_run is not None
-    assert recovered_run.status.value == "interrupted"
-    assert recovered_trace is not None and recovered_trace.completed_at is not None
-    assert len(recovered_steps) == 1
-    assert recovered_steps[0].status is TraceStepStatus.FAILED
-    assert recovered_steps[0].public_detail == ("Worker interrupted before the step completed.")
-    assert [event.event_type for event in events].count("assistant.turn.failed") == 1
-    assert [event.event_type for event in events].count("turn.trace.step.failed") == 1
+    assert legacy_ids == (active.id,)
 
 
 def test_message_sequence_reservation_does_not_depend_on_existing_messages(

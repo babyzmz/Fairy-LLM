@@ -18,6 +18,9 @@ dependencies = [
   "sqlalchemy>=2.0.51,<2.1",
 ]
 
+[project.scripts]
+fairy-agent-eval = "fairy_core.evals.__main__:main"
+
 [dependency-groups]
 dev = [
   "hypothesis>=6.156,<7",

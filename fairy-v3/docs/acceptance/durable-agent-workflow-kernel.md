@@ -37,7 +37,8 @@
 - Approval and delayed work hold no worker thread or active execution lease.
 - Unknown tools are serial. Only explicit idempotent read/no-effect tools may run in parallel.
 - Writes and uncertain effects are never replayed automatically after interruption.
-- Old and new schedulers cannot claim the same Turn.
+- Every non-terminal Assistant Turn is engine version 2 and bound to exactly one Run; schema
+  migration fails closed if an old engine still owns unfinished work.
 - Realtime and Preview idle maintenance never appear as Workflow nodes.
 
 ## Acceptance scenarios
@@ -83,3 +84,10 @@
 - A fixture Browser Worker does not prove Edge process crash recovery.
 - Docker, Tauri release, and production image builds are outside development verification.
 
+## Developer evaluation
+
+Run `uv run --project core fairy-agent-eval` from the project root. It executes the fixed
+evidence, parallel research, approval, recovery, steering, Browser, and restart scenarios and
+writes JSON plus Markdown under `test-results/agent-eval/`. The report records real Provider
+quality only when a separately produced, bounded `--live-provider-report` is supplied; otherwise
+that section is explicitly `unverified`.

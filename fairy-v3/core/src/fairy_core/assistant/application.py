@@ -10,6 +10,7 @@ from fairy_core.assistant.candidates import (
     arguments_for_definition,
     deduplicate_tool_candidates,
 )
+from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.context import AssistantContextBuilder
 from fairy_core.assistant.context_diagnostics import AssistantContextDiagnosticsMixin
 from fairy_core.assistant.durable_context import project_tool_context
@@ -47,7 +48,6 @@ from fairy_core.assistant.tools import (
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.turn_lifecycle import AssistantTurnLifecycleMixin
 from fairy_core.assistant.turn_reader import AssistantTurnReader, require_task, require_turn
-from fairy_core.assistant.work_queue import assistant_command_lease_until
 from fairy_core.assistant.workflow_runtime import AssistantWorkflowRuntimeMixin
 from fairy_core.commanding import CommandRun
 from fairy_core.commanding.bus import CommandRequest

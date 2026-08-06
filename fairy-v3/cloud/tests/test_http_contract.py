@@ -454,10 +454,6 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
             json={"turn_id": created["id"]},
         )
         workflow = await client.get(f"/v1/assistant/turns/{created['id']}/workflow")
-        resumed = await client.post(
-            f"/v1/assistant/turns/{created['id']}/resume",
-            json={"turn_id": created["id"]},
-        )
         mismatched_steer = await client.post(
             f"/v1/assistant/turns/{created['id']}/steer",
             headers={"Idempotency-Key": "different"},
@@ -500,6 +496,10 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
             json=retry_body,
         )
         retried.raise_for_status()
+        resumed = await client.post(
+            f"/v1/assistant/turns/{retried.json()['id']}/resume",
+            json={"turn_id": retried.json()["id"]},
+        )
         run = await client.post(
             f"/v1/assistant/turns/{retried.json()['id']}/run",
             json={"turn_id": retried.json()["id"]},
@@ -511,7 +511,6 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
     assert fetched.json() == created
     assert paused.json()["workflow_summary"]["status"] == "paused"
     assert workflow.json()["status"] == "paused"
-    assert resumed.json()["workflow_summary"]["status"] == "queued"
     assert mismatched_steer.status_code == 409
     assert mismatched_steer.json()["detail"]["code"] == "SCOPE_MISMATCH"
     assert [(item["role"], item["content"]) for item in messages.json()["items"]] == [
@@ -523,6 +522,8 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
     assert started_terminal.status_code == 200
     assert started_terminal.json()["status"] == "cancelled"
     assert retried.json()["status"] == "created"
+    assert resumed.status_code == 200
+    assert resumed.json()["workflow_summary"]["status"] in {"queued", "running", "failed"}
     assert run.status_code == 200
     assert run.json()["status"] == "failed"
     assert run.json()["error_code"] == "PROVIDER_UNAVAILABLE"

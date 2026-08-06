@@ -3,9 +3,9 @@ from __future__ import annotations
 from uuid import UUID
 
 from fairy_core.assistant.application import AssistantApplication
+from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import AssistantTurnStatus
-from fairy_core.assistant.work_queue import assistant_command_lease_until
 from fairy_core.assistant.workflow_plan import (
     ASSISTANT_WORKFLOW_NODE_KIND,
     apply_pending_assistant_steering,
@@ -17,7 +17,6 @@ from fairy_core.workflow.scheduler import (
     WorkflowAdapterRegistry,
     WorkflowCancelled,
     WorkflowNodeResult,
-    WorkflowScheduler,
     WorkflowWaitingForApproval,
 )
 
@@ -96,22 +95,6 @@ class AssistantTurnWorkflowAdapter:
             return changed
 
 
-def build_assistant_workflow_scheduler(
-    *,
-    unit_of_work_factory,
-    application: AssistantApplication,
-    ledger: AssistantLedgerApplication,
-) -> WorkflowScheduler:
-    adapters = WorkflowAdapterRegistry()
-    register_assistant_workflow_adapter(
-        adapters,
-        unit_of_work_factory=unit_of_work_factory,
-        application=application,
-        ledger=ledger,
-    )
-    return WorkflowScheduler(unit_of_work_factory=unit_of_work_factory, adapters=adapters)
-
-
 def register_assistant_workflow_adapter(
     adapters: WorkflowAdapterRegistry,
     *,
@@ -137,7 +120,6 @@ def resumable_assistant_turn_ids(ledger: AssistantLedgerApplication) -> tuple[UU
 __all__ = [
     "AssistantTurnWorkflowAdapter",
     "AssistantWorkflowError",
-    "build_assistant_workflow_scheduler",
     "register_assistant_workflow_adapter",
     "resumable_assistant_turn_ids",
 ]

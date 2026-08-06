@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic, sleep
@@ -10,10 +9,8 @@ import pytest
 from sqlalchemy import update
 
 from fairy_core.assistant.ledger import AssistantLedgerApplication
-from fairy_core.assistant.models import Message, MessageRole, MessageVisibility
 from fairy_core.assistant.trace_models import TraceStepKind
 from fairy_core.commanding.schema import command_runs
-from fairy_core.domain.ids import new_id
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.providers import ModelDelta, ProviderRegistry
@@ -83,7 +80,8 @@ def test_started_turn_recovers_from_an_expired_durable_work_claim(tmp_path: Path
         assert len(recovered_provider.requests) == 1
         assert [message["role"] for message in transcript] == ["user", "assistant"]
         assert transcript[-1]["content"] == "Recovered once"
-        assert recovered_service._assistant_ledger.pending_turn_work_ids() == ()  # type: ignore[attr-defined]
+        with recovered_service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            assert unit_of_work.assistant.legacy_nonterminal_turn_ids() == ()
     finally:
         recovered_service.close()
 
@@ -183,7 +181,8 @@ def test_active_turn_survives_graceful_core_close(tmp_path: Path) -> None:
     assert interrupted.status.value == "running"
     assert interrupted.workflow_summary is not None
     assert interrupted.workflow_summary.status.value == "paused"
-    assert ledger.pending_turn_work_ids() == ()
+    with factory() as unit_of_work:
+        assert unit_of_work.assistant.legacy_nonterminal_turn_ids() == ()
     engine.dispose()
 
     recovered_provider = _completion_provider()
@@ -313,52 +312,6 @@ def test_coordinator_retries_after_a_transient_claim_error(
         completed = wait_for_turn(service, turn["id"])
         assert completed["status"] == "completed"
         assert attempts >= 2
-        assert len(provider.requests) == 1
-    finally:
-        service.close()
-
-
-def test_pre_workflow_turn_drains_only_through_the_legacy_worker(tmp_path: Path) -> None:
-    provider = _completion_provider()
-    service = build_local_service(
-        tmp_path,
-        provider_registry=ProviderRegistry((provider,)),
-    )
-    try:
-        task = _scratch_task(service, "Finish a legacy Turn without dual execution")
-        template = _turn(service, task, "turn:workflow-template")
-        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
-            current = unit_of_work.assistant.get_turn(UUID(template["id"]))
-            assert current is not None
-            legacy = replace(
-                current,
-                id=new_id(),
-                idempotency_key="turn:legacy-drain",
-                workflow_run_id=None,
-                execution_engine_version=1,
-                workflow_summary=None,
-            )
-            unit_of_work.assistant.save_turn(legacy)
-            unit_of_work.assistant.append_message(
-                Message.create(
-                    conversation_id=legacy.conversation_id,
-                    task_id=legacy.task_id,
-                    turn_id=legacy.id,
-                    sequence=unit_of_work.assistant.next_message_sequence(legacy.conversation_id),
-                    role=MessageRole.USER,
-                    visibility=MessageVisibility.INTERNAL,
-                    content="Finish the legacy Turn",
-                )
-            )
-            unit_of_work.commit()
-
-        started = service.invoke("assistant.turns.start", {"turn_id": str(legacy.id)})
-        assert started["workflow_run_id"] is None
-        completed = wait_for_turn(service, str(legacy.id))
-
-        assert completed["status"] == "completed"
-        assert completed["execution_engine_version"] == 1
-        assert completed["workflow_summary"] is None
         assert len(provider.requests) == 1
     finally:
         service.close()

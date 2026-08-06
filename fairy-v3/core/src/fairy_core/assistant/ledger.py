@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from uuid import UUID
 
 from fairy_core.assistant.models import (
@@ -11,18 +11,16 @@ from fairy_core.assistant.models import (
     Message,
     MessageRole,
     MessageVisibility,
-    ToolInvocationStatus,
 )
-from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus, TurnTrace
+from fairy_core.assistant.trace_models import TurnTrace
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.turn_reader import require_turn
-from fairy_core.assistant.work_queue import AssistantTurnWorkClaim
 from fairy_core.assistant.workflow_plan import (
     ASSISTANT_WORKFLOW_ENGINE_VERSION,
     apply_pending_assistant_steering,
     assistant_workflow_node,
 )
-from fairy_core.commanding.models import CommandRun, CommandStatus, EventVisibility
+from fairy_core.commanding.models import CommandStatus, EventVisibility
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.contracts.common import ExecutionTarget
@@ -222,56 +220,6 @@ class AssistantLedgerApplication:
             raise KeyError(f"Assistant Turn not found: {turn_id}")
         return turn
 
-    def enqueue_turn_work(self, turn_id: UUID, *, force: bool = False) -> int:
-        with self._unit_of_work_factory() as unit_of_work:
-            revision = unit_of_work.assistant.enqueue_turn_work(turn_id, force=force)
-            unit_of_work.commit()
-        return revision
-
-    def claim_turn_work(
-        self,
-        turn_id: UUID,
-        *,
-        worker_id: str,
-        lease_until: datetime,
-    ) -> AssistantTurnWorkClaim | None:
-        with self._unit_of_work_factory() as unit_of_work:
-            claim = unit_of_work.assistant.claim_turn_work(
-                turn_id,
-                worker_id=worker_id,
-                lease_until=lease_until,
-            )
-            unit_of_work.commit()
-        return claim
-
-    def claim_next_turn_work(
-        self,
-        *,
-        worker_id: str,
-        lease_until: datetime,
-    ) -> AssistantTurnWorkClaim | None:
-        with self._unit_of_work_factory() as unit_of_work:
-            claim = unit_of_work.assistant.claim_next_turn_work(
-                worker_id=worker_id,
-                lease_until=lease_until,
-            )
-            unit_of_work.commit()
-        return claim
-
-    def renew_turn_work(
-        self,
-        claim: AssistantTurnWorkClaim,
-        *,
-        lease_until: datetime,
-    ) -> bool:
-        with self._unit_of_work_factory() as unit_of_work:
-            renewed = unit_of_work.assistant.renew_turn_work(
-                claim,
-                lease_until=lease_until,
-            )
-            unit_of_work.commit()
-        return renewed
-
     def renew_turn_command_leases(
         self,
         turn_id: UUID,
@@ -315,36 +263,6 @@ class AssistantLedgerApplication:
             if renewed_any:
                 unit_of_work.commit()
         return True
-
-    def abandon_turn_work(self, claim: AssistantTurnWorkClaim) -> bool:
-        with self._unit_of_work_factory() as unit_of_work:
-            abandoned = unit_of_work.assistant.abandon_turn_work(claim)
-            unit_of_work.commit()
-        return abandoned
-
-    def release_turn_work(
-        self,
-        claim: AssistantTurnWorkClaim,
-        *,
-        error_code: str | None = None,
-    ) -> bool:
-        with self._unit_of_work_factory() as unit_of_work:
-            released = unit_of_work.assistant.release_turn_work(
-                claim,
-                error_code=error_code,
-            )
-            unit_of_work.commit()
-        return released
-
-    def cancel_turn_work(self, turn_id: UUID) -> bool:
-        with self._unit_of_work_factory() as unit_of_work:
-            cancelled = unit_of_work.assistant.cancel_turn_work(turn_id)
-            unit_of_work.commit()
-        return cancelled
-
-    def pending_turn_work_ids(self) -> tuple[UUID, ...]:
-        with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.assistant.pending_turn_work_ids()
 
     def retry_turn(
         self,
@@ -501,67 +419,15 @@ class AssistantLedgerApplication:
                 allowed_visibilities=frozenset({MessageVisibility.USER}),
             )
 
-    def recover_orphaned_turns(
-        self,
-        *,
-        live_turn_ids: tuple[UUID, ...] | None = None,
-    ) -> tuple[AssistantTurn, ...]:
+    def recover_orphaned_turns(self) -> tuple[AssistantTurn, ...]:
         with self._unit_of_work_factory() as unit_of_work:
-            effective_live_turn_ids = (
-                tuple(
-                    sorted(
-                        {
-                            *unit_of_work.assistant.live_turn_ids(),
-                            *unit_of_work.assistant.pending_turn_work_ids(),
-                        },
-                        key=str,
-                    )
-                )
-                if live_turn_ids is None
-                else live_turn_ids
+            legacy_turn_ids = unit_of_work.assistant.legacy_nonterminal_turn_ids()
+        if legacy_turn_ids:
+            raise RuntimeError(
+                "Non-terminal pre-Workflow Assistant Turns block this Core upgrade: "
+                + ", ".join(str(value) for value in legacy_turn_ids)
             )
-            interrupted = unit_of_work.assistant.interrupt_orphaned_turns(
-                live_turn_ids=effective_live_turn_ids
-            )
-            for turn in interrupted:
-                self._ensure_trace(unit_of_work, turn, legacy=True)
-                runs: dict[UUID, CommandRun] = {}
-                model_run = unit_of_work.commands.active_run_for_task(
-                    turn.task_id,
-                    "model.generate",
-                )
-                if model_run is not None and model_run.input_payload.get("turn_id") == str(turn.id):
-                    runs[model_run.id] = model_run
-                for invocation in unit_of_work.assistant.list_tool_invocations(turn.id):
-                    if invocation.status in {
-                        ToolInvocationStatus.CREATED,
-                        ToolInvocationStatus.QUEUED,
-                        ToolInvocationStatus.RUNNING,
-                    }:
-                        expected_status = invocation.status
-                        invocation.fail(error_code="WORKER_INTERRUPTED")
-                        unit_of_work.assistant.update_tool_invocation(
-                            invocation,
-                            expected_status=expected_status,
-                        )
-                    if invocation.command_run_id is not None:
-                        command = unit_of_work.commands.get_run(invocation.command_run_id)
-                        if command is not None:
-                            runs[command.id] = command
-                for run in runs.values():
-                    self._interrupt_command(unit_of_work, turn.id, run)
-                self._trace.finish_active_steps_in_unit(
-                    unit_of_work,
-                    turn_id=turn.id,
-                    run=None,
-                    status=TraceStepStatus.FAILED,
-                    public_detail="Worker interrupted before the step completed.",
-                    emit_events=False,
-                )
-                self._trace.complete_trace_in_unit(unit_of_work, turn_id=turn.id)
-            if interrupted:
-                unit_of_work.commit()
-        return interrupted
+        return ()
 
     def resumable_waiting_turn_ids(self) -> tuple[UUID, ...]:
         with self._unit_of_work_factory() as unit_of_work:
@@ -653,48 +519,6 @@ class AssistantLedgerApplication:
                     apply_pending_assistant_steering(unit_of_work, turn.workflow_run_id)
             unit_of_work.commit()
         return self.get_turn(turn_id)
-
-    def _interrupt_command(self, unit_of_work, turn_id: UUID, run: CommandRun) -> None:
-        if run.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}:
-            return
-        commands = unit_of_work.commands
-        lease_owner: str | None = None
-        lease_fence: int | None = None
-        if run.status is CommandStatus.RUNNING:
-            run = commands.claim(
-                run.id,
-                worker_id=f"assistant-recovery:{turn_id}",
-                lease_until=datetime.now(UTC) + timedelta(seconds=30),
-            )
-            lease_owner = run.lease_owner
-            lease_fence = run.lease_fence
-        for kind in (
-            TraceStepKind.MODEL,
-            TraceStepKind.APPROVAL,
-            TraceStepKind.TOOL,
-        ):
-            self._trace.transition_command_step_in_unit(
-                unit_of_work,
-                run=run,
-                kind=kind,
-                status=TraceStepStatus.FAILED,
-                public_detail="Worker interrupted before the step completed.",
-            )
-        commands.append_event(
-            run_id=run.id,
-            event_type="assistant.turn.failed",
-            visibility=EventVisibility.USER,
-            message="Assistant turn interrupted",
-            payload={"turn_id": str(turn_id), "error_code": "WORKER_INTERRUPTED"},
-            lease_owner=lease_owner,
-            lease_fence=lease_fence,
-        )
-        commands.transition(
-            run.id,
-            CommandStatus.INTERRUPTED,
-            lease_owner=lease_owner,
-            lease_fence=lease_fence,
-        )
 
     @staticmethod
     def _validate_replay(

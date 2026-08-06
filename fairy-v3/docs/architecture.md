@@ -36,7 +36,8 @@ Preview, Artifact, Checkpoint, and Memory state.
 14. Host static Preview is read-only file serving, not project execution.
 15. Assistant Messages, Turns, and Tool Invocations are tenant-scoped durable
     Core records; renderer state and provider streams are never conversation
-    authority.
+    authority. Assistant, Media, and Knowledge discrete work uses one durable
+    Workflow Kernel; Realtime streams and Preview maintenance remain separate.
 16. Public Message queries exclude internal provider and orchestration data.
 17. Managed document RAG is a separate corpus; only relational Hermes rows can
     be Memory authority or enter an immutable Memory Snapshot.
@@ -169,13 +170,13 @@ after the idempotent operation returns. PostgreSQL owns the Event-to-Outbox
 handoff through an invoker-rights `AFTER INSERT` trigger, so Core and sync API
 events cannot bypass the same-transaction Outbox invariant.
 
-Cloud tenant services reconcile interrupted Assistant and Runtime work when a
-tenant is resolved. A linked live Command lease prevents takeover. After lease
-expiry, recovery reclaims with a higher fence, records `WORKER_INTERRUPTED`,
-and never automatically repeats an uncertain model or tool effect. Devices
-resume SSE by global cursor and de-duplicate by event identity. Concurrent
-Active Version promotion uses `project.revision`; the stale device's Version
-remains a candidate.
+Cloud tenant services reconcile interrupted Workflow and Runtime work when a
+tenant is resolved. Workflow attempts use leases plus monotonically increasing
+fences; late owners cannot settle reclaimed nodes. Delayed Media polling and
+approval waits hold no worker. An uncertain write/execute result is never
+automatically replayed. Devices resume SSE by global cursor and de-duplicate by
+event identity. Concurrent Active Version promotion uses `project.revision`;
+the stale device's Version remains a candidate.
 
 S3-compatible storage holds immutable version snapshots, artifacts, logs, and
 preview captures. Devices synchronize domain events and version manifests by
@@ -236,11 +237,17 @@ embedding index is a memory authority.
 
 Every assistant request binds an existing Task and its Core-generated Scope
 and immutable Hermes Snapshot before creating a Turn. Message sequence
-allocation is atomic per Conversation. Turn creation is idempotent across Core
-instances, cancellation is compare-and-swap fenced, and orphaned active Turns
-become explicit `WORKER_INTERRUPTED` failures during local or Cloud recovery.
-Recovery derives live Turn identity from linked model/tool Command leases, so
-another API instance cannot interrupt healthy work.
+allocation is atomic per Conversation. Every new Turn is bound to Workflow
+engine version 2 and exactly one Workflow Run. Routing, model rounds, safe tool
+batches, approval, steering, and final projection execute as fenced nodes. Turn
+creation is idempotent across Core instances and cancellation is compare-and-swap
+fenced. Local exit pauses work for the next launch; Cloud work stays on its
+original Cloud execution target.
+
+The pre-Workflow Assistant queue and compatibility Worker are removed. SQLite
+and PostgreSQL upgrades refuse to drop that queue while any non-terminal engine
+version 1 Turn remains. Terminal historical Turns remain readable. This prevents
+an upgrade from silently discarding work and prevents old/new dual execution.
 
 Messages are append-only. Tool Invocations have stable argument hashes and
 unique per-Turn sequence/hash constraints. Public `messages.list` exposes only
@@ -248,6 +255,20 @@ user and developer visibility; internal prompts and orchestration records do
 not cross the public contract. Provider streaming, cancellation, explicit
 fallback, model tool candidates, and tool results execute through injected
 ports. A terminal Turn is never resumed; retry creates a new Turn.
+
+### Durable Workflow Kernel
+
+`WorkflowRun`, immutable plan revisions, nodes, edges, attempts, and steering
+instructions are shared persistence contracts for Assistant, Media, and
+Knowledge. The scheduler fairly rotates Runs, reserves capacity for child domain
+work, enforces per-Run concurrency and resource conflicts, renews attempt leases,
+and settles fan-in deterministically. Only Tool Definitions explicitly declared
+safe and idempotent may run concurrently; unknown, write, execute, approval, and
+uncertain-effect operations remain serial through Command Bus and Scope policy.
+
+The Kernel owns discrete durable work only. Browser Worker remains a governed
+domain executor, not a scheduler. Realtime audio/video loops and the Preview
+Runtime Pool retain their purpose-built lifetime managers.
 
 ### Capability adapters and documents
 

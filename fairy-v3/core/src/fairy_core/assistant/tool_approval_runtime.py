@@ -4,9 +4,9 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
 from fairy_core.assistant.turn_reader import require_task, require_turn
-from fairy_core.assistant.work_queue import assistant_command_lease_until
 from fairy_core.commanding import CommandStatus
 from fairy_core.providers import CancellationToken
 

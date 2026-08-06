@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260807_0046"]
+    assert scripts.get_heads() == ["20260807_0047"]
+    assert scripts.get_revision("20260807_0047").down_revision == "20260807_0046"
     assert scripts.get_revision("20260807_0046").down_revision == "20260807_0045"
     assert scripts.get_revision("20260724_0043").down_revision == "20260723_0042"
     assert scripts.get_revision("20260723_0042").down_revision == "20260723_0041"
@@ -128,6 +129,8 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     assert "UQ_CORE_PREVIEW_SESSIONS_ACTIVE_TASK" in ddl
     assert "ALTER TABLE CORE_ASSISTANT_TURNS ADD COLUMN WORKFLOW_RUN_ID" in ddl
     assert "ALTER TABLE CORE_ASSISTANT_TURNS ADD COLUMN EXECUTION_ENGINE_VERSION" in ddl
+    assert "NON-TERMINAL PRE-WORKFLOW ASSISTANT TURNS BLOCK THIS CLOUD UPGRADE" in ddl
+    assert "DROP TABLE CORE_ASSISTANT_TURN_WORK" in ddl
     assert "FK_CORE_ASSISTANT_TURNS_WORKFLOW_RUN" in ddl
     assert "CK_CORE_RUNTIME_SESSIONS_HANDLE_PORT" in ddl
     assert "CK_CORE_PREVIEW_SESSIONS_ACTIVE_URL" in ddl
@@ -218,6 +221,26 @@ def test_assistant_turn_work_migration_has_reversible_fenced_tenant_ddl() -> Non
     assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_ASSISTANT_TURN_WORK"' in ddl
     assert "DROP INDEX IX_CORE_ASSISTANT_TURN_WORK_CLAIM" in ddl
     assert "DROP TABLE CORE_ASSISTANT_TURN_WORK" in ddl
+
+
+def test_assistant_turn_work_removal_is_guarded_and_reversible() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.upgrade(config, "20260807_0046:20260807_0047", sql=True)
+
+    upgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert "NON-TERMINAL PRE-WORKFLOW ASSISTANT TURNS BLOCK THIS CLOUD UPGRADE" in upgrade_ddl
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_ASSISTANT_TURN_WORK"' in upgrade_ddl
+    assert "DROP TABLE CORE_ASSISTANT_TURN_WORK" in upgrade_ddl
+
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260807_0047:20260807_0046", sql=True)
+
+    downgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert "CREATE TABLE CORE_ASSISTANT_TURN_WORK" in downgrade_ddl
+    assert 'CREATE POLICY "TENANT_ISOLATION_CORE_ASSISTANT_TURN_WORK"' in downgrade_ddl
 
 
 def test_media_generation_work_migration_has_reversible_fenced_tenant_ddl() -> None:

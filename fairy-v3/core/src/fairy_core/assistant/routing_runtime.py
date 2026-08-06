@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fairy_core.assistant import limits
+from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.context import bound_persona_instruction
 from fairy_core.assistant.events import append_message_created
 from fairy_core.assistant.models import (
@@ -33,7 +34,6 @@ from fairy_core.assistant.routing_evidence_runtime import (
 )
 from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
 from fairy_core.assistant.turn_reader import require_task, require_turn
-from fairy_core.assistant.work_queue import assistant_command_lease_until
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandRequest
 from fairy_core.domain.execution import Approval

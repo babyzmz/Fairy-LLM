@@ -42,7 +42,6 @@ from fairy_core.assistant.routing import (
     routing_decision_record,
 )
 from fairy_core.assistant.trace_repository import TurnTraceRepositoryMixin
-from fairy_core.assistant.turn_work_repository import TurnWorkRepositoryMixin
 from fairy_core.assistant.workflow_projection import attach_workflow_summary
 from fairy_core.commanding.models import CommandStatus
 from fairy_core.commanding.schema import command_runs
@@ -72,13 +71,8 @@ from fairy_core.storage.schema import (
 )
 from fairy_core.workflow.models import WorkflowRunStatus
 
-_ACTIVE_TURN_STATUSES = (
-    AssistantTurnStatus.RUNNING.value,
-    AssistantTurnStatus.WAITING_FOR_TOOL.value,
-)
 
-
-class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepositoryMixin):
+class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
     def __init__(self, bind: Engine | Connection, *, tenant_id: str) -> None:
         if bind.dialect.name not in {"postgresql", "sqlite"}:
             raise ValueError(f"unsupported assistant repository dialect: {bind.dialect.name}")
@@ -637,136 +631,27 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             )
         return tuple(self._tool_from_row(row) for row in rows)
 
-    def live_turn_ids(self) -> tuple[UUID, ...]:
-        now = datetime.now(UTC)
+    def legacy_nonterminal_turn_ids(self) -> tuple[UUID, ...]:
         with self._session.read() as connection:
-            invocation_rows = (
-                connection.execute(
-                    select(
-                        assistant_tool_invocations.c.command_run_id,
-                        assistant_tool_invocations.c.turn_id,
-                        assistant_tool_invocations.c.status,
-                    ).where(
-                        assistant_tool_invocations.c.tenant_id == self._tenant_id,
-                        assistant_tool_invocations.c.command_run_id.is_not(None),
-                        assistant_tool_invocations.c.status.in_(
-                            (
-                                ToolInvocationStatus.QUEUED.value,
-                                ToolInvocationStatus.RUNNING.value,
-                            )
-                        ),
-                    )
+            rows = connection.execute(
+                select(assistant_turns.c.id)
+                .where(
+                    assistant_turns.c.tenant_id == self._tenant_id,
+                    assistant_turns.c.status.not_in(
+                        (
+                            AssistantTurnStatus.COMPLETED.value,
+                            AssistantTurnStatus.CANCELLED.value,
+                            AssistantTurnStatus.FAILED.value,
+                        )
+                    ),
+                    or_(
+                        assistant_turns.c.workflow_run_id.is_(None),
+                        assistant_turns.c.execution_engine_version < 2,
+                    ),
                 )
-                .mappings()
-                .all()
-            )
-            queued_run_ids = tuple(
-                str(row["command_run_id"])
-                for row in invocation_rows
-                if row["status"] == ToolInvocationStatus.QUEUED.value
-            )
-            running_run_ids = tuple(
-                str(row["command_run_id"])
-                for row in invocation_rows
-                if row["status"] == ToolInvocationStatus.RUNNING.value
-            )
-            run_predicates = [
-                and_(
-                    command_runs.c.status == CommandStatus.RUNNING.value,
-                    command_runs.c.lease_until.is_not(None),
-                    command_runs.c.lease_until > now,
-                )
-            ]
-            if queued_run_ids:
-                run_predicates.append(
-                    and_(
-                        command_runs.c.id.in_(queued_run_ids),
-                        command_runs.c.status.in_(
-                            (
-                                CommandStatus.CREATED.value,
-                                CommandStatus.QUEUED.value,
-                                CommandStatus.WAITING_APPROVAL.value,
-                                CommandStatus.RUNNING.value,
-                                CommandStatus.REJECTED.value,
-                            )
-                        ),
-                    )
-                )
-            if running_run_ids:
-                run_predicates.append(
-                    and_(
-                        command_runs.c.id.in_(running_run_ids),
-                        command_runs.c.status == CommandStatus.RUNNING.value,
-                        command_runs.c.lease_until.is_not(None),
-                        command_runs.c.lease_until > now,
-                    )
-                )
-            runs = (
-                connection.execute(
-                    select(
-                        command_runs.c.id,
-                        command_runs.c.command_name,
-                        command_runs.c.input,
-                    ).where(
-                        command_runs.c.tenant_id == self._tenant_id,
-                        or_(*run_predicates),
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            budget_rows = (
-                connection.execute(
-                    select(assistant_turns.c.id)
-                    .join(
-                        command_runs,
-                        and_(
-                            command_runs.c.tenant_id == assistant_turns.c.tenant_id,
-                            command_runs.c.id == assistant_turns.c.budget_approval_run_id,
-                        ),
-                    )
-                    .where(
-                        assistant_turns.c.tenant_id == self._tenant_id,
-                        assistant_turns.c.status == AssistantTurnStatus.WAITING_FOR_TOOL.value,
-                        assistant_turns.c.budget_approval_run_id.is_not(None),
-                        or_(
-                            command_runs.c.status.in_(
-                                (
-                                    CommandStatus.WAITING_APPROVAL.value,
-                                    CommandStatus.QUEUED.value,
-                                    CommandStatus.REJECTED.value,
-                                )
-                            ),
-                            and_(
-                                command_runs.c.status == CommandStatus.RUNNING.value,
-                                command_runs.c.lease_until.is_not(None),
-                                command_runs.c.lease_until > now,
-                            ),
-                        ),
-                    )
-                )
-                .mappings()
-                .all()
-            )
-        invocation_turns = {
-            str(row["command_run_id"]): UUID(str(row["turn_id"])) for row in invocation_rows
-        }
-        live: set[UUID] = set()
-        for row in runs:
-            linked_turn = invocation_turns.get(str(row["id"]))
-            if linked_turn is not None:
-                live.add(linked_turn)
-                continue
-            if row["command_name"] != "model.generate":
-                continue
-            payload = row["input"]
-            turn_id = payload.get("turn_id") if isinstance(payload, Mapping) else None
-            try:
-                live.add(UUID(str(turn_id)))
-            except (TypeError, ValueError):
-                continue
-        live.update(UUID(str(row["id"])) for row in budget_rows)
-        return tuple(sorted(live, key=str))
+                .order_by(assistant_turns.c.created_at, assistant_turns.c.id)
+            ).all()
+        return tuple(UUID(str(row[0])) for row in rows)
 
     def resumable_waiting_turn_ids(self) -> tuple[UUID, ...]:
         now = datetime.now(UTC)
@@ -848,35 +733,6 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                 .order_by(assistant_turns.c.created_at, assistant_turns.c.id)
             ).all()
         return tuple(UUID(str(row[0])) for row in rows)
-
-    def interrupt_orphaned_turns(
-        self,
-        *,
-        live_turn_ids: tuple[UUID, ...],
-    ) -> tuple[AssistantTurn, ...]:
-        statement = select(assistant_turns).where(
-            assistant_turns.c.tenant_id == self._tenant_id,
-            assistant_turns.c.status.in_(_ACTIVE_TURN_STATUSES),
-            assistant_turns.c.workflow_run_id.is_(None),
-        )
-        if live_turn_ids:
-            statement = statement.where(
-                assistant_turns.c.id.not_in(tuple(str(value) for value in live_turn_ids))
-            )
-        statement = statement.order_by(assistant_turns.c.created_at, assistant_turns.c.id)
-        with self._session.read() as connection:
-            rows = connection.execute(statement).mappings().all()
-        interrupted = tuple(self._with_workflow_summary(self._turn_from_row(row)) for row in rows)
-        for turn in interrupted:
-            expected_status = turn.status
-            expected_revision = turn.cancellation_revision
-            turn.interrupt()
-            self.update_turn(
-                turn,
-                expected_status=expected_status,
-                expected_cancellation_revision=expected_revision,
-            )
-        return interrupted
 
     def _first(self, statement: Any) -> RowMapping | None:
         with self._session.read() as connection:
