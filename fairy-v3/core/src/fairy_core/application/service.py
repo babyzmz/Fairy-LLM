@@ -130,6 +130,7 @@ from fairy_core.system_actions.application import (
 from fairy_core.system_actions.models import SystemActionRequest
 from fairy_core.voice.application import VoiceApplication
 from fairy_core.voice.registry import VoiceRegistry
+from fairy_core.workflow.scheduler import WorkflowAdapterRegistry, WorkflowScheduler
 from fairy_core.workspace.ports import WorkspaceProvisioner
 from fairy_core.workspace.tools import ProjectToolExecutor
 
@@ -311,6 +312,12 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         self._turn_trace_runtime = TurnTraceRuntime(unit_of_work_factory)
         self._browser_service = browser_service
         self._execution_planning = application.execution_planning
+        self._workflow_adapters = WorkflowAdapterRegistry()
+        self._workflow_scheduler = WorkflowScheduler(
+            unit_of_work_factory=unit_of_work_factory,
+            adapters=self._workflow_adapters,
+            autostart=False,
+        )
         media = build_media_composition(
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
@@ -319,11 +326,24 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             provider=media_provider,
             staging=media_staging_store,
             workspaces=workspace_provisioner,
+            workflow_scheduler=self._workflow_scheduler,
+            workflow_adapters=self._workflow_adapters,
         )
         self._media_provider = media.provider
         self._media_application = media.application
         self._media_scheduler = media.scheduler
         self._media_service = media.service
+        selected_obsidian = obsidian_connector or ObsidianConnector()
+        self._obsidian_knowledge = ObsidianKnowledgeSync(
+            connector=selected_obsidian,
+            unit_of_work_factory=unit_of_work_factory,
+        )
+        self._knowledge_sync_scheduler = KnowledgeSyncScheduler(
+            application=self._obsidian_knowledge,
+            unit_of_work_factory=unit_of_work_factory,
+            workflow_scheduler=self._workflow_scheduler,
+            adapters=self._workflow_adapters,
+        )
         effective_tool_executor = tool_executor
         if self._browser_service is not None:
             effective_tool_executor = BrowserToolExecutor(
@@ -417,11 +437,13 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             execution_policy=self._execution_policy,
             execution_completion_hook=self._finalize_assistant_execution,
         )
-        self._workflow_scheduler = assistant_workflow.build_assistant_workflow_scheduler(
+        assistant_workflow.register_assistant_workflow_adapter(
+            self._workflow_adapters,
             unit_of_work_factory=unit_of_work_factory,
             application=self._assistant_application,
             ledger=self._assistant_ledger,
         )
+        self._workflow_scheduler.start()
         self._assistant_scheduler = AssistantTurnScheduler(
             application=self._assistant_application,
             ledger=self._assistant_ledger,
@@ -442,15 +464,6 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             selection_provider=self._model_catalog_service.selection_preference,
         )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
-        selected_obsidian = obsidian_connector or ObsidianConnector()
-        self._obsidian_knowledge = ObsidianKnowledgeSync(
-            connector=selected_obsidian,
-            unit_of_work_factory=unit_of_work_factory,
-        )
-        self._knowledge_sync_scheduler = KnowledgeSyncScheduler(
-            application=self._obsidian_knowledge,
-            unit_of_work_factory=unit_of_work_factory,
-        )
         self._preview_idle_scheduler = (
             PreviewIdleScheduler(runtime_application) if runtime_application is not None else None
         )
@@ -619,9 +632,10 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         result = recover_interrupted_work(
             assistant=self._assistant_ledger,
             runtime=self._runtime_application,
-            media=self._media_application,
+            media=self._media_scheduler,
             verify_running_previews=verify_running_previews,
         )
+        self._knowledge_sync_scheduler.recover_interrupted()
         for turn_id in assistant_workflow.resumable_assistant_turn_ids(self._assistant_ledger):
             self._assistant_scheduler.start(turn_id)
         return result

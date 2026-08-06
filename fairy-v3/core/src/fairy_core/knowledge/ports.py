@@ -36,8 +36,18 @@ class KnowledgeRepository(Protocol):
 
     def get_sync_run(self, run_id: UUID) -> KnowledgeSyncRun | None: ...
 
+    def resumable_sync_runs(self) -> tuple[KnowledgeSyncRun, ...]: ...
+
     def claim_next_sync_run(
         self,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> KnowledgeSyncClaim | None: ...
+
+    def claim_sync_run(
+        self,
+        run_id: UUID,
         *,
         worker_id: str,
         lease_until: datetime,

@@ -291,7 +291,47 @@ def test_image_generation_persists_workspace_artifact_events_and_replays(
         ]
         assert all("prompt" not in event["payload"] for event in media_events)
         assert len(provider.image_requests) == 1
-        assert provider.execution_threads == ["fairy-media_0"]
+        assert provider.execution_threads == ["fairy-workflow_0"]
+        assert (
+            service._media_scheduler._workflow_scheduler  # type: ignore[attr-defined]
+            is service._workflow_scheduler  # type: ignore[attr-defined]
+        )
+        assert (
+            service._knowledge_sync_scheduler._workflow_scheduler  # type: ignore[attr-defined]
+            is service._workflow_scheduler  # type: ignore[attr-defined]
+        )
+        with sqlite3.connect(tmp_path / "data" / "core.db") as connection:
+            workflow = connection.execute(
+                """
+                SELECT owner_kind, owner_id, status
+                FROM core_workflow_runs
+                WHERE tenant_id = 'local' AND owner_kind = 'media_generation'
+                """
+            ).fetchone()
+            workflow_nodes = connection.execute(
+                """
+                SELECT node_key, status
+                FROM core_workflow_nodes
+                WHERE tenant_id = 'local' AND run_id = (
+                    SELECT id FROM core_workflow_runs
+                    WHERE tenant_id = 'local' AND owner_kind = 'media_generation'
+                )
+                ORDER BY CASE node_key
+                    WHEN 'submit' THEN 1 WHEN 'wait' THEN 2
+                    WHEN 'poll' THEN 3 ELSE 4 END
+                """
+            ).fetchall()
+            legacy_queue_count = connection.execute(
+                "SELECT COUNT(*) FROM core_media_generation_work WHERE tenant_id = 'local'"
+            ).fetchone()
+        assert workflow == ("media_generation", created["id"], "completed")
+        assert workflow_nodes == [
+            ("submit", "succeeded"),
+            ("wait", "succeeded"),
+            ("poll", "succeeded"),
+            ("archive", "succeeded"),
+        ]
+        assert legacy_queue_count == (0,)
 
         with pytest.raises(IdempotencyConflictError):
             service.invoke(
@@ -442,7 +482,39 @@ def test_video_worker_completes_without_client_poll(tmp_path: Path) -> None:
         assert completed["status"] == "completed"
         assert completed["artifact_ids"]
         assert provider.video_poll_calls == 2
-        assert all(name.startswith("fairy-media") for name in provider.execution_threads)
+        assert all(name.startswith("fairy-workflow") for name in provider.execution_threads)
+        with sqlite3.connect(tmp_path / "data" / "core.db") as connection:
+            workflow_run_id = connection.execute(
+                """
+                SELECT id FROM core_workflow_runs
+                WHERE tenant_id = 'local' AND owner_kind = 'media_generation'
+                """
+            ).fetchone()
+        assert workflow_run_id is not None
+        service._workflow_scheduler.wait(  # type: ignore[attr-defined]
+            UUID(workflow_run_id[0]),
+            timeout=5,
+        )
+        with sqlite3.connect(tmp_path / "data" / "core.db") as connection:
+            node_attempts = connection.execute(
+                """
+                SELECT node_key, attempt_count
+                FROM core_workflow_nodes
+                WHERE tenant_id = 'local' AND run_id = (
+                    SELECT id FROM core_workflow_runs
+                    WHERE tenant_id = 'local' AND owner_kind = 'media_generation'
+                )
+                ORDER BY CASE node_key
+                    WHEN 'submit' THEN 1 WHEN 'wait' THEN 2
+                    WHEN 'poll' THEN 3 ELSE 4 END
+                """
+            ).fetchall()
+        assert node_attempts == [
+            ("submit", 1),
+            ("wait", 2),
+            ("poll", 2),
+            ("archive", 1),
+        ]
     finally:
         service.close()
 
@@ -820,6 +892,19 @@ def test_manual_image_model_uses_deepseek_coordinator_and_one_assistant_message(
             "routed to image generation" in message.content
             for message in coordinator.requests[0].messages
         )
+        with sqlite3.connect(tmp_path / "data" / "core.db") as connection:
+            workflow_links = connection.execute(
+                """
+                SELECT owner_kind, parent_run_id
+                FROM core_workflow_runs
+                WHERE tenant_id = 'local'
+                ORDER BY owner_kind
+                """
+            ).fetchall()
+        assert workflow_links == [
+            ("assistant_turn", None),
+            ("media_generation", turn["workflow_run_id"]),
+        ]
     finally:
         service.close()
 

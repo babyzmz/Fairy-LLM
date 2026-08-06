@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -346,7 +347,8 @@ def test_interrupted_knowledge_sync_resumes_after_core_restart(tmp_path: Path) -
                 source_cursor=source.sync_cursor,
             )
         )
-        claim = unit_of_work.knowledge.claim_next_sync_run(
+        claim = unit_of_work.knowledge.claim_sync_run(
+            run.id,
             worker_id="crashed-worker",
             lease_until=datetime.now(UTC) + timedelta(seconds=30),
         )
@@ -361,6 +363,15 @@ def test_interrupted_knowledge_sync_resumes_after_core_restart(tmp_path: Path) -
         assert completed["status"] == "completed"
         assert completed["attempts"] == 2
         assert completed["scanned_count"] == 1
+        with sqlite3.connect(data_dir / "core.db") as connection:
+            workflow = connection.execute(
+                """
+                SELECT owner_kind, owner_id, status
+                FROM core_workflow_runs
+                WHERE tenant_id = 'local' AND owner_kind = 'knowledge_sync'
+                """
+            ).fetchone()
+        assert workflow == ("knowledge_sync", str(run.id), "completed")
     finally:
         resumed_service.close()
 

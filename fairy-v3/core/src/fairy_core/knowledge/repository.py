@@ -237,9 +237,57 @@ class SqlAlchemyKnowledgeRepository:
             )
         return self._sync_run_from_row(row) if row is not None else None
 
+    def resumable_sync_runs(self) -> tuple[KnowledgeSyncRun, ...]:
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(knowledge_sync_runs)
+                    .where(
+                        knowledge_sync_runs.c.tenant_id == self._tenant_id,
+                        knowledge_sync_runs.c.status.in_(
+                            (
+                                KnowledgeSyncStatus.QUEUED.value,
+                                KnowledgeSyncStatus.RUNNING.value,
+                                KnowledgeSyncStatus.INTERRUPTED.value,
+                            )
+                        ),
+                    )
+                    .order_by(knowledge_sync_runs.c.started_at, knowledge_sync_runs.c.id)
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(self._sync_run_from_row(row) for row in rows)
+
     def claim_next_sync_run(
         self,
         *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> KnowledgeSyncClaim | None:
+        return self._claim_sync_run(
+            run_id=None,
+            worker_id=worker_id,
+            lease_until=lease_until,
+        )
+
+    def claim_sync_run(
+        self,
+        run_id: UUID,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> KnowledgeSyncClaim | None:
+        return self._claim_sync_run(
+            run_id=run_id,
+            worker_id=worker_id,
+            lease_until=lease_until,
+        )
+
+    def _claim_sync_run(
+        self,
+        *,
+        run_id: UUID | None,
         worker_id: str,
         lease_until: datetime,
     ) -> KnowledgeSyncClaim | None:
@@ -250,24 +298,27 @@ class SqlAlchemyKnowledgeRepository:
         if lease_until.tzinfo is None or lease_until <= now:
             raise ValueError("lease_until must be a future aware datetime")
         with self._session.write() as connection:
+            conditions = [
+                knowledge_sync_runs.c.tenant_id == self._tenant_id,
+                or_(
+                    knowledge_sync_runs.c.status.in_(
+                        (
+                            KnowledgeSyncStatus.QUEUED.value,
+                            KnowledgeSyncStatus.INTERRUPTED.value,
+                        )
+                    ),
+                    and_(
+                        knowledge_sync_runs.c.status == KnowledgeSyncStatus.RUNNING.value,
+                        knowledge_sync_runs.c.lease_until.is_not(None),
+                        knowledge_sync_runs.c.lease_until <= now,
+                    ),
+                ),
+            ]
+            if run_id is not None:
+                conditions.append(knowledge_sync_runs.c.id == str(run_id))
             statement = (
                 select(knowledge_sync_runs)
-                .where(
-                    knowledge_sync_runs.c.tenant_id == self._tenant_id,
-                    or_(
-                        knowledge_sync_runs.c.status.in_(
-                            (
-                                KnowledgeSyncStatus.QUEUED.value,
-                                KnowledgeSyncStatus.INTERRUPTED.value,
-                            )
-                        ),
-                        and_(
-                            knowledge_sync_runs.c.status == KnowledgeSyncStatus.RUNNING.value,
-                            knowledge_sync_runs.c.lease_until.is_not(None),
-                            knowledge_sync_runs.c.lease_until <= now,
-                        ),
-                    ),
-                )
+                .where(*conditions)
                 .order_by(knowledge_sync_runs.c.started_at, knowledge_sync_runs.c.id)
                 .limit(1)
             )

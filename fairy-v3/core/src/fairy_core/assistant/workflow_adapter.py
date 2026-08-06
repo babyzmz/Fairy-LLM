@@ -29,6 +29,8 @@ class AssistantWorkflowError(RuntimeError):
 
 
 class AssistantTurnWorkflowAdapter:
+    may_wait_for_child_workflow = True
+
     def __init__(
         self,
         application: AssistantApplication,
@@ -101,11 +103,26 @@ def build_assistant_workflow_scheduler(
     ledger: AssistantLedgerApplication,
 ) -> WorkflowScheduler:
     adapters = WorkflowAdapterRegistry()
+    register_assistant_workflow_adapter(
+        adapters,
+        unit_of_work_factory=unit_of_work_factory,
+        application=application,
+        ledger=ledger,
+    )
+    return WorkflowScheduler(unit_of_work_factory=unit_of_work_factory, adapters=adapters)
+
+
+def register_assistant_workflow_adapter(
+    adapters: WorkflowAdapterRegistry,
+    *,
+    unit_of_work_factory,
+    application: AssistantApplication,
+    ledger: AssistantLedgerApplication,
+) -> None:
     adapters.register(
         ASSISTANT_WORKFLOW_NODE_KIND,
         AssistantTurnWorkflowAdapter(application, ledger, unit_of_work_factory),
     )
-    return WorkflowScheduler(unit_of_work_factory=unit_of_work_factory, adapters=adapters)
 
 
 def resumable_assistant_turn_ids(ledger: AssistantLedgerApplication) -> tuple[UUID, ...]:
@@ -121,5 +138,6 @@ __all__ = [
     "AssistantTurnWorkflowAdapter",
     "AssistantWorkflowError",
     "build_assistant_workflow_scheduler",
+    "register_assistant_workflow_adapter",
     "resumable_assistant_turn_ids",
 ]

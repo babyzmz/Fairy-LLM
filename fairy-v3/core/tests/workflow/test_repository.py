@@ -192,6 +192,29 @@ def test_parallel_reads_require_disjoint_resource_keys(tmp_path: Path) -> None:
     assert {claim.node_id for claim in claims} == {left.id, right.id}
 
 
+def test_child_workflow_is_claimed_before_an_older_root_run(tmp_path: Path) -> None:
+    factory = _factory(tmp_path / "core.db")
+    parent = _run("parent")
+    parent_node = _node(parent, "parent")
+    child = replace(_run("child"), parent_run_id=parent.id)
+    child_node = _node(child, "child")
+    with factory() as unit_of_work:
+        unit_of_work.workflows.create(parent, nodes=(parent_node,), edges=())
+        unit_of_work.workflows.create(child, nodes=(child_node,), edges=())
+        unit_of_work.commit()
+
+    with factory() as unit_of_work:
+        (claim,) = unit_of_work.workflows.claim_ready(
+            worker_id="child-first",
+            lease_until=datetime.now(UTC) + timedelta(seconds=30),
+            limit=1,
+        )
+        unit_of_work.commit()
+
+    assert claim.run_id == child.id
+    assert claim.node_id == child_node.id
+
+
 def test_pause_cancel_and_tenant_isolation_are_durable(tmp_path: Path) -> None:
     path = tmp_path / "core.db"
     engine = create_sqlite_core_engine(path, tenant_id="tenant-a")

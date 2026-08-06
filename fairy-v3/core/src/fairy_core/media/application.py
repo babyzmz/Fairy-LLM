@@ -476,15 +476,10 @@ class MediaApplication:
     def recover_interrupted(self) -> dict[str, int]:
         self._staging.cleanup_all()
         resumable_videos = 0
-        scheduled = 0
         with self._unit_of_work_factory() as unit_of_work:
             for job in unit_of_work.state.recoverable_media_jobs():
-                unit_of_work.state.enqueue_media_work(job.id)
-                scheduled += 1
                 if job.kind is MediaGenerationKind.VIDEO:
                     resumable_videos += 1
-            if scheduled:
-                unit_of_work.commit()
         return {"interrupted": 0, "resumable_videos": resumable_videos}
 
     def get_result(
@@ -634,7 +629,6 @@ class MediaApplication:
             if existing is not None:
                 if existing.request_fingerprint not in compatible_fingerprints:
                     raise IdempotencyConflictError("Media idempotency key was reused")
-                unit_of_work.state.enqueue_media_work(existing.id)
                 unit_of_work.commit()
                 return _PreparedJob(
                     job=existing,
@@ -672,7 +666,6 @@ class MediaApplication:
                 idempotency_key=idempotency_key,
             )
             unit_of_work.state.save_media_job(job)
-            unit_of_work.state.enqueue_media_work(job.id)
             unit_of_work.commit()
             return _PreparedJob(
                 job=job,

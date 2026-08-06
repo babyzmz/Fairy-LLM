@@ -257,6 +257,8 @@ class SqlAlchemyWorkflowRepository(
         worker_id: str,
         lease_until: datetime,
         limit: int,
+        blocking_parent_kinds: frozenset[str] = frozenset(),
+        reserve_child_slot: bool = False,
     ) -> tuple[WorkflowAttemptClaim, ...]:
         now = datetime.now(UTC)
         if not worker_id.strip() or limit < 1 or lease_until <= now:
@@ -284,6 +286,7 @@ class SqlAlchemyWorkflowRepository(
                     workflow_runs.c.pause_requested.is_(False),
                 )
                 .order_by(
+                    workflow_runs.c.parent_run_id.is_not(None).desc(),
                     workflow_runs.c.updated_at,
                     workflow_nodes.c.created_at,
                     workflow_nodes.c.id,
@@ -317,6 +320,8 @@ class SqlAlchemyWorkflowRepository(
                 )
             )
         selected: list[Mapping[str, Any]] = []
+        selected_child = False
+        selected_blocking_parent = False
         remaining = list(rows)
         while remaining and len(selected) < limit:
             selected_run_ids: set[str] = set()
@@ -331,12 +336,27 @@ class SqlAlchemyWorkflowRepository(
                 active = active_by_run[run_id]
                 policy = WorkflowConcurrencyPolicy(row["concurrency_policy"])
                 keys = frozenset(string_list(row["resource_keys"]))
+                is_child = row["parent_run_id"] is not None
+                is_blocking_parent = not is_child and str(row["kind"]) in blocking_parent_kinds
+                needs_child_slot = (
+                    reserve_child_slot or selected_blocking_parent or is_blocking_parent
+                )
+                if (
+                    not is_child
+                    and not selected_child
+                    and needs_child_slot
+                    and len(selected) >= limit - 1
+                ):
+                    next_remaining.append(row)
+                    continue
                 if len(active) >= budget_limit or conflicts(policy, keys, active):
                     next_remaining.append(row)
                     continue
                 selected.append(row)
                 selected_run_ids.add(run_id)
                 active.append((policy, keys))
+                selected_child = selected_child or is_child
+                selected_blocking_parent = selected_blocking_parent or is_blocking_parent
                 progress = True
             if not progress:
                 break

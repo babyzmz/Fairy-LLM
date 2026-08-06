@@ -1,26 +1,22 @@
 from __future__ import annotations
 
-import logging
-import time
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from threading import Event, RLock, Thread
 from uuid import UUID
 
 from fairy_core.commanding.models import EventVisibility
 from fairy_core.contracts.knowledge import KnowledgeSyncStartInput
-from fairy_core.domain.ids import new_id
 from fairy_core.knowledge.models import KnowledgeSyncRun, KnowledgeSyncStatus
 from fairy_core.knowledge.sync import ObsidianKnowledgeSync
-from fairy_core.knowledge.work_queue import (
-    KNOWLEDGE_SYNC_LEASE_DURATION,
-    KnowledgeSyncClaim,
+from fairy_core.knowledge.workflow import (
+    KNOWLEDGE_SYNC_NODE_KIND,
+    KnowledgeSyncWorkflowAdapter,
+    ensure_knowledge_workflow,
 )
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
-from fairy_core.providers import CancellationToken, ProviderCancelledError
-
-logger = logging.getLogger(__name__)
+from fairy_core.workflow.models import WorkflowRunStatus
+from fairy_core.workflow.scheduler import (
+    WorkflowAdapterRegistry,
+    WorkflowScheduler,
+)
 
 _TERMINAL = {
     KnowledgeSyncStatus.COMPLETED,
@@ -29,98 +25,79 @@ _TERMINAL = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class _ActiveSync:
-    claim: KnowledgeSyncClaim
-    cancellation: CancellationToken
-
-
 class KnowledgeSyncScheduler:
+    """Compatibility facade backed exclusively by the shared Workflow Kernel."""
+
     def __init__(
         self,
         *,
         application: ObsidianKnowledgeSync,
         unit_of_work_factory: CoreUnitOfWorkFactory,
-        max_workers: int = 1,
-        lease_duration: timedelta = KNOWLEDGE_SYNC_LEASE_DURATION,
-        heartbeat_interval: float = 5.0,
-        poll_interval: float = 0.1,
+        workflow_scheduler: WorkflowScheduler | None = None,
+        adapters: WorkflowAdapterRegistry | None = None,
         wait_timeout: float = 300.0,
+        **_legacy_options,
     ) -> None:
-        if max_workers < 1:
-            raise ValueError("max_workers must be positive")
-        if lease_duration <= timedelta(0):
-            raise ValueError("lease_duration must be positive")
-        if min(heartbeat_interval, poll_interval, wait_timeout) <= 0:
-            raise ValueError("Knowledge Sync worker intervals must be positive")
+        if wait_timeout <= 0:
+            raise ValueError("Knowledge Sync wait timeout must be positive")
+        if (workflow_scheduler is None) != (adapters is None):
+            raise ValueError("Workflow Scheduler and Adapter Registry must be configured together")
         self._application = application
         self._unit_of_work_factory = unit_of_work_factory
-        self._max_workers = max_workers
-        self._lease_duration = lease_duration
-        self._heartbeat_interval = heartbeat_interval
-        self._poll_interval = poll_interval
         self._wait_timeout = wait_timeout
-        self._owner_id = f"knowledge-worker:{new_id()}"
-        self._active: dict[UUID, _ActiveSync] = {}
-        self._lock = RLock()
-        self._wake = Event()
-        self._changed = Event()
-        self._closed = False
-        self._last_heartbeat = time.monotonic()
-        self._executor = ThreadPoolExecutor(
-            max_workers=max_workers,
-            thread_name_prefix="fairy-knowledge",
+        self._owns_scheduler = workflow_scheduler is None
+        selected_adapters = adapters or WorkflowAdapterRegistry()
+        selected_adapters.register(
+            KNOWLEDGE_SYNC_NODE_KIND,
+            KnowledgeSyncWorkflowAdapter(
+                application=application,
+                unit_of_work_factory=unit_of_work_factory,
+            ),
         )
-        self._coordinator = Thread(
-            target=self._coordinate,
-            name="fairy-knowledge-coordinator",
-            daemon=True,
+        self._workflow_scheduler = workflow_scheduler or WorkflowScheduler(
+            unit_of_work_factory=unit_of_work_factory,
+            adapters=selected_adapters,
         )
-        self._coordinator.start()
 
     def close(self) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-            for active in self._active.values():
-                active.cancellation.interrupt()
-        self._wake.set()
-        self._changed.set()
-        self._coordinator.join()
-        self._executor.shutdown(wait=True, cancel_futures=True)
+        if self._owns_scheduler:
+            self._workflow_scheduler.close()
 
     def start(self, request: KnowledgeSyncStartInput) -> KnowledgeSyncRun:
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("Core service is closing")
         run = self._application.enqueue(request)
         if run.status not in _TERMINAL:
-            self._wake.set()
+            with self._unit_of_work_factory() as unit_of_work:
+                ensure_knowledge_workflow(unit_of_work, run)
+                unit_of_work.commit()
+            self._workflow_scheduler.wake()
         return run
 
     def run(self, request: KnowledgeSyncStartInput) -> KnowledgeSyncRun:
         run = self.start(request)
-        deadline = time.monotonic() + self._wait_timeout
-        while run.status not in _TERMINAL:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("Knowledge Sync did not settle before its wait deadline")
-            self._changed.wait(min(self._poll_interval, remaining))
-            self._changed.clear()
-            run = self.get(run.id)
-        return run
+        if run.status in _TERMINAL:
+            return run
+        with self._unit_of_work_factory() as unit_of_work:
+            workflow = unit_of_work.workflows.get_by_owner(
+                owner_kind="knowledge_sync",
+                owner_id=str(run.id),
+                engine_version=1,
+            )
+        if workflow is None:
+            raise RuntimeError("Knowledge Sync Workflow is unavailable")
+        self._workflow_scheduler.wait(workflow.run.id, timeout=self._wait_timeout)
+        return self.get(run.id)
 
     def get(self, run_id: UUID) -> KnowledgeSyncRun:
         return self._application.get(run_id)
 
     def cancel(self, run_id: UUID) -> KnowledgeSyncRun:
-        with self._lock:
-            active = self._active.get(run_id)
-            if active is not None:
-                active.cancellation.cancel()
         with self._unit_of_work_factory() as unit_of_work:
             run = unit_of_work.knowledge.cancel_sync_run(run_id)
+            workflow = unit_of_work.workflows.get_by_owner(
+                owner_kind="knowledge_sync",
+                owner_id=str(run.id),
+                engine_version=1,
+            )
             payload = {
                 "run_id": str(run.id),
                 "source_id": str(run.source_id),
@@ -144,98 +121,25 @@ class KnowledgeSyncScheduler:
                     project_id=run.project_id,
                 )
             unit_of_work.commit()
-        self._changed.set()
-        self._wake.set()
+        if workflow is not None:
+            self._workflow_scheduler.cancel(workflow.run.id)
         return run
 
-    def _coordinate(self) -> None:
-        while True:
-            self._wake.wait(self._poll_interval)
-            self._wake.clear()
-            with self._lock:
-                if self._closed:
-                    return
-            try:
-                self._heartbeat_if_due()
-                self._claim_available()
-            except Exception:
-                logger.exception("Knowledge Sync coordinator iteration failed")
-
-    def _heartbeat_if_due(self) -> None:
-        now = time.monotonic()
-        if now - self._last_heartbeat < self._heartbeat_interval:
-            return
-        self._last_heartbeat = now
-        with self._lock:
-            active_items = tuple(self._active.values())
-        for active in active_items:
-            try:
-                with self._unit_of_work_factory() as unit_of_work:
-                    renewed = unit_of_work.knowledge.renew_sync_run(
-                        active.claim,
-                        lease_until=self._new_lease_until(),
-                    )
-                    if renewed:
-                        unit_of_work.commit()
-            except Exception:
-                logger.exception(
-                    "Knowledge Sync %s lease renewal failed",
-                    active.claim.run_id,
-                )
-                renewed = False
-            if not renewed:
-                active.cancellation.interrupt()
-
-    def _claim_available(self) -> None:
-        while True:
-            with self._lock:
-                if self._closed or len(self._active) >= self._max_workers:
-                    return
-            with self._unit_of_work_factory() as unit_of_work:
-                claim = unit_of_work.knowledge.claim_next_sync_run(
-                    worker_id=self._owner_id,
-                    lease_until=self._new_lease_until(),
-                )
-                if claim is not None:
-                    unit_of_work.commit()
-            if claim is None:
-                return
-            active = _ActiveSync(claim=claim, cancellation=CancellationToken())
-            with self._lock:
-                if claim.run_id in self._active:
-                    duplicate = True
-                else:
-                    duplicate = False
-                    self._active[claim.run_id] = active
-            if duplicate:
-                self._abandon(claim)
-                continue
-            self._executor.submit(self._execute, active)
-
-    def _execute(self, active: _ActiveSync) -> None:
-        try:
-            self._application.execute(active.claim, active.cancellation)
-        except ProviderCancelledError:
-            if active.cancellation.is_interrupted:
-                self._abandon(active.claim)
-        except Exception:
-            logger.exception("Knowledge Sync %s failed", active.claim.run_id)
-        finally:
-            with self._lock:
-                current = self._active.get(active.claim.run_id)
-                if current is active:
-                    self._active.pop(active.claim.run_id, None)
-            self._changed.set()
-            self._wake.set()
-
-    def _abandon(self, claim: KnowledgeSyncClaim) -> None:
+    def recover_interrupted(self) -> int:
+        resumable_workflows = []
         with self._unit_of_work_factory() as unit_of_work:
-            abandoned = unit_of_work.knowledge.abandon_sync_run(claim)
-            if abandoned:
+            runs = unit_of_work.knowledge.resumable_sync_runs()
+            for run in runs:
+                workflow = ensure_knowledge_workflow(unit_of_work, run)
+                if workflow.run.status is WorkflowRunStatus.PAUSED:
+                    resumable_workflows.append(workflow.run.id)
+            if runs:
                 unit_of_work.commit()
-
-    def _new_lease_until(self) -> datetime:
-        return datetime.now(UTC) + self._lease_duration
+        for workflow_run_id in resumable_workflows:
+            self._workflow_scheduler.resume(workflow_run_id)
+        if runs:
+            self._workflow_scheduler.wake()
+        return len(runs)
 
 
 __all__ = ["KnowledgeSyncScheduler"]

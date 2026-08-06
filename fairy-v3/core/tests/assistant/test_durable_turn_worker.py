@@ -284,7 +284,14 @@ def test_coordinator_retries_after_a_transient_claim_error(
     original_claim = SqlAlchemyWorkflowRepository.claim_ready
     attempts = 0
 
-    def flaky_claim(self, *, worker_id: str, lease_until: datetime, limit: int):
+    def flaky_claim(
+        self,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+        limit: int,
+        **claim_options,
+    ):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -294,6 +301,7 @@ def test_coordinator_retries_after_a_transient_claim_error(
             worker_id=worker_id,
             lease_until=lease_until,
             limit=limit,
+            **claim_options,
         )
 
     try:

@@ -11,6 +11,7 @@ from fairy_core.media.scheduler import MediaScheduler
 from fairy_core.media.service import MediaService, UnavailableMediaService
 from fairy_core.media.staging import MediaStagingStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
+from fairy_core.workflow.scheduler import WorkflowAdapterRegistry, WorkflowScheduler
 from fairy_core.workspace.ports import WorkspaceProvisioner
 
 
@@ -31,6 +32,8 @@ def build_media_composition(
     provider: MediaProvider | None,
     staging: MediaStagingStore | None,
     workspaces: WorkspaceProvisioner | None,
+    workflow_scheduler: WorkflowScheduler | None = None,
+    workflow_adapters: WorkflowAdapterRegistry | None = None,
 ) -> MediaComposition:
     dependencies = (provider, staging, workspaces)
     if any(value is not None for value in dependencies) and not all(
@@ -57,6 +60,8 @@ def build_media_composition(
         application=application,
         unit_of_work_factory=unit_of_work_factory,
         registry=registry,
+        workflow_scheduler=workflow_scheduler,
+        adapters=workflow_adapters,
     )
     return MediaComposition(
         provider=provider,

@@ -77,11 +77,20 @@ class WorkflowAdapterRegistry:
         except KeyError as error:
             raise RuntimeError(f"Workflow adapter is unavailable: {kind}") from error
 
+    def child_waiting_kinds(self) -> frozenset[str]:
+        return frozenset(
+            kind
+            for kind, adapter in self._adapters.items()
+            if bool(getattr(adapter, "may_wait_for_child_workflow", False))
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class _ActiveNode:
     claim: WorkflowAttemptClaim
     cancellation: CancellationToken
+    kind: str
+    parent_run_id: UUID | None
 
 
 class WorkflowScheduler:
@@ -94,6 +103,7 @@ class WorkflowScheduler:
         lease_duration: timedelta = WORKFLOW_LEASE_DURATION,
         heartbeat_interval: float = 5.0,
         poll_interval: float = 0.1,
+        autostart: bool = True,
     ) -> None:
         if max_workers < 1:
             raise ValueError("Workflow max_workers must be positive")
@@ -115,6 +125,7 @@ class WorkflowScheduler:
         self._wake = Event()
         self._changed = Event()
         self._closed = False
+        self._started = False
         self._last_heartbeat = time.monotonic()
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers,
@@ -125,7 +136,18 @@ class WorkflowScheduler:
             name="fairy-workflow-coordinator",
             daemon=True,
         )
-        self._coordinator.start()
+        if autostart:
+            self.start()
+
+    def start(self) -> None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Workflow Scheduler is closing")
+            if self._started:
+                return
+            self._started = True
+            self._coordinator.start()
+        self._wake.set()
 
     def close(self) -> None:
         with self._lock:
@@ -146,7 +168,8 @@ class WorkflowScheduler:
                 item.cancellation.interrupt()
         self._wake.set()
         self._changed.set()
-        self._coordinator.join()
+        if self._started:
+            self._coordinator.join()
         self._executor.shutdown(wait=True, cancel_futures=True)
         with self._lock:
             remaining = tuple(self._active.values())
@@ -260,19 +283,45 @@ class WorkflowScheduler:
     def _claim_available(self) -> None:
         with self._lock:
             capacity = self._max_workers - len(self._active)
+            active = tuple(self._active.values())
         if capacity <= 0:
             return
+        blocking_parent_kinds = (
+            self._adapters.child_waiting_kinds() if self._max_workers > 1 else frozenset()
+        )
+        reserve_child_slot = any(
+            item.parent_run_id is None and item.kind in blocking_parent_kinds for item in active
+        )
         with self._unit_of_work_factory() as unit_of_work:
             claims = unit_of_work.workflows.claim_ready(
                 worker_id=self._owner_id,
                 lease_until=self._new_lease_until(),
                 limit=capacity,
+                blocking_parent_kinds=blocking_parent_kinds,
+                reserve_child_slot=reserve_child_slot,
             )
+            claim_nodes = {}
+            for claim in claims:
+                snapshot = unit_of_work.workflows.get(claim.run_id)
+                if snapshot is None:
+                    continue
+                node = next(value for value in snapshot.nodes if value.id == claim.node_id)
+                claim_nodes[claim.node_id] = (node.kind, snapshot.run.parent_run_id)
             if claims:
                 unit_of_work.commit()
         for claim in claims:
             cancellation = CancellationToken()
-            active = _ActiveNode(claim=claim, cancellation=cancellation)
+            claim_node = claim_nodes.get(claim.node_id)
+            if claim_node is None:
+                self._abandon(claim)
+                continue
+            kind, parent_run_id = claim_node
+            active = _ActiveNode(
+                claim=claim,
+                cancellation=cancellation,
+                kind=kind,
+                parent_run_id=parent_run_id,
+            )
             with self._lock:
                 if self._closed:
                     cancellation.interrupt()

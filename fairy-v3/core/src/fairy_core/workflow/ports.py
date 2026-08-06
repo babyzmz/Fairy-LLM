@@ -53,6 +53,8 @@ class WorkflowRepository(Protocol):
         worker_id: str,
         lease_until: datetime,
         limit: int,
+        blocking_parent_kinds: frozenset[str] = frozenset(),
+        reserve_child_slot: bool = False,
     ) -> tuple[WorkflowAttemptClaim, ...]: ...
 
     def renew(self, claim: WorkflowAttemptClaim, *, lease_until: datetime) -> bool: ...
