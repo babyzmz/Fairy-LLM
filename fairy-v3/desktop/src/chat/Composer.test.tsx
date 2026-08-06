@@ -53,6 +53,64 @@ describe("Composer", () => {
     submission.reject(new Error("Core unavailable"));
     await waitFor(() => expect(input).toHaveValue("Next message"));
   });
+
+  it("switches an active Workflow Composer to task-update controls", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(async () => undefined);
+    const onPauseWorkflow = vi.fn(async () => undefined);
+    const onStop = vi.fn(async () => undefined);
+    render(
+      <Composer
+        disabled={false}
+        isBusy
+        visionAvailable={false}
+        modelCatalog={null}
+        modelSelection={null}
+        workflowSummary={workflowSummary("running")}
+        onSubmit={onSubmit}
+        onStop={onStop}
+        onPauseWorkflow={onPauseWorkflow}
+        onResumeWorkflow={vi.fn(async () => undefined)}
+        onSelectModel={vi.fn(async () => undefined)}
+        onOpenModelSettings={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(screen.getByText("Update current task")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Attach documents" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Update the current task"), "Use the newer sources");
+    await user.click(screen.getByRole("button", { name: "Update current task" }));
+    await user.click(screen.getByRole("button", { name: "Pause task" }));
+
+    expect(onSubmit).toHaveBeenCalledWith("Use the newer sources", [], []);
+    expect(onPauseWorkflow).toHaveBeenCalledTimes(1);
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
+  it("offers resume while a Workflow is paused", async () => {
+    const user = userEvent.setup();
+    const onResumeWorkflow = vi.fn(async () => undefined);
+    render(
+      <Composer
+        disabled={false}
+        isBusy={false}
+        visionAvailable={false}
+        modelCatalog={null}
+        modelSelection={null}
+        workflowSummary={workflowSummary("paused")}
+        onSubmit={vi.fn(async () => undefined)}
+        onStop={vi.fn(async () => undefined)}
+        onPauseWorkflow={vi.fn(async () => undefined)}
+        onResumeWorkflow={onResumeWorkflow}
+        onSelectModel={vi.fn(async () => undefined)}
+        onOpenModelSettings={vi.fn(async () => undefined)}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Resume task" }));
+
+    expect(onResumeWorkflow).toHaveBeenCalledTimes(1);
+  });
 });
 
 function renderComposer(
@@ -85,4 +143,23 @@ function deferred<T>() {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+function workflowSummary(status: "running" | "paused") {
+  return {
+    run_id: "019f566f-f8b4-7000-8000-000000000150",
+    status,
+    budget_tier: "normal" as const,
+    active_plan_revision: 2,
+    current_phase: "Responding",
+    public_summary: "Fairy is working",
+    completed_nodes: 0,
+    total_nodes: 1,
+    model_rounds_used: 1,
+    max_model_rounds: 12,
+    tool_invocations_used: 0,
+    max_tool_invocations: 32,
+    pause_requested: status === "paused",
+    updated_at: "2026-07-12T00:00:00Z",
+  };
 }

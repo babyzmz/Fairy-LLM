@@ -52,6 +52,45 @@ describe("ChatWorkspace", () => {
     await waitFor(() => expect(props.onSend).toHaveBeenCalledWith("中文输入", [], []));
   });
 
+  it("updates the active Workflow instead of creating a concurrent Turn", async () => {
+    const user = userEvent.setup();
+    const onSteer = vi.fn(async () => undefined);
+    const props = workspaceProps({
+      turn: {
+        ...TURN,
+        status: "running",
+        completed_at: null,
+        workflow_summary: {
+          run_id: "0198f4de-0114-7000-8000-000000000031",
+          status: "running",
+          budget_tier: "normal",
+          active_plan_revision: 2,
+          current_phase: "Researching",
+          public_summary: "Checking current sources",
+          completed_nodes: 1,
+          total_nodes: 3,
+          model_rounds_used: 2,
+          max_model_rounds: 12,
+          tool_invocations_used: 4,
+          max_tool_invocations: 32,
+          pause_requested: false,
+          updated_at: "2026-07-11T00:00:02Z",
+        },
+      },
+      isBusy: true,
+      onSteer,
+    });
+    render(<ChatWorkspace {...props} />);
+
+    const composer = screen.getByLabelText("Update the current task");
+    await user.type(composer, "Only compare official sources");
+    await user.click(screen.getByRole("button", { name: "Update current task" }));
+
+    await waitFor(() => expect(onSteer).toHaveBeenCalledWith("Only compare official sources"));
+    expect(props.onSend).not.toHaveBeenCalled();
+    expect(screen.getAllByText("r2")).toHaveLength(2);
+  });
+
   it("renders safe GFM and routes links and copy through controlled actions", async () => {
     const user = userEvent.setup();
     const content = [

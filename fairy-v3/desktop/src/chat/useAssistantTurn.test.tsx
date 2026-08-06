@@ -384,6 +384,106 @@ describe("useAssistantTurn", () => {
     expect(result.current.turn).toEqual(completed);
   });
 
+  it("pauses and resumes a Workflow-backed turn without creating another turn", async () => {
+    const running = assistantTurn({
+      status: "running",
+      workflow_summary: workflowSummary({ status: "running" }),
+    });
+    const paused = assistantTurn({
+      status: "running",
+      workflow_summary: workflowSummary({ status: "paused", pause_requested: true }),
+    });
+    const resumed = assistantTurn({
+      status: "running",
+      workflow_summary: workflowSummary({ status: "queued" }),
+    });
+    const pauseTurn = vi.fn(async () => paused);
+    const resumeWorkflow = vi.fn(async () => resumed);
+    const createTurn = vi.fn(async () => running);
+    const client = assistantClient({
+      createTask: async () => ({ task: { id: taskId } }) as never,
+      createTurn,
+      startTurn: async () => running,
+      pauseTurn,
+      resumeWorkflow,
+    });
+    const { result } = renderHook(() =>
+      useAssistantTurn({
+        client,
+        conversationId,
+        profileId: "openrouter-free",
+        operationMode: "answer",
+        events: [],
+      }),
+    );
+
+    await act(async () => result.current.send("Long task", []));
+    await act(async () => result.current.pauseWorkflow());
+
+    expect(pauseTurn).toHaveBeenCalledWith(turnId);
+    expect(result.current.turn?.workflow_summary?.status).toBe("paused");
+    expect(result.current.isBusy).toBe(false);
+
+    await act(async () => result.current.resumeWorkflow());
+
+    expect(resumeWorkflow).toHaveBeenCalledWith(turnId);
+    expect(result.current.turn?.workflow_summary?.status).toBe("queued");
+    expect(result.current.isBusy).toBe(true);
+    expect(createTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("steers only the Workflow bound to the selected conversation", async () => {
+    const running = assistantTurn({
+      status: "running",
+      workflow_summary: workflowSummary({
+        status: "running",
+        active_plan_revision: 3,
+      }),
+    });
+    const steerTurn = vi.fn(async () => ({
+      ...running,
+      workflow_summary: workflowSummary({
+        status: "running",
+        active_plan_revision: 3,
+        pause_requested: true,
+      }),
+    }));
+    const client = assistantClient({
+      createTask: async () => ({ task: { id: taskId } }) as never,
+      createTurn: async () => running,
+      startTurn: async () => running,
+      steerTurn,
+    });
+    const conversationB = "00000000-0000-4000-8000-000000000011";
+    const { result, rerender } = renderHook(
+      ({ selectedConversation }: { selectedConversation: string }) =>
+        useAssistantTurn({
+          client,
+          conversationId: selectedConversation,
+          profileId: "openrouter-free",
+          operationMode: "answer",
+          events: [],
+        }),
+      { initialProps: { selectedConversation: conversationId } },
+    );
+
+    await act(async () => result.current.send("Research this", []));
+    await act(async () => result.current.steer("Prioritize recovery evidence"));
+
+    expect(steerTurn).toHaveBeenCalledWith({
+      turn_id: turnId,
+      instruction: "Prioritize recovery evidence",
+      expected_revision: 3,
+      idempotency_key: expect.stringMatching(/^desktop:assistant-steer:/),
+    });
+
+    rerender({ selectedConversation: conversationB });
+    await expect(result.current.steer("Do not leak to B")).rejects.toThrow(
+      "cannot be updated",
+    );
+    expect(steerTurn).toHaveBeenCalledTimes(1);
+  });
+
   it("derives the active stream without duplicating replayed SSE chunks", async () => {
     const created = assistantTurn({ status: "running" });
     const client = assistantClient({
@@ -620,6 +720,9 @@ interface ClientOverrides {
   startTurn?: AssistantTurnClient["assistant"]["turns"]["start"];
   cancelTurn?: AssistantTurnClient["assistant"]["turns"]["cancel"];
   retryTurn?: AssistantTurnClient["assistant"]["turns"]["retry"];
+  pauseTurn?: AssistantTurnClient["assistant"]["turns"]["pause"];
+  resumeWorkflow?: AssistantTurnClient["assistant"]["turns"]["resume"];
+  steerTurn?: AssistantTurnClient["assistant"]["turns"]["steer"];
 }
 
 function assistantClient(overrides: ClientOverrides): AssistantTurnClient {
@@ -638,6 +741,11 @@ function assistantClient(overrides: ClientOverrides): AssistantTurnClient {
         cancel:
           overrides.cancelTurn ?? (async () => assistantTurn({ status: "cancelled" })),
         retry: overrides.retryTurn ?? (async () => assistantTurn()),
+        pause:
+          overrides.pauseTurn ?? (async () => assistantTurn({ status: "completed" })),
+        resume:
+          overrides.resumeWorkflow ?? (async () => assistantTurn({ status: "completed" })),
+        steer: overrides.steerTurn ?? (async () => assistantTurn({ status: "running" })),
       },
     },
   };
@@ -666,6 +774,28 @@ function assistantTurn(overrides: Partial<AssistantTurn> = {}): AssistantTurn {
     started_at: null,
     completed_at: null,
     error_code: null,
+    ...overrides,
+  };
+}
+
+function workflowSummary(
+  overrides: Partial<NonNullable<AssistantTurn["workflow_summary"]>> = {},
+): NonNullable<AssistantTurn["workflow_summary"]> {
+  return {
+    run_id: "00000000-0000-4000-8000-000000000050",
+    status: "running",
+    budget_tier: "normal",
+    active_plan_revision: 1,
+    current_phase: "Responding",
+    public_summary: "Fairy is working",
+    completed_nodes: 0,
+    total_nodes: 1,
+    model_rounds_used: 1,
+    max_model_rounds: 12,
+    tool_invocations_used: 0,
+    max_tool_invocations: 32,
+    pause_requested: false,
+    updated_at: "2026-07-11T00:00:01Z",
     ...overrides,
   };
 }

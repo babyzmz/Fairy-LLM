@@ -257,6 +257,9 @@ export interface WorkspaceModel {
   sendPetMessage(value: string): Promise<void>;
   cancelPetTurn(): Promise<void>;
   cancelChatTurn(): Promise<void>;
+  pauseChatTurn(): Promise<void>;
+  resumeChatTurn(): Promise<void>;
+  steerChatTurn(instruction: string): Promise<void>;
   retryChatTurn(): Promise<void>;
   retryPendingChatMessage(): Promise<void>;
   deletePendingChatMessage(): void;
@@ -285,6 +288,9 @@ export interface WorkspaceModel {
   exportWorkspace(): Promise<WorkspaceExport>;
   cancelMediaJob(job: MediaGenerationJob): Promise<void>;
   cancelProjectTurn(): Promise<void>;
+  pauseProjectTurn(): Promise<void>;
+  resumeProjectTurn(): Promise<void>;
+  steerProjectTurn(instruction: string): Promise<void>;
   decideApproval(approvalId: string, approved: boolean): Promise<void>;
   startPreview(): Promise<void>;
   stopPreview(): Promise<void>;

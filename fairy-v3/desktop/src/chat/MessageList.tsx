@@ -52,6 +52,9 @@ interface MessageListProps {
   onRetryPending(): Promise<void>;
   onEditPending(): void;
   onDeletePending(): void;
+  onPauseWorkflow?(): Promise<void>;
+  onResumeWorkflow?(): Promise<void>;
+  onCancelWorkflow?(): Promise<void>;
   onCopy(taskId: string, content: string): Promise<void>;
   onOpenLink(taskId: string, url: string): Promise<void>;
 }
@@ -69,6 +72,9 @@ export function MessageList({
   onRetryPending,
   onEditPending,
   onDeletePending,
+  onPauseWorkflow,
+  onResumeWorkflow,
+  onCancelWorkflow,
   onCopy,
   onOpenLink,
 }: MessageListProps) {
@@ -238,6 +244,9 @@ export function MessageList({
                 traceState={turnTraceStates[message.turn_id] ?? null}
                 events={events}
                 developerMode={developerMode}
+                onPause={turn?.id === message.turn_id ? onPauseWorkflow : undefined}
+                onResume={turn?.id === message.turn_id ? onResumeWorkflow : undefined}
+                onCancel={turn?.id === message.turn_id ? onCancelWorkflow : undefined}
               />
               ) : null}
           </Fragment>
@@ -257,6 +266,9 @@ export function MessageList({
                 traceState={turnTraceStates[turn.id] ?? null}
                 events={events}
                 developerMode={developerMode}
+                onPause={onPauseWorkflow}
+                onResume={onResumeWorkflow}
+                onCancel={onCancelWorkflow}
               />
             ) : null}
           </>

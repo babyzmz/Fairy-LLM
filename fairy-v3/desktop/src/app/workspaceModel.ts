@@ -1123,6 +1123,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       await chatAssistant.cancel();
     },
     cancelChatTurn: chatAssistant.cancel,
+    pauseChatTurn: chatAssistant.pauseWorkflow,
+    resumeChatTurn: chatAssistant.resumeWorkflow,
+    steerChatTurn: chatAssistant.steer,
     retryChatTurn: chatAssistant.retry,
     retryPendingChatMessage: chatAssistant.retryPending,
     deletePendingChatMessage: chatAssistant.deletePending,
@@ -1163,6 +1166,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       );
     },
     cancelProjectTurn: projectAssistant.cancel,
+    pauseProjectTurn: projectAssistant.pauseWorkflow,
+    resumeProjectTurn: projectAssistant.resumeWorkflow,
+    steerProjectTurn: projectAssistant.steer,
     decideApproval: actions.decideApproval,
     startPreview: actions.startPreview,
     stopPreview: actions.stopPreview,

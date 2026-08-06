@@ -123,6 +123,58 @@ describe("ActivityRail", () => {
     expect(screen.getByText("Work chain unavailable")).toBeVisible();
     expect(document.querySelector(".activity-spinner")).not.toBeInTheDocument();
   });
+
+  it("shows Workflow progress, parallel branches, budgets, and scoped controls", () => {
+    const onPause = vi.fn(async () => undefined);
+    const onCancel = vi.fn(async () => undefined);
+    const trace = {
+      ...makeTrace([
+        makeStep({ id: MODEL_STEP_ID, status: "running", completed_at: null }),
+        makeStep({ id: TOOL_STEP_ID, sequence: 2, status: "running", completed_at: null }),
+      ]),
+      completed_at: null,
+    };
+    render(
+      <ActivityRail
+        trace={trace}
+        turn={workflowTurn("running")}
+        onPause={onPause}
+        onResume={vi.fn(async () => undefined)}
+        onCancel={onCancel}
+      />,
+    );
+
+    expect(screen.getByText("2 parallel branches")).toBeVisible();
+    expect(screen.getByText("1/4 nodes")).toBeVisible();
+    expect(screen.getByText("2/24 rounds")).toBeVisible();
+    expect(screen.getByText("5/96 tools")).toBeVisible();
+    expect(screen.getByText("Deep")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Pause task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel task" }));
+
+    expect(onPause).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes a paused Workflow without exposing controls on historical rails", () => {
+    const onResume = vi.fn(async () => undefined);
+    const view = render(
+      <ActivityRail
+        trace={makeTrace([])}
+        turn={workflowTurn("paused")}
+        onResume={onResume}
+        onCancel={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(screen.getByText("Paused by you")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Resume task" }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+
+    view.rerender(<ActivityRail trace={makeTrace([])} turn={workflowTurn("paused")} />);
+    expect(screen.queryByRole("button", { name: "Resume task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel task" })).not.toBeInTheDocument();
+  });
 });
 
 const TURN_ID = "019f5ad1-7df8-7000-8000-000000000101";
@@ -180,6 +232,35 @@ function makeStep(overrides: Partial<TraceStep>): TraceStep {
     duration_ms: 1_000,
     ...overrides,
   };
+}
+
+function workflowTurn(status: "running" | "paused") {
+  return {
+    id: TURN_ID,
+    conversation_id: CONVERSATION_ID,
+    task_id: TASK_ID,
+    status: "running",
+    workflow_summary: {
+      run_id: "019f5ad1-7df8-7000-8000-000000000120",
+      status,
+      budget_tier: "deep",
+      active_plan_revision: 2,
+      current_phase: "Researching",
+      public_summary: "Comparing current sources",
+      completed_nodes: 1,
+      total_nodes: 4,
+      model_rounds_used: 2,
+      max_model_rounds: 24,
+      tool_invocations_used: 5,
+      max_tool_invocations: 96,
+      pause_requested: status === "paused",
+      updated_at: "2026-07-15T00:00:02Z",
+    },
+    created_at: "2026-07-15T00:00:00Z",
+    updated_at: "2026-07-15T00:00:02Z",
+    started_at: "2026-07-15T00:00:00Z",
+    completed_at: null,
+  } as never;
 }
 
 function message(

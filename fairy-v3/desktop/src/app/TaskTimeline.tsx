@@ -16,6 +16,9 @@ interface TaskTimelineProps {
   isActing: boolean;
   onSelectTask(taskId: string): void;
   onDecision(approvalId: string, approved: boolean): Promise<void>;
+  onPauseWorkflow?(): Promise<void>;
+  onResumeWorkflow?(): Promise<void>;
+  onCancelWorkflow?(): Promise<void>;
 }
 
 export function TaskTimeline({
@@ -30,6 +33,9 @@ export function TaskTimeline({
   isActing,
   onSelectTask,
   onDecision,
+  onPauseWorkflow,
+  onResumeWorkflow,
+  onCancelWorkflow,
 }: TaskTimelineProps) {
   const pendingApproval = approvals.find((approval) => approval.decision === "pending") ?? null;
   const isActive = task !== null && activeTaskStatuses.has(task.status);
@@ -84,6 +90,9 @@ export function TaskTimeline({
                 traceState={traceState}
                 events={events}
                 developerMode={developerMode}
+                onPause={turn?.task_id === task.id ? onPauseWorkflow : undefined}
+                onResume={turn?.task_id === task.id ? onResumeWorkflow : undefined}
+                onCancel={turn?.task_id === task.id ? onCancelWorkflow : undefined}
               />
             ) : (
               <div className="task-trace-empty" role="status">

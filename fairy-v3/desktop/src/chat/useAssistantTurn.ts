@@ -15,7 +15,7 @@ export interface AssistantTurnClient {
   assistant: {
     turns: Pick<
       CoreClient["assistant"]["turns"],
-      "create" | "get" | "start" | "cancel" | "retry"
+      "create" | "get" | "start" | "cancel" | "retry" | "pause" | "resume" | "steer"
     >;
   };
 }
@@ -66,6 +66,9 @@ interface AssistantTurnState {
   ): Promise<void>;
   cancel(): Promise<void>;
   resume(): Promise<void>;
+  pauseWorkflow(): Promise<void>;
+  resumeWorkflow(): Promise<void>;
+  steer(instruction: string): Promise<void>;
   markApprovalResume(turnId: string): void;
   retry(): Promise<void>;
   retryPending(): Promise<void>;
@@ -281,7 +284,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
 
   const cancel = useCallback(async () => {
     const current = turnRef.current;
-    if (current === null || isTerminal(current) || !busyRef.current) return;
+    if (current === null || isTerminal(current)) return;
     ++operationRef.current;
     busyRef.current = false;
     setError(null);
@@ -297,6 +300,92 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     } finally {
       setIsBusy(false);
       await settle();
+    }
+  }, [commitTurn, options.client.assistant.turns, settle]);
+
+  const pauseWorkflow = useCallback(async () => {
+    const current = turnRef.current;
+    if (current === null || !workflowCanPause(current)) return;
+    const operation = ++operationRef.current;
+    setError(null);
+    try {
+      let paused = await options.client.assistant.turns.pause(current.id);
+      if (operation !== operationRef.current) return;
+      commitTurn(paused);
+      busyRef.current = false;
+      setIsBusy(false);
+      if (
+        paused.workflow_summary?.pause_requested === true &&
+        paused.workflow_summary.status !== "paused"
+      ) {
+        paused = await waitForWorkflowStatus(
+          options.client.assistant.turns.get,
+          paused.id,
+          operation,
+          operationRef,
+          "paused",
+        );
+        if (operation !== operationRef.current) return;
+        commitTurn(paused);
+      }
+      await settle();
+    } catch (caught) {
+      if (operation === operationRef.current) {
+        busyRef.current = isActive(current);
+        setIsBusy(busyRef.current);
+        setError(errorMessage(caught));
+      }
+      throw caught;
+    }
+  }, [commitTurn, options.client.assistant.turns, settle]);
+
+  const resumeWorkflow = useCallback(async () => {
+    const current = turnRef.current;
+    if (current === null || current.workflow_summary?.status !== "paused") return;
+    const operation = ++operationRef.current;
+    setError(null);
+    try {
+      const resumed = await options.client.assistant.turns.resume(current.id);
+      if (operation !== operationRef.current) return;
+      commitTurn(resumed);
+      const active = isActive(resumed);
+      busyRef.current = active;
+      setIsBusy(active);
+      await settle();
+    } catch (caught) {
+      if (operation === operationRef.current) setError(errorMessage(caught));
+      throw caught;
+    }
+  }, [commitTurn, options.client.assistant.turns, settle]);
+
+  const steer = useCallback(async (instruction: string) => {
+    const current = turnRef.current;
+    const normalized = instruction.trim();
+    if (current === null || !workflowCanSteer(current)) {
+      throw new Error("The current Assistant task cannot be updated");
+    }
+    if (!normalized) throw new Error("Task update cannot be empty");
+    const operation = ++operationRef.current;
+    busyRef.current = true;
+    setIsBusy(true);
+    setError(null);
+    try {
+      const updated = await options.client.assistant.turns.steer({
+        turn_id: current.id,
+        instruction: normalized,
+        expected_revision: current.workflow_summary?.active_plan_revision ?? 1,
+        idempotency_key: idempotencyKey("assistant-steer"),
+      });
+      if (operation !== operationRef.current) return;
+      commitTurn(updated);
+      await settle();
+    } catch (caught) {
+      if (operation === operationRef.current) {
+        busyRef.current = isActive(current);
+        setIsBusy(busyRef.current);
+        setError(errorMessage(caught));
+      }
+      throw caught;
     }
   }, [commitTurn, options.client.assistant.turns, settle]);
 
@@ -451,6 +540,9 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     sendToConversation,
     cancel,
     resume,
+    pauseWorkflow,
+    resumeWorkflow,
+    steer,
     markApprovalResume,
     retry,
     retryPending,
@@ -465,13 +557,58 @@ const STATUS_EVENT_TYPES = new Set([
   "assistant.turn.completed",
   "assistant.turn.cancelled",
   "assistant.turn.failed",
+  "assistant.turn.steered",
   "assistant.budget.approval_requested",
   "command.waiting_approval",
   "approval.requested",
 ]);
 
 function isActive(turn: AssistantTurn): boolean {
+  if (turn.workflow_summary !== null && turn.workflow_summary !== undefined) {
+    return ["queued", "running"].includes(turn.workflow_summary.status);
+  }
   return turn.status === "created" || turn.status === "running";
+}
+
+function workflowCanPause(turn: AssistantTurn): boolean {
+  return (
+    !isTerminal(turn) &&
+    turn.workflow_summary !== null &&
+    turn.workflow_summary !== undefined &&
+    ["queued", "running"].includes(turn.workflow_summary.status) &&
+    !turn.workflow_summary.pause_requested
+  );
+}
+
+function workflowCanSteer(turn: AssistantTurn): boolean {
+  return (
+    turn.status === "running" &&
+    turn.workflow_summary !== null &&
+    turn.workflow_summary !== undefined &&
+    ["queued", "running", "paused"].includes(turn.workflow_summary.status)
+  );
+}
+
+async function waitForWorkflowStatus(
+  getTurn: AssistantTurnClient["assistant"]["turns"]["get"],
+  turnId: string,
+  operation: number,
+  operationRef: { current: number },
+  status: NonNullable<AssistantTurn["workflow_summary"]>["status"],
+): Promise<AssistantTurn> {
+  let current = await getTurn(turnId);
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (
+      operation !== operationRef.current ||
+      current.workflow_summary?.status === status ||
+      isTerminal(current)
+    ) {
+      return current;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    current = await getTurn(turnId);
+  }
+  return current;
 }
 
 export function assistantDeltaText(

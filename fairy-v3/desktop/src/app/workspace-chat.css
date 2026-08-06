@@ -583,6 +583,40 @@
   flex: 0 0 auto;
 }
 
+.composer-workflow-mode {
+  min-width: 0;
+  max-width: 220px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  overflow: hidden;
+  color: #8fc8b2;
+  font: 600 9px/30px "Cascadia Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-workflow-mode > span {
+  flex: 0 0 auto;
+  color: #65736d;
+}
+
+.workflow-pause-button {
+  color: #b9c9c2;
+}
+
+.workflow-update-button {
+  color: #10201a;
+  background: #78cdb0;
+}
+
+@media (max-width: 700px) {
+  .composer-workflow-mode {
+    max-width: 132px;
+  }
+}
+
 .composer-toolbar .icon-button,
 .composer-toolbar .send-button {
   width: 32px;

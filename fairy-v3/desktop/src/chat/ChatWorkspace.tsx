@@ -59,6 +59,9 @@ export interface ChatWorkspaceProps {
     images: PendingImageAttachment[],
   ): Promise<void>;
   onCancel(): Promise<void>;
+  onPauseWorkflow?(): Promise<void>;
+  onResumeWorkflow?(): Promise<void>;
+  onSteer?(instruction: string): Promise<void>;
   onRetry(): Promise<void>;
   onRetryPending(): Promise<void>;
   onDeletePending(): void;
@@ -81,13 +84,19 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   );
   const pendingApproval =
     props.approvals.find((approval) => approval.decision === "pending") ?? null;
+  const workflowSummary = props.turn?.workflow_summary ?? null;
+  const workflowCanUpdate =
+    props.turn?.status === "running" &&
+    workflowSummary !== null &&
+    ["queued", "running", "paused"].includes(workflowSummary.status);
   const statusLabel = useMemo(() => {
     if (!providerAvailable) return "Provider unavailable";
     if (props.offline) return "Core offline";
     if (pendingApproval !== null) return "Approval required";
+    if (workflowSummary?.status === "paused") return "Task paused";
     if (props.isBusy) return "Fairy is working";
     return "Ready";
-  }, [pendingApproval, props.isBusy, props.offline, providerAvailable]);
+  }, [pendingApproval, props.isBusy, props.offline, providerAvailable, workflowSummary?.status]);
 
   const submit = async (
     value: string,
@@ -97,6 +106,15 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     const command = parseSlashCommand(value, props.slashCommands);
     if (command === null) {
       setNotice(null);
+      if (workflowCanUpdate) {
+        if (files.length > 0 || images.length > 0) {
+          setNotice("Task updates cannot add attachments");
+          return;
+        }
+        if (props.onSteer === undefined) throw new Error("Task update control is unavailable");
+        await props.onSteer(value);
+        return;
+      }
       await props.onSend(
         value || "Review the attached documents and screen captures.",
         files,
@@ -199,6 +217,9 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           developerMode={props.developerMode}
           onRetryPending={props.onRetryPending}
           onDeletePending={props.onDeletePending}
+          onPauseWorkflow={props.onPauseWorkflow}
+          onResumeWorkflow={props.onResumeWorkflow}
+          onCancelWorkflow={props.onCancel}
           onEditPending={() => {
             const draft = props.onTakePendingForEdit();
             if (draft !== null) setComposerDraft(draft);
@@ -277,9 +298,12 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         modelSelection={props.modelSelection}
         modelSelectionDisabled={props.offline || props.modelSelectionLoading}
         submissionBlockedReason={props.modelSelectionBlockReason}
+        workflowSummary={workflowSummary}
         draft={composerDraft}
         onSubmit={submit}
         onStop={props.onCancel}
+        onPauseWorkflow={props.onPauseWorkflow}
+        onResumeWorkflow={props.onResumeWorkflow}
         onSelectModel={props.onSelectModel}
         onOpenModelSettings={props.onOpenModelSettings}
       />

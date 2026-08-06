@@ -1,4 +1,4 @@
-import { Paperclip, Send, Square, X } from "lucide-react";
+import { Paperclip, Pause, Play, Send, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -6,7 +6,11 @@ import {
   type PendingImageAttachment,
 } from "../perception/CaptureControl";
 import { VoiceRecordControl } from "../voice/VoiceController";
-import type { ModelCatalogPage, ModelSelectionPreference } from "../core/client";
+import type {
+  AssistantWorkflowSummary,
+  ModelCatalogPage,
+  ModelSelectionPreference,
+} from "../core/client";
 import { ModelSelector } from "../models/ModelSelector";
 import type { AssistantDraft } from "./useAssistantTurn";
 
@@ -22,6 +26,7 @@ interface ComposerProps {
   modelSelection: ModelSelectionPreference | null;
   modelSelectionDisabled?: boolean;
   submissionBlockedReason?: string | null;
+  workflowSummary?: AssistantWorkflowSummary | null;
   draft?: AssistantDraft | null;
   onSubmit(
     value: string,
@@ -29,6 +34,8 @@ interface ComposerProps {
     images: PendingImageAttachment[],
   ): Promise<void>;
   onStop(): Promise<void>;
+  onPauseWorkflow?(): Promise<void>;
+  onResumeWorkflow?(): Promise<void>;
   onSelectModel(mode: "auto" | "manual", modelId: string | null): Promise<void>;
   onOpenModelSettings(): Promise<void>;
 }
@@ -42,9 +49,12 @@ export function Composer({
   modelSelection,
   modelSelectionDisabled = false,
   submissionBlockedReason = null,
+  workflowSummary = null,
   draft = null,
   onSubmit,
   onStop,
+  onPauseWorkflow,
+  onResumeWorkflow,
   onSelectModel,
   onOpenModelSettings,
 }: ComposerProps) {
@@ -57,12 +67,29 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const draftRevisionRef = useRef(0);
   const submittingRef = useRef(false);
-  const effectiveBusy = isBusy || isSubmitting;
+  const taskUpdateMode =
+    workflowSummary !== null &&
+    ["queued", "running", "waiting_for_approval", "paused"].includes(
+      workflowSummary.status,
+    );
+  const taskUpdateAvailable =
+    workflowSummary !== null &&
+    ["queued", "running", "paused"].includes(workflowSummary.status);
+  const workflowPaused = workflowSummary?.status === "paused";
+  const effectiveInputAriaLabel = taskUpdateMode
+    ? "Update the current task"
+    : inputAriaLabel;
+  const effectiveBusy = isSubmitting || (isBusy && !taskUpdateMode);
   const canSubmit =
     !disabled &&
     !effectiveBusy &&
-    submissionBlockedReason === null &&
-    (value.trim().length > 0 || files.length > 0 || capture !== null);
+    (submissionBlockedReason === null || taskUpdateAvailable) &&
+    (taskUpdateMode
+      ? taskUpdateAvailable &&
+        value.trim().length > 0 &&
+        files.length === 0 &&
+        capture === null
+      : value.trim().length > 0 || files.length > 0 || capture !== null);
 
   useEffect(() => {
     if (draft === null) return;
@@ -150,13 +177,19 @@ export function Composer({
       ) : null}
       <div className="composer-input-surface">
         <label className="composer-field chat-composer-field">
-          <span className="sr-only">{inputAriaLabel}</span>
+          <span className="sr-only">{effectiveInputAriaLabel}</span>
           <textarea
             ref={inputRef}
-            aria-label={inputAriaLabel}
+            aria-label={effectiveInputAriaLabel}
             value={value}
             rows={1}
-            placeholder="Message Fairy"
+            placeholder={
+              workflowSummary?.status === "waiting_for_approval"
+                ? "Resolve approval to continue"
+                : taskUpdateMode
+                  ? "Update the current task"
+                  : "Message Fairy"
+            }
             disabled={disabled}
             onChange={(event) => {
               draftRevisionRef.current += 1;
@@ -179,83 +212,135 @@ export function Composer({
         ) : null}
         <div className="composer-toolbar">
           <div className="composer-toolbar-start">
-        <input
-          ref={fileInputRef}
-          className="sr-only"
-          type="file"
-          multiple
-          accept={ACCEPTED_DOCUMENTS}
-          aria-label="Attach documents"
-          disabled={disabled || effectiveBusy}
-          onChange={(event) => {
-            const selected = Array.from(event.currentTarget.files ?? []);
-            const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_BYTES);
-            if (oversized) {
-              setAttachmentError(`${oversized.name} exceeds the 20 MiB document limit`);
-            } else {
-              setAttachmentError(null);
-              draftRevisionRef.current += 1;
-              setFiles((current) => [...current, ...selected].slice(0, 10));
-            }
-            event.currentTarget.value = "";
-          }}
-        />
-        <button
-          className="icon-button"
-          type="button"
-          aria-label="Attach documents"
-          title="Attach documents"
-          disabled={disabled || effectiveBusy}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <Paperclip size={17} />
-        </button>
-        <CaptureControl
-          disabled={disabled || effectiveBusy}
-          visionAvailable={visionAvailable}
-          value={capture}
-          onChange={(nextCapture) => {
-            draftRevisionRef.current += 1;
-            setCapture(nextCapture);
-          }}
-        />
-        <ModelSelector
-          catalog={modelCatalog}
-          selection={modelSelection}
-          disabled={modelSelectionDisabled}
-          onSelect={onSelectModel}
-          onOpenSettings={onOpenModelSettings}
-        />
+            {taskUpdateMode ? (
+              <span className="composer-workflow-mode" role="status">
+                {workflowPaused
+                  ? "Task paused"
+                  : workflowSummary.status === "waiting_for_approval"
+                    ? "Approval required"
+                    : workflowSummary.pause_requested
+                      ? "Pausing at the next boundary"
+                      : "Update current task"}
+                <span>r{workflowSummary.active_plan_revision}</span>
+              </span>
+            ) : null}
+            <input
+              ref={fileInputRef}
+              className="sr-only"
+              type="file"
+              multiple
+              accept={ACCEPTED_DOCUMENTS}
+              aria-label="Attach documents"
+              disabled={disabled || effectiveBusy || taskUpdateMode}
+              onChange={(event) => {
+                const selected = Array.from(event.currentTarget.files ?? []);
+                const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_BYTES);
+                if (oversized) {
+                  setAttachmentError(`${oversized.name} exceeds the 20 MiB document limit`);
+                } else {
+                  setAttachmentError(null);
+                  draftRevisionRef.current += 1;
+                  setFiles((current) => [...current, ...selected].slice(0, 10));
+                }
+                event.currentTarget.value = "";
+              }}
+            />
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Attach documents"
+              title="Attach documents"
+              disabled={disabled || effectiveBusy || taskUpdateMode}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Paperclip size={17} />
+            </button>
+            <CaptureControl
+              disabled={disabled || effectiveBusy || taskUpdateMode}
+              visionAvailable={visionAvailable}
+              value={capture}
+              onChange={(nextCapture) => {
+                draftRevisionRef.current += 1;
+                setCapture(nextCapture);
+              }}
+            />
+            <ModelSelector
+              catalog={modelCatalog}
+              selection={modelSelection}
+              disabled={modelSelectionDisabled || taskUpdateMode}
+              onSelect={onSelectModel}
+              onOpenSettings={onOpenModelSettings}
+            />
           </div>
           <div className="composer-toolbar-end">
-        <VoiceRecordControl
-          disabled={disabled || effectiveBusy}
-          onTranscript={(text) => {
-            draftRevisionRef.current += 1;
-            setValue((current) => (current.trim() ? `${current.trimEnd()} ${text}` : text));
-          }}
-        />
-        {effectiveBusy ? (
-          <button
-            className="send-button stop-button"
-            type="button"
-            aria-label="Stop response"
-            title="Stop response"
-            onClick={() => void onStop()}
-          >
-            <Square size={15} />
-          </button>
-        ) : (
-          <button
-            className="send-button"
-            type="submit"
-            aria-label="Send message"
-            title="Send message"
-            disabled={!canSubmit}
-          >
-            <Send size={17} />
-            </button>
-          )}
+            <VoiceRecordControl
+              disabled={disabled || effectiveBusy || taskUpdateMode}
+              onTranscript={(text) => {
+                draftRevisionRef.current += 1;
+                setValue((current) => (
+                  current.trim() ? `${current.trimEnd()} ${text}` : text
+                ));
+              }}
+            />
+            {taskUpdateMode ? (
+              <>
+                <button
+                  className="icon-button workflow-pause-button"
+                  type="button"
+                  aria-label={workflowPaused ? "Resume task" : "Pause task"}
+                  title={workflowPaused ? "Resume task" : "Pause task"}
+                  disabled={
+                    isSubmitting ||
+                    workflowSummary.status === "waiting_for_approval" ||
+                    (!workflowPaused && workflowSummary.pause_requested)
+                  }
+                  onClick={() => void (
+                    workflowPaused ? onResumeWorkflow?.() : onPauseWorkflow?.()
+                  )}
+                >
+                  {workflowPaused ? <Play size={15} /> : <Pause size={15} />}
+                </button>
+                <button
+                  className="send-button stop-button"
+                  type="button"
+                  aria-label="Stop response"
+                  title="Stop response"
+                  disabled={isSubmitting}
+                  onClick={() => void onStop()}
+                >
+                  <Square size={15} />
+                </button>
+                <button
+                  className="send-button workflow-update-button"
+                  type="submit"
+                  aria-label="Update current task"
+                  title="Update current task"
+                  disabled={!canSubmit}
+                >
+                  <Send size={17} />
+                </button>
+              </>
+            ) : effectiveBusy ? (
+              <button
+                className="send-button stop-button"
+                type="button"
+                aria-label="Stop response"
+                title="Stop response"
+                onClick={() => void onStop()}
+              >
+                <Square size={15} />
+              </button>
+            ) : (
+              <button
+                className="send-button"
+                type="submit"
+                aria-label="Send message"
+                title="Send message"
+                disabled={!canSubmit}
+              >
+                <Send size={17} />
+              </button>
+            )}
           </div>
         </div>
       </div>

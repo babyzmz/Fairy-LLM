@@ -10,17 +10,25 @@ import {
   ListChecks,
   LoaderCircle,
   MessageSquareText,
+  Pause,
+  Play,
   Route,
   Search,
   ShieldCheck,
   Sparkles,
+  Square,
   Volume2,
   Wrench,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { m } from "motion/react";
 
-import type { AssistantTurn, EventEnvelope, TurnTrace } from "../core/client";
+import type {
+  AssistantTurn,
+  AssistantWorkflowSummary,
+  EventEnvelope,
+  TurnTrace,
+} from "../core/client";
 import { useVoicePlaybackState } from "../voice/VoiceController";
 import {
   modelRoleLabel,
@@ -42,6 +50,9 @@ interface ActivityRailProps {
   traceState?: TurnTraceQueryState | null;
   events?: EventEnvelope[];
   developerMode?: boolean;
+  onPause?(): Promise<void>;
+  onResume?(): Promise<void>;
+  onCancel?(): Promise<void>;
 }
 
 export function ActivityRail({
@@ -51,6 +62,9 @@ export function ActivityRail({
   traceState = null,
   events = [],
   developerMode = false,
+  onPause,
+  onResume,
+  onCancel,
 }: ActivityRailProps) {
   const [expanded, setExpanded] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
@@ -67,6 +81,10 @@ export function ActivityRail({
     [baseProjection, resolvedTurnId, voiceState],
   );
   const tone = workChainTone(projection.current);
+  const workflow = turn?.workflow_summary ?? null;
+  const activeBranches = projection.steps.filter((step) =>
+    ["running", "waiting"].includes(step.status),
+  ).length;
 
   useEffect(() => {
     if (projection.terminal) return;
@@ -96,6 +114,54 @@ export function ActivityRail({
         <span className="activity-duration">{formatDuration(projection.durationMs)}</span>
         <ChevronDown className={expanded ? "activity-chevron expanded" : "activity-chevron"} size={14} />
       </button>
+      {workflow !== null ? (
+        <div className="activity-workflow-overview" aria-label="Workflow status">
+          <span className={`workflow-state workflow-state-${workflow.status}`}>
+            {workflowStatusLabel(workflow)}
+          </span>
+          {workflow.current_phase ? <span>{workflow.current_phase}</span> : null}
+          {activeBranches > 1 ? <span>{activeBranches} parallel branches</span> : null}
+          <span>{workflow.completed_nodes}/{workflow.total_nodes} nodes</span>
+          <span>{workflow.model_rounds_used}/{workflow.max_model_rounds} rounds</span>
+          <span>{workflow.tool_invocations_used}/{workflow.max_tool_invocations} tools</span>
+          {workflow.budget_tier === "deep" ? <span className="workflow-deep">Deep</span> : null}
+          {workflow.active_plan_revision > 1 ? <span>r{workflow.active_plan_revision}</span> : null}
+          {onPause || onResume || onCancel ? (
+            <span className="activity-workflow-controls" role="group" aria-label="Workflow controls">
+              {workflow.status === "paused" && onResume ? (
+                <button
+                  type="button"
+                  aria-label="Resume task"
+                  title="Resume task"
+                  onClick={() => settle(onResume())}
+                >
+                  <Play size={12} />
+                </button>
+              ) : ["queued", "running"].includes(workflow.status) && onPause ? (
+                <button
+                  type="button"
+                  aria-label="Pause task"
+                  title="Pause task"
+                  disabled={workflow.pause_requested}
+                  onClick={() => settle(onPause())}
+                >
+                  <Pause size={12} />
+                </button>
+              ) : null}
+              {!["completed", "cancelled", "failed"].includes(workflow.status) && onCancel ? (
+                <button
+                  type="button"
+                  aria-label="Cancel task"
+                  title="Cancel task"
+                  onClick={() => settle(onCancel())}
+                >
+                  <Square size={11} />
+                </button>
+              ) : null}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {expanded ? (
         <m.ol
           className="activity-history work-chain-steps"
@@ -116,6 +182,30 @@ export function ActivityRail({
       ) : null}
     </section>
   );
+}
+
+function workflowStatusLabel(workflow: AssistantWorkflowSummary): string {
+  if (workflow.pause_requested && workflow.status !== "paused") return "Pausing";
+  if (
+    workflow.status === "queued" &&
+    (workflow.model_rounds_used > 0 || workflow.tool_invocations_used > 0)
+  ) {
+    return "Recovering";
+  }
+  const labels: Record<string, string> = {
+    queued: "Queued",
+    running: "Running",
+    waiting_for_approval: "Approval required",
+    paused: "Paused by you",
+    completed: "Completed",
+    cancelled: "Cancelled",
+    failed: "Failed",
+  };
+  return labels[workflow.status] ?? workflow.status;
+}
+
+function settle(operation: Promise<void>): void {
+  void operation.catch(() => undefined);
 }
 
 function WorkChainStepRow({

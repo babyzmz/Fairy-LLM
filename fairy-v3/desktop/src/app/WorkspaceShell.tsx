@@ -110,6 +110,9 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               onPermissionChange={model.setPermissionProfile}
               onSend={model.sendChatMessage}
               onCancel={model.cancelChatTurn}
+              onPauseWorkflow={model.pauseChatTurn}
+              onResumeWorkflow={model.resumeChatTurn}
+              onSteer={model.steerChatTurn}
               onRetry={model.retryChatTurn}
               onRetryPending={model.retryPendingChatMessage}
               onDeletePending={model.deletePendingChatMessage}
@@ -139,6 +142,9 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
                 isActing={model.isActing}
                 onSelectTask={model.selectTask}
                 onDecision={model.decideApproval}
+                onPauseWorkflow={model.pauseProjectTurn}
+                onResumeWorkflow={model.resumeProjectTurn}
+                onCancelWorkflow={model.cancelProjectTurn}
               />
               <WorkspaceInspector model={model} />
             </main>
@@ -154,8 +160,26 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               modelSelection={model.modelSelection}
               modelSelectionDisabled={model.modelSelectionLoading}
               submissionBlockedReason={model.modelSelectionBlockReason}
-              onSubmit={model.sendProjectMessage}
+              workflowSummary={model.projectTurn?.workflow_summary ?? null}
+              onSubmit={async (value, files, images) => {
+                const workflow = model.projectTurn?.workflow_summary;
+                if (
+                  model.projectTurn?.status === "running" &&
+                  workflow !== null &&
+                  workflow !== undefined &&
+                  ["queued", "running", "paused"].includes(workflow.status)
+                ) {
+                  if (files.length > 0 || images.length > 0) {
+                    throw new Error("Task updates cannot add attachments");
+                  }
+                  await model.steerProjectTurn(value);
+                  return;
+                }
+                await model.sendProjectMessage(value, files, images);
+              }}
               onStop={model.cancelProjectTurn}
+              onPauseWorkflow={model.pauseProjectTurn}
+              onResumeWorkflow={model.resumeProjectTurn}
               onSelectModel={model.selectModel}
               onOpenModelSettings={() => model.openSettings("models")}
             />

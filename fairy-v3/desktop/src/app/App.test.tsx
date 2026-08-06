@@ -1205,6 +1205,9 @@ function createClient(
           }),
         cancel: async () => completedTurn,
         retry: async () => completedTurn,
+        pause: async () => completedTurn,
+        resume: async () => completedTurn,
+        steer: async () => completedTurn,
         trace: async (turnId) => ({
           id: "0198f4de-0114-7000-8000-000000000071",
           turn_id: turnId,

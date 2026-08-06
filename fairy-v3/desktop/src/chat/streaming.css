@@ -172,7 +172,9 @@
 
 .evidence-sources button > span,
 .evidence-source-static > span {
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -284,6 +286,79 @@
 
 .activity-summary:hover {
   background: #1d211f;
+}
+
+.activity-workflow-overview {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px 6px 36px;
+  border-top: 1px solid #252b29;
+  overflow: hidden;
+  color: #77817c;
+  font: 9px/1.25 "Cascadia Mono", monospace;
+}
+
+.activity-workflow-overview::-webkit-scrollbar {
+  display: none;
+}
+
+.activity-workflow-overview > span:not(.activity-workflow-controls) {
+  flex: 0 0 auto;
+  padding-right: 6px;
+  border-right: 1px solid #303633;
+  white-space: nowrap;
+}
+
+.activity-workflow-overview .workflow-state {
+  color: #79cdb0;
+}
+
+.activity-workflow-overview .workflow-state-paused,
+.activity-workflow-overview .workflow-state-waiting_for_approval {
+  color: #d8b878;
+}
+
+.activity-workflow-overview .workflow-state-failed,
+.activity-workflow-overview .workflow-state-cancelled {
+  color: #df8880;
+}
+
+.activity-workflow-overview .workflow-deep {
+  color: #7fc3dc;
+}
+
+.activity-workflow-controls {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.activity-workflow-controls button {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #3d4642;
+  border-radius: 3px;
+  color: #aab5af;
+  background: #1c201e;
+  cursor: pointer;
+}
+
+.activity-workflow-controls button:hover:not(:disabled) {
+  border-color: #57736a;
+  color: #d4ded9;
+  background: #222925;
+}
+
+.activity-workflow-controls button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .activity-summary-copy {
