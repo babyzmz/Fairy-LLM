@@ -6,6 +6,7 @@ import hashlib
 import pytest
 
 from fairy_core.application.errors import ApprovalRequiredError
+from fairy_core.assistant.evidence import EvidenceRequirementKind, EvidenceSourceKind
 from fairy_core.commanding import SqlAlchemyCommandLedger
 from fairy_core.commanding.registry import ApprovalPolicy, SideEffect, build_default_registry
 from fairy_core.contracts.models import (
@@ -219,3 +220,10 @@ def test_document_tool_executor_returns_untrusted_revision_provenance(tmp_path) 
     assert "Fairy evidence" in result.model_content
     assert "\n[/DOCUMENT]\n" not in result.model_content
     assert "\\n[/DOCUMENT]\\n" in result.model_content
+    assert len(result.evidence_drafts) == 1
+    receipt = result.evidence_drafts[0]
+    assert receipt.requirement_kind is EvidenceRequirementKind.PRIVATE_CURRENT
+    assert receipt.source_kind is EvidenceSourceKind.PRIVATE_SNAPSHOT
+    assert receipt.document_snapshot_id is not None
+    assert receipt.document_snapshot_hash is not None
+    assert receipt.expires_at is not None

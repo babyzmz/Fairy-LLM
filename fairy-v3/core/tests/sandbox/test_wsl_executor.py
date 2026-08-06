@@ -22,7 +22,7 @@ class _Health:
         return RuntimeExecutorHealth(
             available=self.available,
             executor="wsl_fairy_sandbox",
-            version="1.0.0" if self.available else None,
+            version="1.1.0" if self.available else None,
             error_code=None if self.available else "SANDBOX_UNAVAILABLE",
             diagnostics=("fixture",),
         )
@@ -80,7 +80,7 @@ def _response(request: SandboxRequest, **changes) -> bytes:
         "schema_version": 1,
         "job_id": str(request.job_id),
         "executor": "wsl_fairy_sandbox",
-        "executor_version": "1.0.0",
+        "executor_version": "1.1.0",
         "scope_digest": request.scope_digest,
         "workspace_generation": request.workspace_generation,
         "lease_fence": request.lease_fence,

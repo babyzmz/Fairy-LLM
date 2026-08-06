@@ -28,7 +28,7 @@ class ScriptedSandboxExecutor:
         return RuntimeExecutorHealth(
             available=True,
             executor="wsl_fairy_sandbox",
-            version="1.0.0",
+            version="1.1.0",
             error_code=None,
             diagnostics=("fixture",),
         )
@@ -40,7 +40,7 @@ class ScriptedSandboxExecutor:
         return SandboxResult.create(
             request=request,
             executor="wsl_fairy_sandbox",
-            executor_version="1.0.0",
+            executor_version="1.1.0",
             status=status,
             exit_code=0 if status is SandboxResultStatus.COMPLETED else 1,
             stdout=b"review output\n",

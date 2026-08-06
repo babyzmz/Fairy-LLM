@@ -824,6 +824,16 @@
             "title": "Cancellation Revision",
             "type": "integer"
           },
+          "cited_evidence_receipt_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Cited Evidence Receipt Ids",
+            "type": "array"
+          },
           "completed_at": {
             "anyOf": [
               {
@@ -2643,6 +2653,159 @@
         ],
         "title": "EventVisibilityModel",
         "type": "string"
+      },
+      "EvidenceRequirementKind": {
+        "enum": [
+          "workspace_structure",
+          "workspace_content",
+          "web_current",
+          "runtime_current",
+          "private_current"
+        ],
+        "title": "EvidenceRequirementKind",
+        "type": "string"
+      },
+      "EvidenceSourceKind": {
+        "enum": [
+          "project_index",
+          "project_file",
+          "terminal_inspection",
+          "web_document",
+          "structured_information",
+          "runtime_snapshot",
+          "private_snapshot"
+        ],
+        "title": "EvidenceSourceKind",
+        "type": "string"
+      },
+      "EvidenceSourceModel": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "line_end": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line End"
+          },
+          "line_start": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Start"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "public_label": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Public Label",
+            "type": "string"
+          },
+          "relative_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relative Path"
+          },
+          "safe_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Safe Url"
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/EvidenceSourceKind"
+          },
+          "tool_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "id",
+          "source_kind",
+          "public_label",
+          "tool_name",
+          "observed_at",
+          "expires_at",
+          "truncated"
+        ],
+        "title": "EvidenceSourceModel",
+        "type": "object"
       },
       "ExecutionPlanContextModel": {
         "additionalProperties": false,
@@ -10588,6 +10751,20 @@
             "title": "Estimated Output Tokens",
             "type": "integer"
           },
+          "evidence_classified": {
+            "default": true,
+            "title": "Evidence Classified",
+            "type": "boolean"
+          },
+          "evidence_requirements": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRequirementKind"
+            },
+            "maxItems": 5,
+            "title": "Evidence Requirements",
+            "type": "array"
+          },
           "media_model_id": {
             "anyOf": [
               {
@@ -13212,6 +13389,14 @@
             "title": "Created At",
             "type": "string"
           },
+          "evidence_sources": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceSourceModel"
+            },
+            "maxItems": 32,
+            "title": "Evidence Sources",
+            "type": "array"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -13278,7 +13463,8 @@
           "updated_at",
           "started_at",
           "completed_at",
-          "steps"
+          "steps",
+          "evidence_sources"
         ],
         "title": "TurnTraceModel",
         "type": "object"

@@ -625,6 +625,7 @@ class AssistantTurnModel(ContractModel):
     model_selection: ModelSelectionSnapshotModel | None
     routing_decision: RoutingDecisionModel | None
     budget_approval_run_id: UUID | None
+    cited_evidence_receipt_ids: tuple[UUID, ...] = Field(default=(), max_length=32)
     status: AssistantTurnStatus
     cancellation_revision: int = Field(ge=0)
     usage: dict[str, int]

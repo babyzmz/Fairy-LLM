@@ -205,11 +205,12 @@ execution_jobs = Table(
         name="ck_execution_jobs_network_policy",
     ),
     CheckConstraint(
-        "purpose IN ('raw','dependency','review')",
+        "purpose IN ('raw','inspect','dependency','review')",
         name="ck_execution_jobs_purpose",
     ),
     CheckConstraint(
-        "(purpose = 'raw' AND dependency_key IS NULL AND dependency_manager IS NULL) OR "
+        "(purpose IN ('raw','inspect') AND dependency_key IS NULL "
+        "AND dependency_manager IS NULL) OR "
         "(purpose IN ('dependency','review') AND project_id IS NOT NULL "
         "AND version_id IS NOT NULL AND dependency_key ~ '^[0-9a-f]{64}$' "
         "AND dependency_manager IN ('npm','pnpm','yarn','uv','pip','cargo'))",
@@ -227,7 +228,7 @@ execution_jobs = Table(
         "AND output_truncated IS NULL AND started_at IS NULL "
         "AND result_recorded_at IS NULL) OR "
         "(result_status IN ('completed','failed','timed_out','cancelled') "
-        "AND executor = 'cloud_oci_worker' AND executor_version = '1.0.0' "
+        "AND executor = 'cloud_oci_worker' AND executor_version = '1.1.0' "
         "AND stdout IS NOT NULL AND stderr IS NOT NULL "
         "AND stdout_sha256 ~ '^[0-9a-f]{64}$' "
         "AND stderr_sha256 ~ '^[0-9a-f]{64}$' "

@@ -36,6 +36,16 @@ class TurnTraceService:
                 if inserted:
                     unit_of_work.commit()
             steps = unit_of_work.assistant.list_trace_steps(turn_id)
+            receipts_by_id = {
+                receipt.id: receipt
+                for invocation in unit_of_work.assistant.list_tool_invocations(turn_id)
+                for receipt in invocation.evidence_receipts
+            }
+            evidence_sources = tuple(
+                receipts_by_id[receipt_id]
+                for receipt_id in turn.cited_evidence_receipt_ids
+                if receipt_id in receipts_by_id
+            )
         return {
             "id": trace.id,
             "turn_id": trace.turn_id,
@@ -49,6 +59,7 @@ class TurnTraceService:
             "started_at": trace.started_at,
             "completed_at": trace.completed_at,
             "steps": tuple(_step_model(step) for step in steps),
+            "evidence_sources": tuple(_evidence_source(receipt) for receipt in evidence_sources),
         }
 
 
@@ -76,6 +87,24 @@ def _step_model(step) -> dict[str, object]:
         "started_at": step.started_at,
         "completed_at": step.completed_at,
         "duration_ms": step.duration_ms,
+    }
+
+
+def _evidence_source(receipt) -> dict[str, object]:
+    return {
+        "id": receipt.id,
+        "source_kind": receipt.source_kind,
+        "public_label": receipt.public_label,
+        "tool_name": receipt.tool_name,
+        "workspace_id": receipt.workspace_id if receipt.relative_path is not None else None,
+        "version_id": receipt.version_id if receipt.relative_path is not None else None,
+        "relative_path": receipt.relative_path,
+        "line_start": receipt.line_start,
+        "line_end": receipt.line_end,
+        "safe_url": receipt.safe_url,
+        "observed_at": receipt.observed_at,
+        "expires_at": receipt.expires_at,
+        "truncated": receipt.truncated,
     }
 
 

@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC, datetime, timedelta
+
+from fairy_core.assistant.evidence import (
+    EvidenceDraft,
+    EvidenceRequirementKind,
+    EvidenceSourceKind,
+)
 from fairy_core.assistant.tools import (
     ToolExecutor,
     ToolResult,
@@ -84,16 +92,23 @@ class WebToolExecutor:
             )
         if not hits:
             blocks.append("No search results were returned.")
+        evidence = tuple(
+            draft
+            for hit in hits
+            if (draft := _web_evidence(hit.url, hit.title, hit.description)) is not None
+        )
         return ToolResult.create(
             public_summary=f"Found {len(hits)} public search result(s).",
             model_content="\n".join(blocks),
             artifact_ids=(),
+            evidence_drafts=evidence,
         )
 
     def _fetch(self, arguments: dict[str, object]) -> ToolResult:
         document = self.fetch_port.fetch(
             FetchRequest.create(url=_required_string(arguments, "url"))
         )
+        observed = datetime.now(UTC)
         model_content = "\n".join(
             (
                 (f"[FETCHED_DOCUMENT untrusted=true sha256={document.content_hash}]"),
@@ -109,7 +124,37 @@ class WebToolExecutor:
             public_summary=f"Fetched public text from {document.final_url}.",
             model_content=model_content,
             artifact_ids=(),
+            evidence_drafts=(
+                EvidenceDraft(
+                    requirement_kind=EvidenceRequirementKind.WEB_CURRENT,
+                    source_kind=EvidenceSourceKind.WEB_DOCUMENT,
+                    public_label=document.title or document.final_url,
+                    safe_url=document.final_url,
+                    content_hash=document.content_hash,
+                    observed_at=observed,
+                    expires_at=observed + timedelta(minutes=30),
+                ),
+            ),
         )
+
+
+def _web_evidence(url: str, title: str, description: str) -> EvidenceDraft | None:
+    observed = datetime.now(UTC)
+    content_hash = hashlib.sha256(
+        f"{title}\n{url}\n{description}".encode()
+    ).hexdigest()
+    try:
+        return EvidenceDraft(
+            requirement_kind=EvidenceRequirementKind.WEB_CURRENT,
+            source_kind=EvidenceSourceKind.WEB_DOCUMENT,
+            public_label=title or url,
+            safe_url=url,
+            content_hash=content_hash,
+            observed_at=observed,
+            expires_at=observed + timedelta(minutes=15),
+        )
+    except ValueError:
+        return None
 
 
 def _required_string(arguments: dict[str, object], name: str) -> str:

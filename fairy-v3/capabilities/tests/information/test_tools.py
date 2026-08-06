@@ -204,6 +204,10 @@ def test_information_tools_return_source_labelled_normalized_results() -> None:
     assert all("source_url" in result.model_content for result in results)
     assert "Fairy released" in results[1].model_content
     assert "delayed_or_last_close" in results[4].model_content
+    assert all(
+        result.evidence_drafts[0].requirement_kind.value == "web_current"
+        for result in results
+    )
 
 
 def test_remote_information_tools_enforce_core_network_policy() -> None:

@@ -20,6 +20,10 @@ from fairy_core.assistant.content_purge_repository import (
     purge_project_content,
     purge_workspace_content,
 )
+from fairy_core.assistant.evidence import (
+    evidence_receipt_from_record,
+    evidence_receipt_record,
+)
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -511,6 +515,9 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             "public_summary": invocation.public_summary,
             "model_content": invocation.model_content,
             "artifact_ids": [str(value) for value in invocation.artifact_ids],
+            "evidence_receipts": [
+                evidence_receipt_record(value) for value in invocation.evidence_receipts
+            ],
             "error_code": invocation.error_code,
             "created_at": invocation.created_at,
             "updated_at": invocation.updated_at,
@@ -548,6 +555,10 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                     public_summary=invocation.public_summary,
                     model_content=invocation.model_content,
                     artifact_ids=[str(value) for value in invocation.artifact_ids],
+                    evidence_receipts=[
+                        evidence_receipt_record(value)
+                        for value in invocation.evidence_receipts
+                    ],
                     error_code=invocation.error_code,
                     updated_at=invocation.updated_at,
                 )
@@ -853,6 +864,9 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             "budget_approval_run_id": (
                 str(turn.budget_approval_run_id) if turn.budget_approval_run_id else None
             ),
+            "cited_evidence_receipt_ids": [
+                str(value) for value in turn.cited_evidence_receipt_ids
+            ],
             "status": turn.status.value,
             "cancellation_revision": turn.cancellation_revision,
             "usage": dict(turn.usage),
@@ -878,6 +892,9 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             "budget_approval_run_id": (
                 str(turn.budget_approval_run_id) if turn.budget_approval_run_id else None
             ),
+            "cited_evidence_receipt_ids": [
+                str(value) for value in turn.cited_evidence_receipt_ids
+            ],
             "updated_at": turn.updated_at,
             "started_at": turn.started_at,
             "completed_at": turn.completed_at,
@@ -912,6 +929,10 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                 UUID(row["budget_approval_run_id"])
                 if row.get("budget_approval_run_id") is not None
                 else None
+            ),
+            cited_evidence_receipt_ids=tuple(
+                UUID(str(value))
+                for value in row.get("cited_evidence_receipt_ids", ())
             ),
             status=AssistantTurnStatus(row["status"]),
             cancellation_revision=int(row["cancellation_revision"]),
@@ -1019,6 +1040,10 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             public_summary=row["public_summary"],
             model_content=row["model_content"],
             artifact_ids=tuple(UUID(value) for value in row["artifact_ids"]),
+            evidence_receipts=tuple(
+                evidence_receipt_from_record(value)
+                for value in row.get("evidence_receipts", ())
+            ),
             error_code=row["error_code"],
             created_at=_datetime(row["created_at"]),
             updated_at=_datetime(row["updated_at"]),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fairy_core.assistant.events import append_message_created
@@ -10,6 +11,7 @@ from fairy_core.assistant.models import (
     Message,
     MessageRole,
     MessageVisibility,
+    ToolInvocationStatus,
 )
 from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
 from fairy_core.assistant.turn_reader import require_task, require_turn
@@ -28,6 +30,7 @@ class AssistantTurnLifecycleMixin:
         turn_id: UUID,
         *,
         candidate_content: str | None = None,
+        cited_evidence_receipt_ids: tuple[str, ...] | None = None,
     ) -> str | None:
         if self._execution_completion_hook is not None:
             finalization_issue = self._execution_completion_hook(turn_id)
@@ -37,6 +40,13 @@ class AssistantTurnLifecycleMixin:
             turn = require_turn(unit_of_work, turn_id)
             plan = unit_of_work.state.execution_plan_for_task(turn.task_id)
             invocations = unit_of_work.assistant.list_tool_invocations(turn.id)
+            evidence_issue = _evidence_completion_issue(
+                turn,
+                invocations,
+                cited_evidence_receipt_ids,
+            )
+            if evidence_issue is not None:
+                return evidence_issue
             if plan is None:
                 if (
                     turn.routing_decision is not None
@@ -110,6 +120,7 @@ class AssistantTurnLifecycleMixin:
         run: CommandRun,
         content: str,
         usage: dict[str, int],
+        cited_evidence_receipt_ids: tuple[str, ...] = (),
     ) -> AssistantTurn:
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
@@ -133,6 +144,8 @@ class AssistantTurnLifecycleMixin:
             )
             expected_status = turn.status
             expected_revision = turn.cancellation_revision
+            if cited_evidence_receipt_ids:
+                turn.cite_evidence(tuple(UUID(value) for value in cited_evidence_receipt_ids))
             turn.complete(usage=completed_usage)
             unit_of_work.assistant.append_message(message)
             unit_of_work.assistant.update_turn(
@@ -211,7 +224,8 @@ class AssistantTurnLifecycleMixin:
                 lease_fence=run.lease_fence,
             )
             unit_of_work.commit()
-        return turn
+            return turn
+
 
     def _cancel_turn(
         self,
@@ -469,6 +483,75 @@ class AssistantTurnLifecycleMixin:
         )
 
 
+def _evidence_completion_issue(
+    turn: AssistantTurn,
+    invocations,
+    cited_values: tuple[str, ...] | None,
+) -> str | None:
+    requirements = (
+        turn.routing_decision.evidence_requirements
+        if turn.routing_decision is not None
+        else ()
+    )
+    if not requirements and cited_values is None:
+        return None
+    if cited_values is None:
+        return (
+            "EVIDENCE_CITATION_REQUIRED: This Turn requires governed evidence. Call a suitable "
+            "read-only tool, then finish with direct_answer and cite the returned receipt IDs."
+        )
+    if not cited_values:
+        if requirements:
+            return (
+                "EVIDENCE_CITATION_REQUIRED: direct_answer must cite at least one Evidence "
+                "Receipt produced by this Turn."
+            )
+        return None
+    try:
+        cited_ids = tuple(UUID(value) for value in cited_values)
+    except (TypeError, ValueError):
+        return "EVIDENCE_CITATION_INVALID: Evidence Receipt IDs must be valid UUIDs."
+    if len(cited_ids) != len(set(cited_ids)) or len(cited_ids) > 32:
+        return "EVIDENCE_CITATION_INVALID: Evidence Receipt IDs must be unique and bounded."
+    receipts = {
+        receipt.id: receipt
+        for invocation in invocations
+        if invocation.status is ToolInvocationStatus.COMPLETED
+        for receipt in invocation.evidence_receipts
+    }
+    cited = []
+    now = datetime.now(UTC)
+    for receipt_id in cited_ids:
+        receipt = receipts.get(receipt_id)
+        if receipt is None:
+            return (
+                "EVIDENCE_CITATION_INVALID: Every cited receipt must come from a successful "
+                "tool call in this Turn."
+            )
+        if (
+            receipt.turn_id != turn.id
+            or receipt.task_id != turn.task_id
+            or receipt.conversation_id != turn.conversation_id
+            or receipt.scope_digest != turn.scope_digest
+        ):
+            return "EVIDENCE_SCOPE_MISMATCH: A cited receipt does not match this Turn Scope."
+        if receipt.expires_at is not None and receipt.expires_at <= now:
+            return (
+                "EVIDENCE_EXPIRED: A cited current-state receipt expired. Refresh the relevant "
+                "source before answering."
+            )
+        cited.append(receipt)
+    covered = {receipt.requirement_kind for receipt in cited}
+    missing = [requirement.value for requirement in requirements if requirement not in covered]
+    if missing:
+        return (
+            "EVIDENCE_REQUIREMENT_UNSATISFIED: Gather and cite current evidence for: "
+            + ", ".join(missing)
+            + "."
+        )
+    return None
+
+
 _LOOPBACK_URL = re.compile(
     r"https?://(?:localhost|127(?:\.[0-9]{1,3}){3})(?::[0-9]{1,5})?\S*",
     re.IGNORECASE,
@@ -522,6 +605,16 @@ def _public_failure_detail(error_code: str) -> str:
         ),
         "PROVIDER_CONTENT_REJECTED": "The selected model could not process this request.",
         "PROVIDER_NETWORK_ERROR": "The model connection was interrupted.",
+        "EVIDENCE_CITATION_REQUIRED": "Fairy could not finish without cited current evidence.",
+        "EVIDENCE_CITATION_INVALID": "Fairy rejected an invalid evidence citation.",
+        "EVIDENCE_SCOPE_MISMATCH": "Fairy rejected evidence from a different Task Scope.",
+        "EVIDENCE_EXPIRED": "The current-state evidence expired before Fairy could answer.",
+        "EVIDENCE_REQUIREMENT_UNSATISFIED": (
+            "Fairy could not gather every required evidence source for this answer."
+        ),
+        "EVIDENCE_CLASSIFICATION_FAILED": (
+            "Fairy could not safely classify the evidence needed for this request."
+        ),
         "WORKER_INTERRUPTED": "Fairy was interrupted before this step completed.",
     }.get(error_code, "Fairy could not complete this step.")
 

@@ -658,6 +658,7 @@ function assistantTurn(overrides: Partial<AssistantTurn> = {}): AssistantTurn {
     routing_decision: null,
     budget_approval_run_id: null,
     cancellation_revision: 2,
+    cited_evidence_receipt_ids: [],
     usage: {},
     created_at: "2026-07-11T00:00:00Z",
     updated_at: "2026-07-11T00:00:00Z",

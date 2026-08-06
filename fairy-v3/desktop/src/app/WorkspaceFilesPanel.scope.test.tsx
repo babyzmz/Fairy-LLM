@@ -9,6 +9,7 @@ import type {
   WorkspaceFile,
   WorkspaceFileContent,
 } from "../core/client";
+import { OPEN_WORKSPACE_SOURCE_EVENT } from "./workspaceNavigation";
 import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
 
 afterEach(cleanup);
@@ -102,6 +103,44 @@ describe("WorkspaceFilesPanel conversation scope", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("128 MiB");
     expect(onOpenStream).not.toHaveBeenCalled();
   });
+
+  it("reads a cited file from its immutable Version and keeps it read-only", async () => {
+    const file = workspaceFile("src/current.ts");
+    const cited = { ...file, content_hash: "d".repeat(64) };
+    const onReadSource = vi.fn(async (): Promise<WorkspaceFileContent> => ({
+      file: cited,
+      media_type: "text/plain",
+      stream_required: false,
+      text: "first\ncited historical line\nlast",
+    }));
+    render(panel({
+      versionId: "00000000-0000-4000-8000-0000000000a1",
+      file,
+      content: "current content",
+      onReadSource,
+    }));
+
+    window.dispatchEvent(new CustomEvent(OPEN_WORKSPACE_SOURCE_EVENT, {
+      detail: {
+        path: file.path,
+        workspaceId: "00000000-0000-4000-8000-0000000000f2",
+        versionId: "00000000-0000-4000-8000-0000000000b1",
+        lineStart: 2,
+        lineEnd: 2,
+      },
+    }));
+
+    expect(await screen.findByText(/cited historical line/)).toBeVisible();
+    expect(onReadSource).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-0000000000f2",
+      "00000000-0000-4000-8000-0000000000b1",
+      file.path,
+    );
+    expect(screen.getByText("cited Version 00000000")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Rename file" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete file" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show in File Explorer" })).not.toBeInTheDocument();
+  });
 });
 
 function panel({
@@ -109,6 +148,7 @@ function panel({
   file,
   content,
   onRead,
+  onReadSource,
   mediaType = "text/plain",
   streamRequired = false,
   onOpenStream,
@@ -118,6 +158,7 @@ function panel({
   file: WorkspaceFile;
   content: string;
   onRead?: () => Promise<WorkspaceFileContent>;
+  onReadSource?: (workspaceId: string, versionId: string, path: string) => Promise<WorkspaceFileContent>;
   mediaType?: string;
   streamRequired?: boolean;
   onOpenStream?: () => Promise<FileReadSession>;
@@ -138,6 +179,7 @@ function panel({
       currentVersionId={versionId}
       loading={false}
       onRead={vi.fn(onRead ?? (async () => fileContent))}
+      onReadSource={vi.fn(onReadSource ?? (async () => fileContent))}
       onOpenStream={vi.fn(onOpenStream ?? (async () => { throw new Error("not streamed"); }))}
       onPresent={vi.fn(async () => ({
         job: { status: "ready" },

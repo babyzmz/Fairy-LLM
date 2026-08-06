@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import Field, model_validator
 
+from fairy_core.assistant.evidence import EvidenceRequirementKind
 from fairy_core.assistant.routing import RoutingComplexity, RoutingTaskKind
 from fairy_core.contracts.common import ContractModel
 from fairy_core.model_catalog.models import ModelSelectionMode
@@ -46,6 +47,11 @@ class RoutingDecisionModel(ContractModel):
     cost_estimate_known: bool
     approval_required: bool
     requires_workspace_changes: bool
+    evidence_requirements: tuple[EvidenceRequirementKind, ...] = Field(
+        default=(),
+        max_length=len(EvidenceRequirementKind),
+    )
+    evidence_classified: bool = True
     public_summary: str = Field(min_length=1, max_length=240)
 
 

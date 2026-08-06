@@ -222,7 +222,19 @@ class AssistantContextBuilder:
             # Once every durable step is terminal, the model can only summarize. Keeping
             # workspace tools available here lets a provider accidentally reopen execution.
             tool_definitions = ()
-        tools = model_tools_for_definitions(tool_definitions) if include_tools else ()
+        evidence_requirements = (
+            turn.routing_decision.evidence_requirements
+            if turn.routing_decision is not None
+            else ()
+        )
+        tools = (
+            model_tools_for_definitions(
+                tool_definitions,
+                evidence_required=bool(evidence_requirements),
+            )
+            if include_tools
+            else ()
+        )
         required = {ProviderCapability.TEXT}
         if tools:
             required.add(ProviderCapability.TOOLS)
@@ -244,6 +256,7 @@ class AssistantContextBuilder:
             ),
             completion_handoff=completion_handoff,
             delivery_ready=delivery_ready,
+            evidence_requirements=evidence_requirements,
         )
         bounded_history = self._bounded_history(
             system,
@@ -301,6 +314,7 @@ class AssistantContextBuilder:
         requires_workspace_changes: bool,
         completion_handoff: bool,
         delivery_ready: bool,
+        evidence_requirements,
     ) -> ModelMessage:
         persona_instruction = bound_persona_instruction(manifest)
         persona_block = f"{persona_instruction}\n\n" if persona_instruction else ""
@@ -354,6 +368,16 @@ class AssistantContextBuilder:
                 "batch with edit.propose_changeset, and let Core validate the exact candidate "
                 "Version and Preview. artifact.list and preview.status do not satisfy this "
                 "contract and must not replace planning or file mutation."
+            )
+        if evidence_requirements:
+            required_kinds = ", ".join(item.value for item in evidence_requirements)
+            content = (
+                f"{content}\n\n"
+                "EVIDENCE CONTRACT: this Turn requires fresh governed evidence for: "
+                f"{required_kinds}. Use the available read-only tools before answering. "
+                "Finish with direct_answer and include only Evidence Receipt IDs returned by "
+                "successful tool calls in this Turn. Plain prose, stale receipts, or receipts "
+                "from another Turn cannot complete the response."
             )
         if completion_handoff:
             content = (

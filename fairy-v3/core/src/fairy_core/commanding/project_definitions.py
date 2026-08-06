@@ -33,6 +33,33 @@ def project_definitions(
             input_schema=tool_schemas.execution_plan_tool_schema(),
         ),
         _tool(
+            "project.list",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "project_tools",
+            idempotent=True,
+            description=(
+                "List a stable page of files from the Task-bound managed Project Index."
+            ),
+            input_schema=tool_schemas.project_list_tool_schema(),
+        ),
+        _tool(
+            "project.search",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "project_tools",
+            idempotent=True,
+            description=(
+                "Search bounded UTF-8 source literally in the Task-bound managed Version. "
+                "Use project.read before modifying a matching file."
+            ),
+            input_schema=tool_schemas.project_search_tool_schema(),
+        ),
+        _tool(
             "project.read",
             SideEffect.READ,
             RiskLevel.LOW,

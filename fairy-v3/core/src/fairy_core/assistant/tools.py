@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
+from fairy_core.assistant.evidence import EvidenceDraft
 from fairy_core.commanding.registry import ToolDefinition, ToolRegistry
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.domain.models import ScopeContract
@@ -67,6 +68,7 @@ class ToolResult:
     artifact_ids: tuple[UUID, ...]
     awaiting_approval: bool = False
     images: tuple[ModelImage, ...] = ()
+    evidence_drafts: tuple[EvidenceDraft, ...] = ()
 
     @classmethod
     def create(
@@ -77,6 +79,7 @@ class ToolResult:
         artifact_ids: tuple[UUID, ...],
         awaiting_approval: bool = False,
         images: tuple[ModelImage, ...] = (),
+        evidence_drafts: tuple[EvidenceDraft, ...] = (),
     ) -> ToolResult:
         summary = _bounded_text(
             public_summary,
@@ -94,6 +97,7 @@ class ToolResult:
             artifact_ids=tuple(artifact_ids),
             awaiting_approval=bool(awaiting_approval),
             images=tuple(images),
+            evidence_drafts=tuple(evidence_drafts),
         )
 
 
@@ -134,14 +138,36 @@ def model_tools(
 
 def model_tools_for_definitions(
     definitions: Iterable[ToolDefinition],
+    *,
+    evidence_required: bool = False,
 ) -> tuple[ModelTool, ...]:
+    direct_properties: dict[str, object] = {
+        "answer": {"type": "string", "minLength": 1, "maxLength": 1_000_000}
+    }
+    direct_required = ["answer"]
+    if evidence_required:
+        direct_properties["evidence_receipt_ids"] = {
+            "type": "array",
+            "items": {"type": "string", "format": "uuid"},
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": True,
+            "description": (
+                "Receipt IDs from this Turn that directly support the final answer."
+            ),
+        }
+        direct_required.append("evidence_receipt_ids")
     direct_answer = ModelTool.create(
         name=DIRECT_ANSWER_TOOL_NAME,
-        description="Return the final answer without invoking a capability.",
+        description=(
+            "Return the final answer and cite the supporting evidence receipts from this Turn."
+            if evidence_required
+            else "Return the final answer without invoking a capability."
+        ),
         input_schema={
             "type": "object",
-            "properties": {"answer": {"type": "string", "minLength": 1, "maxLength": 1_000_000}},
-            "required": ["answer"],
+            "properties": direct_properties,
+            "required": direct_required,
             "additionalProperties": False,
         },
     )
@@ -235,6 +261,15 @@ def direct_answer(arguments: Mapping[str, object]) -> str:
     if not isinstance(answer, str) or not answer.strip():
         raise ToolCandidateError("direct_answer requires a non-empty answer")
     return _bounded_text(answer, "direct answer", 1_000_000)
+
+
+def direct_answer_evidence_ids(arguments: Mapping[str, object]) -> tuple[str, ...]:
+    values = arguments.get("evidence_receipt_ids", [])
+    if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+        raise ToolCandidateError("direct_answer evidence_receipt_ids must be an array of UUIDs")
+    if len(values) > 32 or len(values) != len(set(values)):
+        raise ToolCandidateError("direct_answer evidence receipt ids must be unique and bounded")
+    return tuple(values)
 
 
 def _sanitize_value(value: Any) -> object:
@@ -377,6 +412,7 @@ __all__ = [
     "ToolResult",
     "UnavailableToolExecutor",
     "direct_answer",
+    "direct_answer_evidence_ids",
     "model_tools",
     "model_tools_for_definitions",
     "sanitize_model_arguments",

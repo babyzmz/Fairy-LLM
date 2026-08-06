@@ -117,6 +117,11 @@ def test_web_tool_executor_returns_bounded_source_labelled_results() -> None:
     assert "https://example.com/fairy" in search.model_content
     assert "[FETCHED_DOCUMENT untrusted=true" in fetched.model_content
     assert "Fetched evidence" in fetched.model_content
+    assert search.evidence_drafts[0].requirement_kind.value == "web_current"
+    assert search.evidence_drafts[0].safe_url == "https://example.com/fairy"
+    assert fetched.evidence_drafts[0].content_hash == hashlib.sha256(
+        b"Fetched evidence"
+    ).hexdigest()
     assert delegated.public_summary == "delegated"
     assert delegate.called is True
 

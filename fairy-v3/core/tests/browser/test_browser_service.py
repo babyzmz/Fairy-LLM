@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from fairy_core.assistant.evidence import EvidenceRequirementKind, EvidenceSourceKind
 from fairy_core.assistant.tools import ToolExecutionUnavailableError
 from fairy_core.browser import BrowserService, BrowserToolExecutor
 from fairy_core.commanding.registry import ApprovalPolicy, SideEffect, build_default_registry
@@ -272,6 +273,13 @@ def test_agent_can_set_viewport_and_receive_transient_visual_evidence(tmp_path: 
     assert image.media_type == "image/png"
     assert (image.width, image.height) == (1, 1)
     assert image.untrusted_data is True
+    assert len(snapshot.evidence_drafts) == 1
+    evidence = snapshot.evidence_drafts[0]
+    assert evidence.requirement_kind is EvidenceRequirementKind.RUNTIME_CURRENT
+    assert evidence.source_kind is EvidenceSourceKind.RUNTIME_SNAPSHOT
+    assert evidence.content_hash is not None
+    assert evidence.source_revision is not None
+    assert evidence.expires_at is not None
 
 
 def test_resume_recreates_all_tabs_and_restores_the_active_tab(tmp_path: Path) -> None:

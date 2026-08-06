@@ -14,6 +14,11 @@ from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
+from fairy_core.assistant.evidence import (
+    EvidenceDraft,
+    EvidenceRequirementKind,
+    EvidenceSourceKind,
+)
 from fairy_core.assistant.tools import ToolExecutionUnavailableError, ToolExecutor, ToolResult
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.contracts.browser import (
@@ -522,6 +527,24 @@ class BrowserToolExecutor:
                 ),
                 artifact_ids=(),
                 images=images,
+                evidence_drafts=(
+                    EvidenceDraft(
+                        requirement_kind=EvidenceRequirementKind.RUNTIME_CURRENT,
+                        source_kind=EvidenceSourceKind.RUNTIME_SNAPSHOT,
+                        public_label=snapshot.title or "Current Browser page",
+                        content_hash=hashlib.sha256(
+                            (
+                                f"{snapshot.url}\n{snapshot.title}\n{snapshot.aria_snapshot}"
+                            ).encode()
+                        ).hexdigest(),
+                        source_revision=(
+                            f"browser:{snapshot.session_id}:{snapshot.tab_id}:"
+                            f"{snapshot.page_revision}"
+                        ),
+                        observed_at=snapshot.captured_at,
+                        expires_at=snapshot.captured_at + timedelta(seconds=30),
+                    ),
+                ),
             )
         kind = definition.name.removeprefix("browser.")
         result = self._service.execute(

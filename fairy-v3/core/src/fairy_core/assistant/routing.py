@@ -7,8 +7,9 @@ from enum import StrEnum
 from math import ceil
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from fairy_core.assistant.evidence import EvidenceRequirementKind
 from fairy_core.model_catalog.models import (
     MODEL_ALLOWLIST_BY_ID,
     ModelAvailability,
@@ -23,6 +24,7 @@ from fairy_core.providers import (
     ModelMessage,
     ModelRequest,
     ModelRole,
+    ModelTool,
     ProviderCapability,
 )
 
@@ -64,8 +66,43 @@ class _RoutingPayload(BaseModel):
     complexity: RoutingComplexity
     needs_review: bool
     requires_workspace_changes: bool
+    evidence_requirements: tuple[EvidenceRequirementKind, ...] = Field(
+        default=(),
+        max_length=len(EvidenceRequirementKind),
+    )
     estimated_output_tokens: int = Field(ge=256, le=16_384)
     public_summary: str = Field(min_length=1, max_length=240)
+
+    @field_validator("evidence_requirements")
+    @classmethod
+    def require_unique_evidence(
+        cls,
+        value: tuple[EvidenceRequirementKind, ...],
+    ) -> tuple[EvidenceRequirementKind, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("evidence requirements must be unique")
+        return value
+
+
+class EvidenceClassificationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    evidence_requirements: tuple[EvidenceRequirementKind, ...] = Field(
+        default=(),
+        max_length=len(EvidenceRequirementKind),
+    )
+    requires_workspace_changes: bool
+    public_summary: str = Field(min_length=1, max_length=240)
+
+    @field_validator("evidence_requirements")
+    @classmethod
+    def require_unique_evidence(
+        cls,
+        value: tuple[EvidenceRequirementKind, ...],
+    ) -> tuple[EvidenceRequirementKind, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("evidence requirements must be unique")
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +118,8 @@ class RoutingDecision:
     approval_required: bool
     requires_workspace_changes: bool
     public_summary: str
+    evidence_requirements: tuple[EvidenceRequirementKind, ...] = ()
+    evidence_classified: bool = True
 
     def __post_init__(self) -> None:
         for model_id in (
@@ -109,6 +148,14 @@ class RoutingDecision:
             raise ValueError("routing cost estimate state is inconsistent")
         if self.estimated_cost_usd is not None:
             _non_negative_decimal(self.estimated_cost_usd, "estimated_cost_usd")
+        normalized_requirements = tuple(
+            EvidenceRequirementKind(value) for value in self.evidence_requirements
+        )
+        if len(normalized_requirements) != len(set(normalized_requirements)):
+            raise ValueError("routing evidence requirements must be unique")
+        if not isinstance(self.evidence_classified, bool):
+            raise ValueError("routing evidence_classified must be a boolean")
+        object.__setattr__(self, "evidence_requirements", normalized_requirements)
 
     @property
     def execution_model_ids(self) -> tuple[str, ...]:
@@ -159,7 +206,12 @@ def build_router_request(
                     "specialized image, music, and video generation must also be false. Use "
                     "browser for inspecting, clicking, scrolling, testing, or capturing an "
                     "existing page or Preview; a screenshot is a browser capture, not generated "
-                    "media."
+                    "media. Classify facts that depend on the currently bound Workspace as "
+                    "workspace_structure and/or workspace_content; recent public facts as "
+                    "web_current; current Preview, Browser, device, or Runtime state as "
+                    "runtime_current; and the user's current Memory, Knowledge, Documents, or "
+                    "connected private data as private_current. Stable conversation and durable "
+                    "common knowledge need no evidence. When uncertain, require evidence."
                 ),
             ),
             ModelMessage.create(
@@ -331,6 +383,7 @@ def auto_routing_decision(
             routed.requires_workspace_changes and task_kind is not RoutingTaskKind.BROWSER
         ),
         public_summary=public_summary,
+        evidence_requirements=routed.evidence_requirements,
     )
 
 
@@ -339,6 +392,7 @@ def manual_routing_decision(
     selection: ModelSelectionSnapshot,
     catalog: ModelCatalogSnapshot,
     user_request: str,
+    evidence: EvidenceClassificationPayload | None = None,
 ) -> RoutingDecision:
     if selection.mode is not ModelSelectionMode.MANUAL or selection.model_id is None:
         raise ValueError("manual routing requires a selected model")
@@ -378,6 +432,7 @@ def manual_routing_decision(
             approval_required=approval_required,
             requires_workspace_changes=False,
             public_summary=(f"DeepSeek will prepare the specification for {allowed.display_name}."),
+            evidence_requirements=(),
         )
     task_kind = (
         RoutingTaskKind.CODE
@@ -401,9 +456,91 @@ def manual_routing_decision(
         cost_estimate_known=estimate is not None,
         approval_required=(allowed.paid and estimate is None)
         or (estimate is not None and estimate > TURN_AUTO_APPROVAL_USD),
-        requires_workspace_changes=False,
-        public_summary=f"Using {allowed.display_name} for this turn.",
+        requires_workspace_changes=(
+            evidence.requires_workspace_changes if evidence is not None else False
+        ),
+        public_summary=(
+            evidence.public_summary.strip()
+            if evidence is not None
+            else f"Using {allowed.display_name} for this turn."
+        ),
+        evidence_requirements=(
+            evidence.evidence_requirements if evidence is not None else ()
+        ),
+        evidence_classified=evidence is not None,
     )
+
+
+def build_manual_evidence_request(
+    *,
+    profile_id: str,
+    user_request: str,
+    selection: ModelSelectionSnapshot,
+    use_structured_output: bool,
+) -> ModelRequest:
+    if selection.mode is not ModelSelectionMode.MANUAL or selection.model_id is None:
+        raise ValueError("manual evidence classification requires a selected model")
+    schema = EvidenceClassificationPayload.model_json_schema()
+    system = ModelMessage.create(
+        role=ModelRole.SYSTEM,
+        content=(
+            "Classify only whether this Fairy request requires evidence from current state. "
+            "Use workspace_structure for current file layout or project metadata, "
+            "workspace_content for current file contents, web_current for recent public facts, "
+            "runtime_current for the current Browser, Preview, device, or Runtime, and "
+            "private_current for current Memory, Knowledge, Documents, or connected private "
+            "data. Stable conversation and durable common knowledge use an empty list. Set "
+            "requires_workspace_changes only when the requested result must modify durable "
+            "Workspace files. When uncertain, require evidence. Return no answer and no hidden "
+            "reasoning; public_summary is one short user-safe classification summary."
+        ),
+    )
+    user = ModelMessage.create(role=ModelRole.USER, content=user_request)
+    if use_structured_output:
+        return ModelRequest.create(
+            profile_id=profile_id,
+            messages=(system, user),
+            tools=(),
+            required_capabilities=frozenset(
+                {ProviderCapability.TEXT, ProviderCapability.STRUCTURED_OUTPUT}
+            ),
+            max_output_tokens=ROUTER_MAX_OUTPUT_TOKENS,
+            model_role=ModelExecutionRole.COORDINATOR,
+            fallback_profile_ids=(),
+            allow_profile_fallback=False,
+            response_schema_name="fairy_evidence_classification",
+            response_schema=schema,
+            require_parameters=True,
+            deny_data_collection=True,
+            zero_data_retention=selection.zero_data_retention,
+        )
+    return ModelRequest.create(
+        profile_id=profile_id,
+        messages=(system, user),
+        tools=(
+            ModelTool.create(
+                name="evidence.classify",
+                description="Return the required evidence classification for this Turn.",
+                input_schema=schema,
+            ),
+        ),
+        required_capabilities=frozenset(
+            {ProviderCapability.TEXT, ProviderCapability.TOOLS}
+        ),
+        max_output_tokens=ROUTER_MAX_OUTPUT_TOKENS,
+        model_role=ModelExecutionRole.COORDINATOR,
+        fallback_profile_ids=(),
+        allow_profile_fallback=False,
+        deny_data_collection=True,
+        zero_data_retention=selection.zero_data_retention,
+    )
+
+
+def parse_evidence_classification(value: str) -> EvidenceClassificationPayload:
+    try:
+        return EvidenceClassificationPayload.model_validate_json(value)
+    except ValidationError as error:
+        raise ValueError("evidence classifier returned invalid structured output") from error
 
 
 def estimate_text_cost(
@@ -472,6 +609,8 @@ def routing_decision_record(decision: RoutingDecision) -> dict[str, Any]:
         "approval_required": decision.approval_required,
         "requires_workspace_changes": decision.requires_workspace_changes,
         "public_summary": decision.public_summary,
+        "evidence_requirements": [value.value for value in decision.evidence_requirements],
+        "evidence_classified": decision.evidence_classified,
     }
 
 
@@ -502,6 +641,11 @@ def routing_decision_from_record(record: object) -> RoutingDecision | None:
         approval_required=bool(record["approval_required"]),
         requires_workspace_changes=bool(record.get("requires_workspace_changes", False)),
         public_summary=str(record["public_summary"]),
+        evidence_requirements=tuple(
+            EvidenceRequirementKind(str(value))
+            for value in record.get("evidence_requirements", ())
+        ),
+        evidence_classified=bool(record.get("evidence_classified", True)),
     )
 
 

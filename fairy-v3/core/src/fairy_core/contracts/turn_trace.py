@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import Field, model_validator
 
+from fairy_core.assistant.evidence import EvidenceSourceKind
 from fairy_core.assistant.trace_models import (
     TraceStepKind,
     TraceStepStatus,
@@ -45,6 +46,22 @@ class TraceStepModel(ContractModel):
         return self
 
 
+class EvidenceSourceModel(ContractModel):
+    id: UUID
+    source_kind: EvidenceSourceKind
+    public_label: str = Field(min_length=1, max_length=240)
+    tool_name: str = Field(min_length=1, max_length=255)
+    workspace_id: UUID | None = None
+    version_id: UUID | None = None
+    relative_path: str | None = Field(default=None, max_length=1_024)
+    line_start: int | None = Field(default=None, ge=1)
+    line_end: int | None = Field(default=None, ge=1)
+    safe_url: str | None = Field(default=None, max_length=2_048)
+    observed_at: datetime
+    expires_at: datetime | None
+    truncated: bool
+
+
 class TurnTraceModel(ContractModel):
     id: UUID
     turn_id: UUID
@@ -58,6 +75,7 @@ class TurnTraceModel(ContractModel):
     started_at: datetime | None
     completed_at: datetime | None
     steps: tuple[TraceStepModel, ...]
+    evidence_sources: tuple[EvidenceSourceModel, ...] = Field(max_length=32)
 
 
-__all__ = ["TraceStepModel", "TurnTraceModel"]
+__all__ = ["EvidenceSourceModel", "TraceStepModel", "TurnTraceModel"]

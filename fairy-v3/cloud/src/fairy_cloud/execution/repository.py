@@ -31,7 +31,7 @@ from fairy_cloud.execution.models import (
 from fairy_cloud.storage.schema import execution_jobs, execution_workers
 
 _EXECUTOR = "cloud_oci_worker"
-_EXECUTOR_VERSION = "1.0.0"
+_EXECUTOR_VERSION = "1.1.0"
 
 
 class ExecutionCancelledBeforeSpawn(RuntimeError):

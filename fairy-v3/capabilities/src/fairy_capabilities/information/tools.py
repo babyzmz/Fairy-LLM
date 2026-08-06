@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from fairy_core.assistant.evidence import (
+    EvidenceDraft,
+    EvidenceRequirementKind,
+    EvidenceSourceKind,
+)
 from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
 from fairy_core.commanding import CommandRun
 from fairy_core.commanding.registry import ToolDefinition
@@ -197,6 +203,24 @@ class InformationToolExecutor:
 
 def _tool_result(summary: str, result) -> ToolResult:
     payload = json.dumps(result.model_dump(mode="json"), ensure_ascii=True, sort_keys=True)
+    evidence: tuple[EvidenceDraft, ...] = ()
+    source_url = getattr(result, "source_url", None)
+    observed_at = getattr(result, "observed_at", None)
+    if isinstance(source_url, str) and isinstance(observed_at, datetime):
+        try:
+            evidence = (
+                EvidenceDraft(
+                    requirement_kind=EvidenceRequirementKind.WEB_CURRENT,
+                    source_kind=EvidenceSourceKind.STRUCTURED_INFORMATION,
+                    public_label=summary,
+                    safe_url=source_url,
+                    content_hash=hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                    observed_at=_aware(observed_at),
+                    expires_at=_aware(observed_at) + timedelta(minutes=10),
+                ),
+            )
+        except ValueError:
+            evidence = ()
     return ToolResult.create(
         public_summary=summary,
         model_content=(
@@ -206,6 +230,7 @@ def _tool_result(summary: str, result) -> ToolResult:
             "[/INFORMATION_RESULT]"
         ),
         artifact_ids=(),
+        evidence_drafts=evidence,
     )
 
 

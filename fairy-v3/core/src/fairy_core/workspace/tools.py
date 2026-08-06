@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import hmac
 import json
 import os
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
 from uuid import UUID
 
 from fairy_core.application.core import CoreApplication
+from fairy_core.assistant.evidence import (
+    EvidenceDraft,
+    EvidenceRequirementKind,
+    EvidenceSourceKind,
+    query_digest,
+)
 from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.contracts.models import ChangesetProposal, FileMutation
@@ -17,7 +27,7 @@ from fairy_core.domain.execution import Artifact, ArtifactVisibility, ChangesetS
 from fairy_core.domain.models import ScopeContract
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.security.path_guard import PathGuard
-from fairy_core.workspace.models import ProjectIndex, TaskWorkspace
+from fairy_core.workspace.models import ProjectFile, ProjectIndex, TaskWorkspace
 
 _PROJECT_TOOLS = frozenset(
     {
@@ -26,11 +36,14 @@ _PROJECT_TOOLS = frozenset(
         "edit.propose_changeset",
         "execution.plan",
         "preview.status",
+        "project.list",
         "project.read",
+        "project.search",
     }
 )
 _MAX_TOOL_TEXT = 24_000
 _MAX_ARTIFACTS = 50
+_MAX_SEARCH_BYTES = 32 * 1024 * 1024
 _ABSENT_FILE_HASH = "0" * 64
 
 
@@ -59,6 +72,10 @@ class ProjectToolExecutor:
     ) -> ToolResult:
         if definition.name not in _PROJECT_TOOLS:
             return self._delegate.execute(definition, scope, arguments)
+        if definition.name == "project.list":
+            return self._list_project(scope, arguments)
+        if definition.name == "project.search":
+            return self._search_project(scope, arguments)
         if definition.name == "project.read":
             return self._read_project(scope, arguments)
         if definition.name == "artifact.list":
@@ -70,6 +87,209 @@ class ProjectToolExecutor:
         if definition.name == "execution.plan":
             return self._create_execution_plan(scope, arguments)
         return self._propose_changeset(scope, arguments)
+
+    def _list_project(
+        self,
+        scope: ScopeContract,
+        arguments: dict[str, object],
+    ) -> ToolResult:
+        workspace, index = self._project_context(scope)
+        prefix = _optional_prefix(arguments.get("prefix"))
+        glob = _optional_glob(arguments.get("glob"))
+        limit = _bounded_integer(arguments, "limit", default=100, maximum=200)
+        cursor_scope = _discovery_scope(
+            scope=scope,
+            index=index,
+            operation="list",
+            values={"prefix": prefix, "glob": glob},
+        )
+        offset = _decode_discovery_cursor(
+            arguments.get("cursor"),
+            expected_scope=cursor_scope,
+            shape="list",
+        )[0]
+        files = tuple(
+            item
+            for item in index.files
+            if _matches_workspace(workspace, item.path)
+            and _matches_prefix(item.path, prefix)
+            and _matches_glob(item.path, glob)
+        )
+        page = files[offset : offset + limit]
+        next_offset = offset + len(page)
+        next_cursor = (
+            _encode_discovery_cursor(cursor_scope, (next_offset,))
+            if next_offset < len(files)
+            else None
+        )
+        payload = {
+            "index_generation": index.generation,
+            "source_hash": index.source_hash,
+            "items": [
+                {
+                    "path": item.path,
+                    "kind": item.kind,
+                    "language": item.language,
+                    "byte_length": item.byte_length,
+                    "content_hash": item.content_hash,
+                }
+                for item in page
+            ],
+            "next_cursor": next_cursor,
+        }
+        return ToolResult.create(
+            public_summary=f"Listed {len(page)} Workspace file(s)",
+            model_content=json.dumps(
+                payload,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            artifact_ids=(),
+            evidence_drafts=(
+                EvidenceDraft(
+                    requirement_kind=EvidenceRequirementKind.WORKSPACE_STRUCTURE,
+                    source_kind=EvidenceSourceKind.PROJECT_INDEX,
+                    public_label="Current Workspace file index",
+                    content_hash=index.source_hash,
+                    source_revision=f"index:{index.generation}",
+                    workspace_generation=index.generation,
+                    truncated=next_cursor is not None,
+                ),
+            ),
+        )
+
+    def _search_project(
+        self,
+        scope: ScopeContract,
+        arguments: dict[str, object],
+    ) -> ToolResult:
+        query = _required_string(arguments, "query")
+        if len(query) > 512:
+            raise ValueError("query is too long")
+        workspace, index = self._project_context(scope)
+        glob = _optional_glob(arguments.get("glob"))
+        case_sensitive = _optional_boolean(arguments, "case_sensitive", default=False)
+        limit = _bounded_integer(arguments, "limit", default=20, maximum=50)
+        cursor_scope = _discovery_scope(
+            scope=scope,
+            index=index,
+            operation="search",
+            values={"query": query, "glob": glob, "case_sensitive": case_sensitive},
+        )
+        file_offset, line_offset, column_offset = _decode_discovery_cursor(
+            arguments.get("cursor"),
+            expected_scope=cursor_scope,
+            shape="search",
+        )
+        matches: list[dict[str, object]] = []
+        scanned_bytes = 0
+        skipped_binary = 0
+        next_position: tuple[int, int, int] | None = None
+        pattern = re.compile(re.escape(query), 0 if case_sensitive else re.IGNORECASE)
+        guard = PathGuard(
+            project_root=workspace.root,
+            allowed_roots=(workspace.root,),
+            forbidden_roots=(),
+        )
+        for file_index in range(file_offset, len(index.files)):
+            indexed = index.files[file_index]
+            if not _matches_workspace(workspace, indexed.path) or not _matches_glob(
+                indexed.path,
+                glob,
+            ):
+                continue
+            if indexed.kind in {"binary", "oversized"}:
+                skipped_binary += 1
+                continue
+            if scanned_bytes and scanned_bytes + indexed.byte_length > _MAX_SEARCH_BYTES:
+                next_position = (file_index, 0, 0)
+                break
+            data = _read_indexed_bytes(
+                workspace=workspace,
+                indexed=indexed,
+                guard=guard,
+            )
+            scanned_bytes += len(data)
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError:
+                skipped_binary += 1
+                continue
+            lines = text.splitlines()
+            start_line = line_offset if file_index == file_offset else 0
+            for line_index in range(start_line, len(lines)):
+                line = lines[line_index]
+                start_column = (
+                    column_offset
+                    if file_index == file_offset and line_index == start_line
+                    else 0
+                )
+                for match in pattern.finditer(line, pos=start_column):
+                    candidate = {
+                        "path": indexed.path,
+                        "line": line_index + 1,
+                        "column": match.start() + 1,
+                        "text": line[:500],
+                        "content_hash": indexed.content_hash,
+                    }
+                    projected = json.dumps(
+                        [*matches, candidate],
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    )
+                    if len(projected) > _MAX_TOOL_TEXT - 2_000:
+                        next_position = (file_index, line_index, match.start())
+                        break
+                    matches.append(candidate)
+                    if len(matches) >= limit:
+                        next_position = (
+                            file_index,
+                            line_index,
+                            max(match.end(), match.start() + 1),
+                        )
+                        break
+                if next_position is not None:
+                    break
+            if next_position is not None:
+                break
+            line_offset = 0
+            column_offset = 0
+        next_cursor = (
+            _encode_discovery_cursor(cursor_scope, next_position)
+            if next_position is not None
+            else None
+        )
+        payload = {
+            "query": query,
+            "index_generation": index.generation,
+            "matches": matches,
+            "scanned_bytes": scanned_bytes,
+            "skipped_binary_or_oversized": skipped_binary,
+            "truncated": next_cursor is not None,
+            "next_cursor": next_cursor,
+        }
+        return ToolResult.create(
+            public_summary=f"Found {len(matches)} Workspace match(es)",
+            model_content=json.dumps(
+                payload,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            artifact_ids=(),
+            evidence_drafts=(
+                EvidenceDraft(
+                    requirement_kind=EvidenceRequirementKind.WORKSPACE_CONTENT,
+                    source_kind=EvidenceSourceKind.PROJECT_INDEX,
+                    public_label="Current Workspace text search",
+                    content_hash=index.source_hash,
+                    source_revision=f"index:{index.generation}",
+                    workspace_generation=index.generation,
+                    truncated=next_cursor is not None,
+                ),
+            ),
+        )
 
     def _create_execution_plan(
         self,
@@ -94,6 +314,15 @@ class ProjectToolExecutor:
                     code="SCOPE_MISMATCH",
                     model_detail=(
                         "The planned file does not exist. Omit expected_hash for a new file."
+                    ),
+                )
+            if indexed is not None and planned.expected_hash is None:
+                raise ScopeViolationError(
+                    f"planned existing file was not read first: {normalized}",
+                    code="EVIDENCE_REQUIRED_BEFORE_PLAN",
+                    model_detail=(
+                        "Read every existing planned file with project.read in this Turn and "
+                        "submit its returned content hash as expected_hash."
                     ),
                 )
             if (
@@ -209,13 +438,28 @@ class ProjectToolExecutor:
         selected = "\n".join(lines[start - 1 : end])
         if len(selected) > _MAX_TOOL_TEXT:
             selected = selected[:_MAX_TOOL_TEXT]
+        resolved_end = max(1, min(end, len(lines)))
         return ToolResult.create(
             public_summary=f"Read {normalized}",
             model_content=(
                 f"path={normalized}\ncontent_hash={indexed.content_hash}\n"
-                f"lines={start}-{min(end, len(lines))}\n{selected}"
+                f"lines={start}-{resolved_end}\n{selected}"
             ),
             artifact_ids=(),
+            evidence_drafts=(
+                EvidenceDraft(
+                    requirement_kind=EvidenceRequirementKind.WORKSPACE_CONTENT,
+                    source_kind=EvidenceSourceKind.PROJECT_FILE,
+                    public_label=f"Workspace file {normalized}",
+                    relative_path=normalized,
+                    line_start=start,
+                    line_end=max(start, resolved_end),
+                    content_hash=indexed.content_hash,
+                    source_revision=f"index:{index.generation}",
+                    workspace_generation=index.generation,
+                    truncated=end < len(lines) or len(selected) >= _MAX_TOOL_TEXT,
+                ),
+            ),
         )
 
     def _list_artifacts(self, scope: ScopeContract) -> ToolResult:
@@ -309,6 +553,16 @@ class ProjectToolExecutor:
             ),
             "next_action": ("execution.plan" if plan is None and preview is None else None),
         }
+        observed_at = datetime.now(UTC)
+        revision = hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("ascii")
+        ).hexdigest()
         return ToolResult.create(
             public_summary=(
                 "Preview is not available before planning"
@@ -317,6 +571,17 @@ class ProjectToolExecutor:
             ),
             model_content=json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
             artifact_ids=(),
+            evidence_drafts=(
+                EvidenceDraft(
+                    requirement_kind=EvidenceRequirementKind.RUNTIME_CURRENT,
+                    source_kind=EvidenceSourceKind.RUNTIME_SNAPSHOT,
+                    public_label="Current Preview and Runtime status",
+                    content_hash=revision,
+                    source_revision=revision,
+                    observed_at=observed_at,
+                    expires_at=observed_at + timedelta(seconds=30),
+                ),
+            ),
         )
 
     def _propose_changeset(
@@ -519,6 +784,163 @@ def _optional_integer(values: dict[str, object], key: str, *, default: int) -> i
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"{key} must be a positive integer")
     return value
+
+
+def _bounded_integer(
+    values: dict[str, object],
+    key: str,
+    *,
+    default: int,
+    maximum: int,
+) -> int:
+    value = _optional_integer(values, key, default=default)
+    if value > maximum:
+        raise ValueError(f"{key} exceeds the supported limit")
+    return value
+
+
+def _optional_boolean(values: dict[str, object], key: str, *, default: bool) -> bool:
+    value = values.get(key, default)
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be a boolean")
+    return value
+
+
+def _optional_prefix(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("prefix must be a string")
+    return _relative_path(value.strip().rstrip("/"))
+
+
+def _optional_glob(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip() or len(value) > 512:
+        raise ValueError("glob must be a bounded string")
+    normalized = value.strip().replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if path.is_absolute() or ".." in path.parts or ":" in normalized:
+        raise ScopeViolationError("glob is outside the Task Workspace")
+    return normalized
+
+
+def _matches_prefix(path: str, prefix: str | None) -> bool:
+    return prefix is None or path == prefix or path.startswith(f"{prefix}/")
+
+
+def _matches_glob(path: str, glob: str | None) -> bool:
+    return glob is None or PurePosixPath(path).match(glob)
+
+
+def _discovery_scope(
+    *,
+    scope: ScopeContract,
+    index: ProjectIndex,
+    operation: str,
+    values: object,
+) -> str:
+    return query_digest(
+        {
+            "scope_digest": scope.scope_digest,
+            "version_id": str(index.version_id),
+            "generation": index.generation,
+            "operation": operation,
+            "query": values,
+        }
+    )
+
+
+def _encode_discovery_cursor(scope_digest: str, position: tuple[int, ...]) -> str:
+    payload = json.dumps(
+        {"v": 1, "s": scope_digest, "p": list(position)},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+
+
+def _decode_discovery_cursor(
+    value: object,
+    *,
+    expected_scope: str,
+    shape: str,
+) -> tuple[int, ...]:
+    expected_size = 1 if shape == "list" else 3
+    if value is None:
+        return (0,) if shape == "list" else (0, 0, 0)
+    try:
+        if not isinstance(value, str) or not value or len(value) > 2_048:
+            raise ValueError
+        decoded = base64.b64decode(
+            value + "=" * (-len(value) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+        payload = json.loads(decoded)
+        position = payload.get("p") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"v", "s", "p"}
+            or payload["v"] != 1
+            or not isinstance(payload["s"], str)
+            or not hmac.compare_digest(payload["s"], expected_scope)
+            or not isinstance(position, list)
+            or len(position) != expected_size
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) or item < 0
+                for item in position
+            )
+        ):
+            raise ValueError
+    except (
+        binascii.Error,
+        json.JSONDecodeError,
+        TypeError,
+        UnicodeDecodeError,
+        ValueError,
+    ) as error:
+        raise ValueError("cursor is invalid for this Workspace query") from error
+    return tuple(position)
+
+
+def _read_indexed_bytes(
+    *,
+    workspace: TaskWorkspace,
+    indexed: ProjectFile,
+    guard: PathGuard,
+) -> bytes:
+    lease = guard.issue_read_lease(indexed.path)
+    configured_limit = workspace.constraints.get("max_read_bytes", 1_000_000)
+    max_bytes = min(
+        configured_limit if isinstance(configured_limit, int) else 1_000_000,
+        1_000_000,
+    )
+    if indexed.byte_length > max_bytes:
+        raise ScopeViolationError(f"indexed file exceeds the Task read limit: {indexed.path}")
+    with lease.canonical_path.open("rb") as source:
+        if _file_identity(os.fstat(source.fileno())) != lease.target_identity:
+            raise ScopeViolationError(
+                "read target identity changed before open",
+                code="PATH_IDENTITY_CHANGED",
+            )
+        data = source.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise ScopeViolationError(f"file exceeds the Task read limit: {indexed.path}")
+        if _file_identity(os.fstat(source.fileno())) != lease.target_identity:
+            raise ScopeViolationError(
+                "read target identity changed while open",
+                code="PATH_IDENTITY_CHANGED",
+            )
+    guard.revalidate_read_lease(lease)
+    if hashlib.sha256(data).hexdigest() != indexed.content_hash:
+        raise ScopeViolationError(
+            "Project Index does not match the managed Version",
+            code="SCOPE_MISMATCH",
+        )
+    return data
 
 
 def _relative_path(value: str) -> str:

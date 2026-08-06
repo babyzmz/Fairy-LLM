@@ -5,10 +5,16 @@ import binascii
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from uuid import UUID
+from datetime import UTC, datetime, timedelta
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fairy_core.application.errors import ApprovalRequiredError
+from fairy_core.assistant.evidence import (
+    EvidenceDraft,
+    EvidenceRequirementKind,
+    EvidenceSourceKind,
+    query_digest,
+)
 from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandBus, CommandRequest
@@ -433,6 +439,21 @@ class DocumentToolExecutor:
                 public_summary=f"Found {len(page.items)} managed document matches",
                 model_content="\n".join(blocks),
                 artifact_ids=(),
+                evidence_drafts=(
+                    _document_evidence(
+                        scope=scope,
+                        label=f"Managed document search ({len(page.items)} matches)",
+                        values=[
+                            {
+                                "document_id": str(hit.document.id),
+                                "revision": hit.revision.revision,
+                                "content_hash": hit.revision.content_hash,
+                                "locator": dict(hit.chunk.locator),
+                            }
+                            for hit in page.items
+                        ],
+                    ),
+                ),
             )
         if definition.name == "documents.list":
             page = self._application.list_documents(DocumentListInput(task_id=scope.task_id))
@@ -445,6 +466,20 @@ class DocumentToolExecutor:
                 public_summary=f"Listed {len(page.items)} managed documents",
                 model_content="\n".join(lines) or "No managed documents are visible.",
                 artifact_ids=(),
+                evidence_drafts=(
+                    _document_evidence(
+                        scope=scope,
+                        label=f"Managed documents ({len(page.items)})",
+                        values=[
+                            {
+                                "document_id": str(item.document.id),
+                                "revision": item.revision.revision,
+                                "content_hash": item.revision.content_hash,
+                            }
+                            for item in page.items
+                        ],
+                    ),
+                ),
             )
         if definition.name == "documents.get":
             raw_id = arguments.get("document_id")
@@ -462,8 +497,44 @@ class DocumentToolExecutor:
                     f"chunks={context.revision.chunk_count}"
                 ),
                 artifact_ids=(),
+                evidence_drafts=(
+                    _document_evidence(
+                        scope=scope,
+                        label=context.document.filename,
+                        values=[
+                            {
+                                "document_id": str(context.document.id),
+                                "revision": context.revision.revision,
+                                "content_hash": context.revision.content_hash,
+                            }
+                        ],
+                        snapshot_id=context.document.id,
+                    ),
+                ),
             )
         return self._delegate.execute(definition, scope, arguments)
+
+
+def _document_evidence(
+    *,
+    scope: ScopeContract,
+    label: str,
+    values: list[dict[str, object]],
+    snapshot_id: UUID | None = None,
+) -> EvidenceDraft:
+    snapshot_hash = query_digest(values)
+    observed_at = datetime.now(UTC)
+    return EvidenceDraft(
+        requirement_kind=EvidenceRequirementKind.PRIVATE_CURRENT,
+        source_kind=EvidenceSourceKind.PRIVATE_SNAPSHOT,
+        public_label=label,
+        document_snapshot_id=snapshot_id
+        or uuid5(NAMESPACE_URL, f"fairy:documents:{scope.task_id}:{snapshot_hash}"),
+        document_snapshot_hash=snapshot_hash,
+        source_revision=snapshot_hash,
+        observed_at=observed_at,
+        expires_at=observed_at + timedelta(minutes=5),
+    )
 
 
 def _decode_content(value: str) -> bytes:

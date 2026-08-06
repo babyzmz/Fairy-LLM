@@ -13,6 +13,12 @@ from fairy_core.assistant.candidates import (
 from fairy_core.assistant.context import AssistantContextBuilder
 from fairy_core.assistant.context_diagnostics import AssistantContextDiagnosticsMixin
 from fairy_core.assistant.durable_context import project_tool_context
+from fairy_core.assistant.evidence import (
+    EvidenceClassificationFailedError,
+    EvidenceSourceKind,
+    evidence_context,
+    seal_evidence_drafts,
+)
 from fairy_core.assistant.media_routing import constrain_context_for_media
 from fairy_core.assistant.models import (
     AssistantTurn,
@@ -34,6 +40,7 @@ from fairy_core.assistant.tools import (
     ToolExecutor,
     UnavailableToolExecutor,
     direct_answer,
+    direct_answer_evidence_ids,
     sanitize_public_intent,
 )
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
@@ -48,9 +55,6 @@ from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.execution import Approval
 from fairy_core.domain.models import TaskStatus
 from fairy_core.mcp.ports import McpCancelledError
-from fairy_core.model_catalog.models import (
-    ModelSelectionMode,
-)
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.providers import (
@@ -168,11 +172,7 @@ class AssistantApplication(
                     return self._request_budget_approval(turn_id, decision)
                 if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
                     return turn
-            if (
-                turn.model_selection is not None
-                and turn.model_selection.mode is ModelSelectionMode.AUTO
-                and model_round_start == 1
-            ):
+            if turn.model_selection is not None and model_round_start == 1:
                 model_round_start = 2
 
             final_model_round = limits.MAX_MODEL_ROUNDS
@@ -318,10 +318,13 @@ class AssistantApplication(
                         )
                         del all_text[-len(round_text) :]
                 if len(direct_candidates) == 1 and not external_candidates:
-                    answer = direct_answer(direct_candidates[0].arguments())
+                    direct_arguments = direct_candidates[0].arguments()
+                    answer = direct_answer(direct_arguments)
+                    cited_evidence_receipt_ids = direct_answer_evidence_ids(direct_arguments)
                     completion_issue = self._execution_completion_issue(
                         turn_id,
                         candidate_content=answer,
+                        cited_evidence_receipt_ids=cited_evidence_receipt_ids,
                     )
                     if completion_issue is not None:
                         if (
@@ -332,7 +335,7 @@ class AssistantApplication(
                             return self._fail_turn(
                                 turn_id,
                                 current_run,
-                                error_code="WORKER_INTERRUPTED",
+                                error_code=_completion_error_code(completion_issue),
                             )
                         incomplete_execution_issues.add(completion_issue)
                         self._reject_model_round_for_retry(
@@ -365,6 +368,7 @@ class AssistantApplication(
                             chunk_index=chunk_index,
                             usage=usage,
                             cancellation=cancellation,
+                            cited_evidence_receipt_ids=cited_evidence_receipt_ids,
                         )
                     chunk_index += 1
                     self._append_delta(
@@ -380,6 +384,7 @@ class AssistantApplication(
                         run=current_run,
                         content="".join(all_text),
                         usage=usage,
+                        cited_evidence_receipt_ids=cited_evidence_receipt_ids,
                     )
                 if direct_candidates:
                     return self._fail_turn(
@@ -530,7 +535,7 @@ class AssistantApplication(
                             return self._fail_turn(
                                 turn_id,
                                 current_run,
-                                error_code="WORKER_INTERRUPTED",
+                                error_code=_completion_error_code(completion_issue),
                             )
                         incomplete_execution_issues.add(completion_issue)
                         self._reject_model_round_for_retry(
@@ -634,6 +639,12 @@ class AssistantApplication(
                 current_run,
                 error_code="PROVIDER_UNAVAILABLE",
             )
+        except EvidenceClassificationFailedError:
+            return self._fail_turn(
+                turn_id,
+                current_run,
+                error_code="EVIDENCE_CLASSIFICATION_FAILED",
+            )
         except ProviderError:
             return self._fail_turn(
                 turn_id,
@@ -704,6 +715,22 @@ class AssistantApplication(
                 rejected=True,
             )
             return False, message, "PROVIDER_PROTOCOL_ERROR", ()
+
+        if definition.name == "execution.plan":
+            with self._unit_of_work_factory() as unit_of_work:
+                plan_evidence_issue = _execution_plan_evidence_issue(
+                    arguments,
+                    unit_of_work.assistant.list_tool_invocations(turn_id),
+                )
+            if plan_evidence_issue is not None:
+                message = self._append_tool_message(
+                    turn_id=turn_id,
+                    tool_name=definition.name,
+                    tool_call_id=candidate.call_id,
+                    content=plan_evidence_issue,
+                    rejected=True,
+                )
+                return False, message, "EVIDENCE_REQUIRED_BEFORE_PLAN", ()
 
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
@@ -972,10 +999,18 @@ class AssistantApplication(
                 unit_of_work.commit()
                 raise ProviderCancelledError("Assistant Turn is no longer active")
             expected_status = invocation.status
+            evidence_receipts = seal_evidence_drafts(
+                result.evidence_drafts,
+                invocation_id=invocation.id,
+                turn_id=persisted_turn.id,
+                tool_name=definition.name,
+                scope=scope,
+            )
             invocation.complete(
                 public_summary=result.public_summary,
                 model_content=result.model_content,
                 artifact_ids=result.artifact_ids,
+                evidence_receipts=evidence_receipts,
             )
             unit_of_work.assistant.update_tool_invocation(
                 invocation,
@@ -1002,6 +1037,9 @@ class AssistantApplication(
                     "public_summary": result.public_summary,
                     "model_content": result.model_content,
                     "artifact_ids": [str(value) for value in result.artifact_ids],
+                    "evidence_receipt_ids": [
+                        str(value.id) for value in evidence_receipts
+                    ],
                 },
                 lease_owner=running.lease_owner,
                 lease_fence=running.lease_fence,
@@ -1011,7 +1049,7 @@ class AssistantApplication(
                 turn_id=turn_id,
                 tool_name=definition.name,
                 tool_call_id=invocation.provider_call_id,
-                content=result.model_content,
+                content=result.model_content + evidence_context(evidence_receipts),
                 rejected=False,
             )
             unit_of_work.commit()
@@ -1043,6 +1081,49 @@ def _tool_error_code(error: Exception) -> str:
         if isinstance(error, error_type):
             return error_code
     return "TOOL_EXECUTION_FAILED"
+
+
+def _completion_error_code(issue: str) -> str:
+    code, separator, _detail = issue.partition(":")
+    if separator and code.startswith("EVIDENCE_"):
+        return code
+    return "WORKER_INTERRUPTED"
+
+
+def _execution_plan_evidence_issue(arguments: dict[str, object], invocations) -> str | None:
+    receipts = {
+        (receipt.relative_path, receipt.content_hash)
+        for invocation in invocations
+        if invocation.status is ToolInvocationStatus.COMPLETED
+        and invocation.tool_name == "project.read"
+        for receipt in invocation.evidence_receipts
+        if receipt.source_kind is EvidenceSourceKind.PROJECT_FILE
+    }
+    files = arguments.get("files")
+    if not isinstance(files, list):
+        return "Execution Plan files are invalid."
+    missing: list[str] = []
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        expected_hash = item.get("expected_hash")
+        if (
+            isinstance(path, str)
+            and isinstance(expected_hash, str)
+            and expected_hash != "0" * 64
+            and (
+            path,
+            expected_hash,
+            ) not in receipts
+        ):
+            missing.append(path)
+    if not missing:
+        return None
+    return (
+        "Read every existing planned file with project.read in this Turn before creating the "
+        "Execution Plan. Missing exact-hash evidence for: " + ", ".join(missing[:10]) + "."
+    )
 
 
 def _zero_model_images(images: list[ModelImage]) -> None:

@@ -264,6 +264,7 @@ export interface WorkspaceModel {
   copyMessage(taskId: string, content: string): Promise<void>;
   openMessageLink(taskId: string, url: string): Promise<void>;
   readWorkspaceFile(path: string): Promise<WorkspaceFileContent>;
+  readWorkspaceSource(workspaceId: string, versionId: string, path: string): Promise<WorkspaceFileContent>;
   openWorkspaceFileStream(path: string): Promise<FileReadSession>;
   presentWorkspaceFile(path: string): Promise<FilePresentationResult>;
   compareWorkspaceFile(leftVersionId: string, rightVersionId: string, path: string): Promise<FileCompareResult>;

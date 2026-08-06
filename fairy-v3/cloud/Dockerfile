@@ -12,7 +12,7 @@ COPY --from=node-toolchain /usr/local/ /usr/local/
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        bubblewrap ca-certificates cargo chromium git python3-venv \
+        bubblewrap ca-certificates cargo chromium git python3-venv ripgrep \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg \
     && npm install --global --ignore-scripts pnpm@10.34.4 yarn@1.22.22 \

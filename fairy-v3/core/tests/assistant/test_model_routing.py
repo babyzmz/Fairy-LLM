@@ -8,6 +8,7 @@ from fairy_core.assistant.routing import (
     DEEPSEEK_MODEL_ID,
     GLM_MODEL_ID,
     KIMI_MODEL_ID,
+    QWEN_FREE_MODEL_ID,
     RoutingTaskKind,
     auto_routing_decision,
     parse_router_output,
@@ -389,6 +390,138 @@ def test_paid_model_budget_approval_emits_started_message_without_worker_lease(
             for event in events
         )
         assert deepseek.requests == []
+    finally:
+        service.close()
+
+
+def test_manual_model_classifies_evidence_and_rejects_uncited_plain_text(
+    tmp_path: Path,
+) -> None:
+    qwen = _provider(
+        profile_id="openrouter-qwen-free",
+        model_id=QWEN_FREE_MODEL_ID,
+        rounds=[
+            (
+                ModelDelta.text(
+                    profile_id="openrouter-qwen-free",
+                    sequence=1,
+                    text=json.dumps(
+                        {
+                            "evidence_requirements": ["workspace_structure"],
+                            "requires_workspace_changes": False,
+                            "public_summary": "Inspect the current Workspace layout.",
+                        }
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="openrouter-qwen-free",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="openrouter-qwen-free",
+                    sequence=1,
+                    text="I remember the files without checking.",
+                ),
+                ModelDelta.done(
+                    profile_id="openrouter-qwen-free",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="openrouter-qwen-free",
+                    sequence=1,
+                    text="I still will not inspect them.",
+                ),
+                ModelDelta.done(
+                    profile_id="openrouter-qwen-free",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ],
+    )
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((qwen,)),
+    )
+    try:
+        service.invoke(
+            "models.selection.update",
+            {
+                "mode": "manual",
+                "model_id": QWEN_FREE_MODEL_ID,
+                "allow_free_fallback": False,
+                "zero_data_retention": False,
+                "expected_revision": 0,
+                "idempotency_key": "manual-evidence-selection",
+            },
+        )
+        task = _task(service, "List the files that are currently in this Workspace")
+        turn = _auto_turn(service, task, "turn:manual-evidence")
+
+        failed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+
+        assert failed["status"] == "failed"
+        assert failed["error_code"] == "EVIDENCE_CITATION_REQUIRED"
+        assert failed["routing_decision"]["evidence_requirements"] == [
+            "workspace_structure"
+        ]
+        assert failed["routing_decision"]["evidence_classified"] is True
+        direct_answer_tool = qwen.requests[1].tools[0]
+        assert direct_answer_tool.name == "direct_answer"
+        assert "evidence_receipt_ids" in direct_answer_tool.input_schema["required"]
+    finally:
+        service.close()
+
+
+def test_manual_evidence_classifier_fails_closed_on_invalid_output(tmp_path: Path) -> None:
+    qwen = _provider(
+        profile_id="openrouter-qwen-free",
+        model_id=QWEN_FREE_MODEL_ID,
+        rounds=[
+            (
+                ModelDelta.text(
+                    profile_id="openrouter-qwen-free",
+                    sequence=1,
+                    text="not structured evidence classification",
+                ),
+                ModelDelta.done(
+                    profile_id="openrouter-qwen-free",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ],
+    )
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((qwen,)),
+    )
+    try:
+        service.invoke(
+            "models.selection.update",
+            {
+                "mode": "manual",
+                "model_id": QWEN_FREE_MODEL_ID,
+                "allow_free_fallback": False,
+                "zero_data_retention": False,
+                "expected_revision": 0,
+                "idempotency_key": "invalid-evidence-selection",
+            },
+        )
+        task = _task(service, "What is currently in this Workspace?")
+        turn = _auto_turn(service, task, "turn:invalid-evidence")
+
+        failed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+
+        assert failed["status"] == "failed"
+        assert failed["error_code"] == "EVIDENCE_CLASSIFICATION_FAILED"
+        assert len(qwen.requests) == 1
     finally:
         service.close()
 

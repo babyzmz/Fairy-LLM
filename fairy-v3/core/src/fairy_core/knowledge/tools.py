@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from uuid import UUID
 
+from fairy_core.assistant.evidence import (
+    EvidenceDraft,
+    EvidenceRequirementKind,
+    EvidenceSourceKind,
+    query_digest,
+)
 from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.domain.models import ScopeContract
@@ -59,6 +66,7 @@ class KnowledgeToolExecutor:
                 public_summary=f"Read {len(revision.links)} knowledge link(s)",
                 model_content=_json(payload),
                 artifact_ids=(),
+                evidence_drafts=(_private_evidence(scope, _json(payload), "Knowledge links"),),
             )
         content = revision.content[:_MAX_READ_CHARACTERS]
         payload = {
@@ -77,6 +85,9 @@ class KnowledgeToolExecutor:
             public_summary=f"Read task-bound knowledge note {revision.title}",
             model_content=_json(payload),
             artifact_ids=(),
+            evidence_drafts=(
+                _private_evidence(scope, _json(payload), f"Knowledge note {revision.title}"),
+            ),
         )
 
     def _search(
@@ -116,10 +127,25 @@ class KnowledgeToolExecutor:
                     }
                 )
             )
+        model_content = "\n".join(lines)
         return ToolResult.create(
             public_summary=f"Found {len(revisions)} task-bound knowledge match(es)",
-            model_content="\n".join(lines),
+            model_content=model_content,
             artifact_ids=(),
+            evidence_drafts=(
+                EvidenceDraft(
+                    requirement_kind=EvidenceRequirementKind.PRIVATE_CURRENT,
+                    source_kind=EvidenceSourceKind.PRIVATE_SNAPSHOT,
+                    public_label="Task Knowledge Snapshot search",
+                    content_hash=hashlib.sha256(model_content.encode("utf-8")).hexdigest(),
+                    source_revision=query_digest(
+                        {
+                            "query": query,
+                            "snapshot_hash": scope.knowledge_snapshot_hash,
+                        }
+                    ),
+                ),
+            ),
         )
 
     @staticmethod
@@ -142,6 +168,16 @@ def _json(value: object) -> str:
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
+    )
+
+
+def _private_evidence(scope: ScopeContract, content: str, label: str) -> EvidenceDraft:
+    return EvidenceDraft(
+        requirement_kind=EvidenceRequirementKind.PRIVATE_CURRENT,
+        source_kind=EvidenceSourceKind.PRIVATE_SNAPSHOT,
+        public_label=label,
+        content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        source_revision=scope.knowledge_snapshot_hash,
     )
 
 

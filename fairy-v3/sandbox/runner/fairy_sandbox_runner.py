@@ -25,7 +25,7 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 from uuid import UUID
 
-RUNNER_VERSION = "1.0.0"
+RUNNER_VERSION = "1.1.0"
 _ALLOWED_EXECUTORS = frozenset({"cloud_oci_worker", "wsl_fairy_sandbox"})
 EXECUTOR = os.environ.get("FAIRY_SANDBOX_EXECUTOR", "wsl_fairy_sandbox")
 if EXECUTOR not in _ALLOWED_EXECUTORS:
@@ -60,6 +60,9 @@ _FORBIDDEN_ENVIRONMENT = frozenset(
         "WSLENV",
     }
 )
+_INSPECTION_PROGRAMS = frozenset({"head", "ls", "rg", "stat", "tail", "wc"})
+_SHELL_SYNTAX = re.compile(r"[\r\n|;&`<>]|\$\(")
+_UNSAFE_RG_OPTIONS = ("--pre", "--pre-glob", "--hostname-bin")
 
 
 class RunnerProtocolError(ValueError):
@@ -157,7 +160,7 @@ def parse_request_frame(frame: bytes) -> tuple[RunnerRequest, bytes]:
     if network_policy not in {"none", "public"}:
         raise RunnerProtocolError("network policy is invalid")
     purpose = header.get("purpose")
-    if purpose not in {"raw", "dependency", "review"}:
+    if purpose not in {"raw", "inspect", "dependency", "review"}:
         raise RunnerProtocolError("purpose is invalid")
     if purpose == "review" and network_policy != "none":
         raise RunnerProtocolError("review purpose cannot request network access")
@@ -167,6 +170,14 @@ def parse_request_frame(frame: bytes) -> tuple[RunnerRequest, bytes]:
         raise RunnerProtocolError(
             "raw public network is limited to a scratch Workspace"
         )
+    if purpose == "inspect":
+        argv = _inspection_argv(argv)
+        if network_policy != "none":
+            raise RunnerProtocolError("inspection purpose cannot request network access")
+        if environment:
+            raise RunnerProtocolError("inspection purpose cannot define environment variables")
+        if timeout > 30 or output_limit > 262_144:
+            raise RunnerProtocolError("inspection resource limits are invalid")
     dependency_key = header.get("dependency_key")
     dependency_manager = header.get("dependency_manager")
     if purpose in {"dependency", "review"}:
@@ -181,7 +192,7 @@ def parse_request_frame(frame: bytes) -> tuple[RunnerRequest, bytes]:
                 "dependency layer requires a Project, key, and supported manager"
             )
     elif dependency_key is not None or dependency_manager is not None:
-        raise RunnerProtocolError("raw purpose cannot bind a dependency layer")
+        raise RunnerProtocolError("this purpose cannot bind a dependency layer")
     return (
         RunnerRequest(
             job_id=job_id,
@@ -308,7 +319,7 @@ def build_isolation_command(
             "/home/fairy",
             "--dir",
             "/etc",
-            "--bind",
+            "--ro-bind" if request.purpose == "inspect" else "--bind",
             str(workspace),
             "/workspace",
             "--setenv",
@@ -495,6 +506,7 @@ def health_document() -> dict[str, object]:
             "pnpm": _tool_version(("/usr/local/bin/pnpm", "--version")),
             "yarn": _tool_version(("/usr/local/bin/yarn", "--version")),
             "uv": _tool_version(("/usr/local/bin/uv", "--version")),
+            "rg": _tool_version(("/usr/bin/rg", "--version")),
         },
         "files": {
             "runner": _file_attestation(runner_path),
@@ -582,7 +594,7 @@ def prepare_dependency_layer(
     root: Path,
     workspace: Path,
 ) -> DependencyLayer | None:
-    if request.purpose == "raw":
+    if request.purpose in {"raw", "inspect"}:
         return None
     assert request.dependency_key is not None and request.dependency_manager is not None
     dependency_root = Path(root).resolve(strict=False) / "dependencies"
@@ -809,6 +821,21 @@ def _argv(value: object) -> tuple[str, ...]:
             raise RunnerProtocolError("argv contains an invalid item")
         result.append(item)
     return tuple(result)
+
+
+def _inspection_argv(value: tuple[str, ...]) -> tuple[str, ...]:
+    if value[0] not in _INSPECTION_PROGRAMS:
+        raise RunnerProtocolError("inspection program is not permitted")
+    for index, item in enumerate(value):
+        if _SHELL_SYNTAX.search(item):
+            raise RunnerProtocolError("inspection arguments contain shell syntax")
+        if index > 0 and ("\\" in item or item.startswith("/")):
+            raise RunnerProtocolError("inspection paths must be relative POSIX paths")
+        if index > 0 and ".." in PurePosixPath(item).parts:
+            raise RunnerProtocolError("inspection paths escape the workspace")
+        if value[0] == "rg" and item.startswith(_UNSAFE_RG_OPTIONS):
+            raise RunnerProtocolError("inspection ripgrep option is not permitted")
+    return value
 
 
 def _cwd(value: object) -> str:

@@ -53,6 +53,17 @@ export function createWorkspaceFileActions(context: WorkspaceFileActionContext) 
         path,
       });
     },
+    async readWorkspaceSource(workspaceId: string, versionId: string, path: string) {
+      const current = scope();
+      if (current.task.workspace_id !== workspaceId) {
+        throw new Error("Cited source belongs to a different Workspace");
+      }
+      return context.client.workspaces.readFile({
+        workspace_id: workspaceId,
+        version_id: versionId,
+        path,
+      });
+    },
     async openWorkspaceFileStream(path: string) {
       const current = scope();
       if (current.task.target_version_id === null) throw new Error("Version is unavailable");

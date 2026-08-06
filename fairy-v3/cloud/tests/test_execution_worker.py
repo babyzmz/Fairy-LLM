@@ -72,7 +72,7 @@ def _completed(job: ExecutionJob, *, stdout: bytes = b"ok\n") -> ExecutionJob:
         status=ExecutionJobStatus.SUCCEEDED,
         result_status=SandboxResultStatus.COMPLETED,
         executor="cloud_oci_worker",
-        executor_version="1.0.0",
+        executor_version="1.1.0",
         exit_code=0,
         stdout=stdout,
         stderr=b"",
@@ -94,7 +94,7 @@ class SyncStore:
         return RuntimeExecutorHealth(
             available=self.healthy,
             executor="cloud_oci_worker",
-            version="1.0.0" if self.healthy else None,
+            version="1.1.0" if self.healthy else None,
             error_code=None if self.healthy else "SANDBOX_UNAVAILABLE",
             diagnostics=("fixture",),
         )
@@ -379,7 +379,7 @@ class Runner:
         return SandboxResult.create(
             request=request,
             executor="cloud_oci_worker",
-            executor_version="1.0.0",
+            executor_version="1.1.0",
             status=SandboxResultStatus.COMPLETED,
             exit_code=0,
             stdout=b"ok\n",
@@ -545,7 +545,7 @@ def _runner_result(request: SandboxRequest) -> dict[str, object]:
     return {
         "schema_version": 1,
         "executor": "cloud_oci_worker",
-        "executor_version": "1.0.0",
+        "executor_version": "1.1.0",
         "job_id": str(request.job_id),
         "scope_digest": request.scope_digest,
         "workspace_generation": request.workspace_generation,

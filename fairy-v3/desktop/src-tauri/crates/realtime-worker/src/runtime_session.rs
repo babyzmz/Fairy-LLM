@@ -16,7 +16,10 @@ use crate::protocol::{
     RealtimeResourceLevel, RealtimeResourcePolicy, RealtimeStartupStage, WorkerEvent,
 };
 use crate::runtime::*;
-use crate::runtime_events::{emit_backend_failure, emit_cancelled, emit_failed, emit_usage};
+use crate::runtime_events::{
+    emit_backend_failure, emit_cancelled, emit_failed, emit_finished, emit_startup_stage,
+    emit_usage,
+};
 pub(super) fn run_session(
     launch: RuntimeLaunch,
     commands: mpsc::Receiver<RuntimeCommand>,
@@ -58,11 +61,8 @@ pub(super) fn run_session(
     }
     let native_audio = backend == RealtimeBackendKind::CloudLive
         && voice_output == RealtimeVoiceOutput::ProviderNativeVoice;
-    emit_startup_stage(
-        &events,
-        &identity,
-        RealtimeStartupStage::StartingBackendRuntime,
-    );
+    let startup = |stage| emit_startup_stage(&events, &identity, stage);
+    startup(RealtimeStartupStage::StartingBackendRuntime);
     let Some(mut active_backend) = connect_realtime_backend(
         &identity,
         credential,
@@ -81,11 +81,7 @@ pub(super) fn run_session(
         emit_cancelled(&events, &identity);
         return;
     }
-    emit_startup_stage(
-        &events,
-        &identity,
-        RealtimeStartupStage::AcquiringMicrophone,
-    );
+    startup(RealtimeStartupStage::AcquiringMicrophone);
     let mut microphone = MicrophoneCapture::start().ok();
     let (mut fairy_reference, fairy_reference_error) =
         if voice_output != RealtimeVoiceOutput::TextOnly {
@@ -101,11 +97,7 @@ pub(super) fn run_session(
         return;
     }
     if screen_enabled {
-        emit_startup_stage(
-            &events,
-            &identity,
-            RealtimeStartupStage::AcquiringObservedWindow,
-        );
+        startup(RealtimeStartupStage::AcquiringObservedWindow);
     }
     let mut video = if screen_enabled {
         source_id.and_then(|id| VideoCapture::start(id, VIDEO_CAPTURE_FPS).ok())
@@ -117,11 +109,7 @@ pub(super) fn run_session(
         return;
     }
     if application_audio_enabled {
-        emit_startup_stage(
-            &events,
-            &identity,
-            RealtimeStartupStage::AcquiringApplicationAudio,
-        );
+        startup(RealtimeStartupStage::AcquiringApplicationAudio);
     }
     let mut game_audio = if application_audio_enabled {
         source_id.and_then(|source_id| ProcessLoopbackCapture::start(source_id).ok())
@@ -145,7 +133,7 @@ pub(super) fn run_session(
         emit_failed(&events, &identity, "REALTIME_INPUT_UNAVAILABLE");
         return;
     }
-    emit_startup_stage(&events, &identity, RealtimeStartupStage::Active);
+    startup(RealtimeStartupStage::Active);
     let _ = events.send(WorkerEvent::SessionState {
         session_id: identity.session_id.clone(),
         segment_id: identity.segment_id.clone(),
@@ -1189,43 +1177,16 @@ pub(super) fn run_session(
         playback.clear();
     }
     let _ = active_backend.stop();
-    emit_usage(
+    emit_finished(
         &events,
-        &identity,
-        audio_input_samples,
-        audio_output_samples,
-        video_frame_count,
-        interruption_count,
-        tool_call_count,
+        identity,
+        (
+            audio_input_samples,
+            audio_output_samples,
+            video_frame_count,
+            interruption_count,
+            tool_call_count,
+        ),
+        local_backend_unloaded,
     );
-    if local_backend_unloaded {
-        let _ = events.send(WorkerEvent::LocalBackendUnloaded {
-            session_id: identity.session_id,
-            segment_id: identity.segment_id,
-            context_epoch: identity.context_epoch,
-        });
-    } else {
-        let _ = events.send(WorkerEvent::SessionState {
-            session_id: identity.session_id,
-            segment_id: identity.segment_id,
-            context_epoch: identity.context_epoch,
-            status: "completed".to_owned(),
-            backend: identity.backend,
-            cloud_provider: identity.cloud_provider,
-            error_code: None,
-        });
-    }
-}
-
-fn emit_startup_stage(
-    events: &mpsc::Sender<WorkerEvent>,
-    identity: &RuntimeIdentity,
-    stage: RealtimeStartupStage,
-) {
-    let _ = events.send(WorkerEvent::StartupStage {
-        session_id: identity.session_id.clone(),
-        segment_id: identity.segment_id.clone(),
-        context_epoch: identity.context_epoch,
-        stage,
-    });
 }

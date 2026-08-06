@@ -107,6 +107,7 @@ function turnTrace(turnId: string, conversationId: string): TurnTrace {
     updated_at: "2026-07-15T00:00:01Z",
     started_at: "2026-07-15T00:00:00Z",
     completed_at: "2026-07-15T00:00:01Z",
+    evidence_sources: [],
     steps: [],
   };
 }

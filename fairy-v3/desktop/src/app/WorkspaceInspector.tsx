@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import type { WorkspaceModel } from "./workspaceModel";
+import { OPEN_WORKSPACE_SOURCE_EVENT } from "./workspaceNavigation";
 import { PreviewWorkspace } from "./PreviewWorkspace";
 import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
 import { ObsidianPanel } from "./ObsidianPanel";
@@ -62,6 +63,12 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
     manuallySelectedTab.current = false;
     setTab(recommendedTab);
   }, [scopeKey]);
+
+  useEffect(() => {
+    const openFiles = () => selectTab("files");
+    window.addEventListener(OPEN_WORKSPACE_SOURCE_EVENT, openFiles);
+    return () => window.removeEventListener(OPEN_WORKSPACE_SOURCE_EVENT, openFiles);
+  }, []);
 
   useEffect(() => {
     // Active generation now lives inside Preview, so pull attention there.
@@ -217,9 +224,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
           hidden={tab !== panel}
           tabIndex={0}
         >
-          {tab === panel ? panel === "preview" ? (
-            <PreviewWorkspace model={model} />
-          ) : panel === "files" ? (
+          {panel === "files" ? (
             <WorkspaceFilesPanel
               scopeKey={scopeKey}
               files={model.workspaceFiles}
@@ -228,6 +233,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
               currentVersionId={model.workspaceTask?.target_version_id ?? model.selectedVersion?.id ?? null}
               loading={model.workspaceFilesLoading}
               onRead={model.readWorkspaceFile}
+              onReadSource={model.readWorkspaceSource}
               onOpenStream={model.openWorkspaceFileStream}
               onPresent={model.presentWorkspaceFile}
               onCompare={model.compareWorkspaceFile}
@@ -243,6 +249,8 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
               onDelete={model.deleteWorkspaceFile}
               onExport={model.exportWorkspace}
             />
+          ) : tab === panel ? panel === "preview" ? (
+            <PreviewWorkspace model={model} />
           ) : (
             <ObsidianPanel model={model} onOpenFiles={() => selectTab("files")} />
           ) : null}

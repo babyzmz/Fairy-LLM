@@ -27,6 +27,7 @@ import type {
 } from "../core/client";
 import { VoiceSpeakControl } from "../voice/VoiceController";
 import { ActivityRail } from "./ActivityRail";
+import { EvidenceSources } from "./EvidenceSources";
 import {
   messageLineKey,
   MessageLineSidebar,
@@ -220,6 +221,11 @@ export function MessageList({
               developerMode={developerMode}
               onCopy={onCopy}
               onOpenLink={onOpenLink}
+              evidenceSources={
+                message.role === "assistant" && message.turn_id !== null
+                  ? turnTraces[message.turn_id]?.evidence_sources ?? []
+                  : []
+              }
             />
             {message.role === "user" && message.turn_id !== null &&
             (turnTraceStates[message.turn_id] !== undefined ||
@@ -310,6 +316,7 @@ function MessageRow({
   developerMode,
   onCopy,
   onOpenLink,
+  evidenceSources,
 }: {
   message: Message;
   anchorKey: string | null;
@@ -317,6 +324,7 @@ function MessageRow({
   developerMode: boolean;
   onCopy(taskId: string, content: string): Promise<void>;
   onOpenLink(taskId: string, url: string): Promise<void>;
+  evidenceSources: TurnTrace["evidence_sources"];
 }) {
   return (
     <m.article
@@ -353,6 +361,13 @@ function MessageRow({
           onCopy={onCopy}
           onOpenLink={onOpenLink}
         />
+        {message.role === "assistant" ? (
+          <EvidenceSources
+            taskId={message.task_id}
+            sources={[...evidenceSources]}
+            onOpenLink={onOpenLink}
+          />
+        ) : null}
         {developerMode ? (
           <div className="message-developer-meta">
             seq {message.sequence} | task {message.task_id} | turn {message.turn_id ?? "none"}

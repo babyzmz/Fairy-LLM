@@ -392,6 +392,37 @@ def test_isolation_command_never_invokes_a_shell() -> None:
     assert all(item not in {"sh", "bash", "-c"} for item in command[:-3])
 
 
+def test_inspection_is_revalidated_and_mounts_the_workspace_read_only() -> None:
+    runner = _load_runner()
+    request, _archive_bytes = runner.parse_request_frame(
+        _frame(
+            _archive(),
+            purpose="inspect",
+            argv=["rg", "--line-number", "needle", "src"],
+            environment={},
+            timeout_seconds=10,
+            output_limit_bytes=65_536,
+        )
+    )
+
+    command = runner.build_isolation_command(request, Path("/srv/fairy/workspace"))
+    workspace_mount = command.index("/workspace")
+    assert command[workspace_mount - 2] == "--ro-bind"
+    assert "--bind" not in command[:workspace_mount]
+    assert "--unshare-net" in command
+
+    with pytest.raises(runner.RunnerProtocolError, match="inspection program"):
+        runner.parse_request_frame(
+            _frame(
+                _archive(),
+                purpose="inspect",
+                argv=["python3", "-V"],
+                environment={},
+                timeout_seconds=10,
+            )
+        )
+
+
 def test_public_network_binds_only_minimum_resolution_and_tls_configuration() -> None:
     runner = _load_runner()
     request, _archive_bytes = runner.parse_request_frame(

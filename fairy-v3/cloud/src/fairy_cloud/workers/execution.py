@@ -36,7 +36,7 @@ from fairy_cloud.execution.repository import (
 logger = logging.getLogger(__name__)
 _RUNNER = "/usr/local/bin/fairy-sandbox-runner"
 _EXECUTOR = "cloud_oci_worker"
-_EXECUTOR_VERSION = "1.0.0"
+_EXECUTOR_VERSION = "1.1.0"
 _PROCESS_ENVIRONMENT = {
     "FAIRY_SANDBOX_EXECUTOR": _EXECUTOR,
     "HOME": "/tmp",

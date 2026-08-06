@@ -3,6 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 
+from fairy_core.assistant.evidence import (
+    EvidenceDraft,
+    EvidenceRequirementKind,
+    EvidenceSourceKind,
+    query_digest,
+)
 from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
 from fairy_core.commanding.models import CommandRun
 from fairy_core.commanding.registry import ToolDefinition
@@ -104,10 +110,25 @@ class MemoryToolExecutor:
                     sort_keys=True,
                 )
             )
+        model_content = "\n".join(lines)
         return ToolResult.create(
             public_summary=f"Found {len(items)} task-bound memory matches",
-            model_content="\n".join(lines),
+            model_content=model_content,
             artifact_ids=(),
+            evidence_drafts=(
+                EvidenceDraft(
+                    requirement_kind=EvidenceRequirementKind.PRIVATE_CURRENT,
+                    source_kind=EvidenceSourceKind.PRIVATE_SNAPSHOT,
+                    public_label="Task Memory Snapshot search",
+                    content_hash=hashlib.sha256(model_content.encode("utf-8")).hexdigest(),
+                    source_revision=query_digest(
+                        {
+                            "query": query,
+                            "snapshot_hash": scope.memory_snapshot_hash,
+                        }
+                    ),
+                ),
+            ),
         )
 
 

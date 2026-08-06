@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import time
 from pathlib import Path
 from uuid import UUID
@@ -16,29 +18,68 @@ _FREE_MODEL_ID = "nvidia/nemotron-3-ultra-550b-a55b:free"
 _PAID_MODEL_ID = "deepseek/deepseek-v4-pro"
 
 
+class RealtimeEvidenceProvider(ScriptedProvider):
+    def __init__(self, answer: str, *, model_id: str) -> None:
+        super().__init__([], model_id=model_id)
+        self.answer = answer
+
+    def stream(self, request, cancellation):
+        del cancellation
+        self.requests.append(request)
+        tool_names = {tool.name for tool in request.tools}
+        if "evidence.classify" in tool_names:
+            arguments = {
+                "evidence_requirements": ["runtime_current"],
+                "requires_workspace_changes": False,
+                "public_summary": "Inspect the current Realtime Companion observation.",
+            }
+            yield ModelDelta.tool_call(
+                profile_id="scripted",
+                sequence=1,
+                tool_call_id="classify-realtime",
+                tool_name="evidence.classify",
+                arguments_fragment=json.dumps(arguments),
+            )
+        else:
+            receipt_ids = re.findall(
+                r'"receipt_id":"([0-9a-f-]{36})"',
+                "\n".join(message.content for message in request.messages),
+            )
+            if not receipt_ids:
+                yield ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="inspect-realtime",
+                    tool_name="realtime.context",
+                    arguments_fragment="{}",
+                )
+            else:
+                yield ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="answer-realtime",
+                    tool_name="direct_answer",
+                    arguments_fragment=json.dumps(
+                        {
+                            "answer": self.answer,
+                            "evidence_receipt_ids": receipt_ids,
+                        }
+                    ),
+                )
+        yield ModelDelta.done(
+            profile_id="scripted",
+            sequence=2,
+            finish_reason="tool_calls",
+        )
+
+
 def _service(
     tmp_path: Path,
     answer: str = "Use the [east gate](https://guide.test/east).",
     *,
     model_id: str = _FREE_MODEL_ID,
 ):
-    provider = ScriptedProvider(
-        [
-            (
-                ModelDelta.text(
-                    profile_id="scripted",
-                    sequence=1,
-                    text=answer,
-                ),
-                ModelDelta.done(
-                    profile_id="scripted",
-                    sequence=2,
-                    finish_reason="stop",
-                ),
-            )
-        ],
-        model_id=model_id,
-    )
+    provider = RealtimeEvidenceProvider(answer, model_id=model_id)
     return build_local_service(
         tmp_path,
         provider_registry=ProviderRegistry((provider,)),

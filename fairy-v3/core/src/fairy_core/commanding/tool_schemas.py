@@ -71,6 +71,34 @@ def project_read_tool_schema() -> dict[str, Any]:
     }
 
 
+def project_list_tool_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "prefix": {"type": "string", "minLength": 1, "maxLength": 1_024},
+            "glob": {"type": "string", "minLength": 1, "maxLength": 512},
+            "cursor": {"type": "string", "minLength": 1, "maxLength": 2_048},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+        },
+        "additionalProperties": False,
+    }
+
+
+def project_search_tool_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "minLength": 1, "maxLength": 512},
+            "glob": {"type": "string", "minLength": 1, "maxLength": 512},
+            "case_sensitive": {"type": "boolean"},
+            "cursor": {"type": "string", "minLength": 1, "maxLength": 2_048},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+
+
 def artifact_read_tool_schema() -> dict[str, Any]:
     return {
         "type": "object",
@@ -83,5 +111,7 @@ def artifact_read_tool_schema() -> dict[str, Any]:
 __all__ = [
     "artifact_read_tool_schema",
     "execution_plan_tool_schema",
+    "project_list_tool_schema",
     "project_read_tool_schema",
+    "project_search_tool_schema",
 ]

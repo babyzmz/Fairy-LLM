@@ -19,7 +19,6 @@ import {
   advanceFairyMotionSnapshot,
   DEFAULT_FAIRY_MOTION_SNAPSHOT,
   type FairyMotionSnapshot,
-  type FairySurface,
 } from "../domain/motionState";
 import {
   derivePresenceView,
@@ -44,8 +43,6 @@ import {
   createPresenceSubmissionId,
   createPresenceChannel,
   type PresenceChannel,
-  type PresenceSubmissionFailure,
-  type PresenceSubmissionUpdate,
 } from "../transport/presenceChannel";
 import {
   createPresenceInteractionSource,
@@ -73,8 +70,14 @@ import {
   PresencePanel,
   PRESENCE_COMPACT_INPUT_MIN_HEIGHT,
   PRESENCE_COMPACT_INPUT_MIN_WIDTH,
-  type PresenceSubmissionCard,
 } from "./PresencePanel";
+import {
+  applySubmissionUpdate,
+  layoutForSurface,
+  type PresenceSubmissionState,
+  toSubmissionCard,
+  writeInputPresentationDiagnostics,
+} from "./presenceInputPresentation";
 import "../presence.css";
 import "./presence-input.css";
 
@@ -99,13 +102,6 @@ const PRESENCE_SURFACE_REDUCED_EXIT_MS = 80;
 const MENU_FOCUS_LOSS_MS = 600;
 const INPUT_PRESENTATION_RETRY_BASE_MS = 120;
 const INPUT_PRESENTATION_RETRY_MAX_MS = 2_000;
-
-interface PresenceSubmissionState {
-  id: string;
-  text: string;
-  phase: PresenceSubmissionCard["phase"];
-  failure: PresenceSubmissionFailure | null;
-}
 
 interface CorePointerPress {
   pointerId: number;
@@ -1131,82 +1127,4 @@ export function PresenceInputApp({
       />
     </main>
   );
-}
-
-function applySubmissionUpdate(
-  current: PresenceSubmissionState | null,
-  update: PresenceSubmissionUpdate,
-): PresenceSubmissionState | null {
-  if (current === null || current.id !== update.submission_id) return current;
-  return {
-    ...current,
-    phase: update.status,
-    failure: update.failure,
-  };
-}
-
-function toSubmissionCard(
-  submission: PresenceSubmissionState | null,
-): PresenceSubmissionCard | null {
-  if (submission?.phase !== "failed") return null;
-  return {
-    ...card(
-      submission,
-      failureTitle(submission.failure),
-      "Your message was not started",
-      false,
-    ),
-    canRetry: submission.text !== "",
-  };
-}
-
-function card(
-  submission: PresenceSubmissionState,
-  title: string,
-  detail: string,
-  canCancel: boolean,
-): PresenceSubmissionCard {
-  return {
-    id: submission.id,
-    phase: submission.phase,
-    title,
-    detail,
-    canCancel,
-    canRetry: false,
-  };
-}
-
-function failureTitle(failure: PresenceSubmissionFailure | null): string {
-  if (failure === "offline") return "Fairy is offline";
-  if (failure === "busy") return "Fairy is already working";
-  return "Message could not be sent";
-}
-
-function layoutForSurface(surface: FairySurface): PetInputLayout {
-  switch (surface) {
-    case "input": return "compact";
-    case "options":
-    case "submission":
-    case "reply": return "expanded";
-    case "ambient": return "expanded";
-    case "notice": return "core";
-    case "core": return "core";
-  }
-}
-
-function writeInputPresentationDiagnostics(
-  commit: { session_id: number; revision: number } | null,
-  status: "starting" | "pending" | "committed" | "failed" | "recovered",
-): void {
-  if (typeof document === "undefined") return;
-  const targets = [
-    document.documentElement,
-    document.querySelector('[data-testid="presence-input-surface"]'),
-  ];
-  for (const target of targets) {
-    if (!(target instanceof HTMLElement)) continue;
-    target.dataset.inputPresentationStatus = status;
-    target.dataset.inputPresentationSession = String(commit?.session_id ?? 0);
-    target.dataset.inputPresentationRevision = String(commit?.revision ?? 0);
-  }
 }

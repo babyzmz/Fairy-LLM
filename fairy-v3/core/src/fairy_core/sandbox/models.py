@@ -45,6 +45,7 @@ class SandboxNetworkPolicy(StrEnum):
 
 class SandboxPurpose(StrEnum):
     RAW = "raw"
+    INSPECT = "inspect"
     DEPENDENCY = "dependency"
     REVIEW = "review"
 
@@ -141,7 +142,15 @@ class SandboxRequest:
                     "dependency layer requires a Workspace Version, key, and supported manager"
                 )
         elif dependency_key is not None or dependency_manager is not None:
-            raise ValueError("raw Sandbox requests cannot bind a dependency layer")
+            raise ValueError("this Sandbox purpose cannot bind a dependency layer")
+        if purpose is SandboxPurpose.INSPECT:
+            normalized_argv = _validate_inspection_argv(normalized_argv)
+            if normalized_environment:
+                raise ValueError("inspection requests cannot define environment variables")
+            if timeout_seconds > 30:
+                raise ValueError("inspection timeout cannot exceed 30 seconds")
+            if output_limit_bytes > 262_144:
+                raise ValueError("inspection output cannot exceed 262144 bytes")
         archive = bytes(workspace_archive)
         if not archive or len(archive) > _MAX_ARCHIVE_BYTES:
             raise ValueError("workspace archive is empty or exceeds 128 MiB")
@@ -318,6 +327,27 @@ def _validate_argv(argv: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(normalized)
 
 
+_INSPECTION_PROGRAMS = frozenset({"head", "ls", "rg", "stat", "tail", "wc"})
+_SHELL_SYNTAX = re.compile(r"[\r\n|;&`<>]|\$\(")
+_UNSAFE_RG_OPTIONS = ("--pre", "--pre-glob", "--hostname-bin")
+
+
+def _validate_inspection_argv(argv: tuple[str, ...]) -> tuple[str, ...]:
+    normalized = _validate_argv(argv)
+    if normalized[0] not in _INSPECTION_PROGRAMS:
+        raise ValueError("inspection program is not permitted")
+    for index, value in enumerate(normalized):
+        if _SHELL_SYNTAX.search(value):
+            raise ValueError("inspection arguments cannot contain shell syntax")
+        if index > 0 and ("\\" in value or value.startswith("/")):
+            raise ValueError("inspection paths must be relative POSIX paths")
+        if index > 0 and ".." in PurePosixPath(value).parts:
+            raise ValueError("inspection paths must remain inside the Workspace")
+        if normalized[0] == "rg" and value.startswith(_UNSAFE_RG_OPTIONS):
+            raise ValueError("inspection ripgrep option is not permitted")
+    return normalized
+
+
 def _validate_cwd(cwd: str) -> str:
     normalized = cwd.replace("\\", "/").strip() or "."
     path = PurePosixPath(normalized)
@@ -354,6 +384,7 @@ __all__ = [
     "SandboxRequest",
     "SandboxResult",
     "SandboxResultStatus",
+    "_validate_inspection_argv",
     "decode_request_frame",
     "encode_request_frame",
 ]

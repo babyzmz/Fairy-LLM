@@ -26,6 +26,11 @@ from fairy_core.assistant.routing import (
     manual_routing_decision,
     parse_router_output,
 )
+from fairy_core.assistant.routing_evidence_runtime import (
+    EvidenceRoutingRuntimeMixin,
+    route_step_summary,
+    validate_router_attempt,
+)
 from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.assistant.work_queue import assistant_command_lease_until
@@ -38,14 +43,12 @@ from fairy_core.model_catalog.models import (
     MODEL_ALLOWLIST_BY_ID,
     ModelAvailability,
     ModelCatalogSnapshot,
+    ModelEndpointKind,
     ModelSelectionMode,
     ModelSelectionSnapshot,
-    ProviderCredentialStatus,
-    baseline_catalog,
 )
 from fairy_core.providers import (
     CancellationToken,
-    ModelDelta,
     ModelDeltaKind,
     ModelExecutionRole,
     ModelMessage,
@@ -65,41 +68,7 @@ from fairy_core.providers import (
 )
 
 
-def _route_step_summary(decision: RoutingDecision) -> str:
-    task_label = {
-        RoutingTaskKind.GENERAL: "General",
-        RoutingTaskKind.REASONING: "Reasoning",
-        RoutingTaskKind.CODE: "Code",
-        RoutingTaskKind.BROWSER: "Browser QA",
-        RoutingTaskKind.IMAGE: "Image",
-        RoutingTaskKind.MUSIC: "Music",
-        RoutingTaskKind.VIDEO: "Video",
-    }[decision.task_kind]
-    primary = MODEL_ALLOWLIST_BY_ID[decision.primary_model_id].display_name
-    if decision.reviewer_model_id is None:
-        return f"{task_label} task routed to {primary}"
-    reviewer = MODEL_ALLOWLIST_BY_ID[decision.reviewer_model_id].display_name
-    return f"{task_label} task routed to {primary}, reviewed by {reviewer}"
-
-
-def _validate_router_attempt(deltas: tuple[ModelDelta, ...]) -> None:
-    chunks: list[str] = []
-    for delta in deltas:
-        if delta.kind is ModelDeltaKind.TEXT:
-            if delta.text is None:
-                raise ProviderProtocolError("router returned an empty text delta")
-            chunks.append(delta.text)
-            if sum(map(len, chunks)) > 16_384:
-                raise ProviderProtocolError("router response is too large")
-        elif delta.kind is ModelDeltaKind.TOOL_CALL:
-            raise ProviderProtocolError("router cannot call tools")
-    try:
-        parse_router_output("".join(chunks))
-    except ValueError as error:
-        raise ProviderProtocolError("router returned invalid structured output") from error
-
-
-class AssistantRoutingMixin:
+class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
     def _ensure_routing(
         self,
         turn: AssistantTurn,
@@ -108,17 +77,52 @@ class AssistantRoutingMixin:
         if turn.model_selection is None:
             return turn.routing_decision
         if turn.routing_decision is not None:
-            return turn.routing_decision
-        user_request, catalog = self._routing_inputs(turn.id)
-        if turn.model_selection.mode is ModelSelectionMode.MANUAL:
+            if turn.routing_decision.evidence_classified:
+                return turn.routing_decision
+            user_request, catalog = self._routing_inputs(turn.id)
+            evidence, route_run = self._run_manual_evidence_classifier(
+                turn=turn,
+                user_request=user_request,
+                cancellation=cancellation,
+            )
             decision = manual_routing_decision(
                 selection=turn.model_selection,
                 catalog=catalog,
                 user_request=user_request,
+                evidence=evidence,
+            )
+            self._bind_routing(turn.id, decision, run=route_run, replace_evidence=True)
+            return decision
+        user_request, catalog = self._routing_inputs(turn.id)
+        if turn.model_selection.mode is ModelSelectionMode.MANUAL:
+            selected = MODEL_ALLOWLIST_BY_ID.get(turn.model_selection.model_id or "")
+            preliminary = manual_routing_decision(
+                selection=turn.model_selection,
+                catalog=catalog,
+                user_request=user_request,
+            )
+            self._require_available_route(preliminary, catalog)
+            self._require_selection_compatibility(turn.model_selection, preliminary)
+            if preliminary.approval_required:
+                self._bind_routing(turn.id, preliminary)
+                return preliminary
+            evidence = None
+            route_run = None
+            if selected is not None and selected.endpoint_kind is ModelEndpointKind.CHAT:
+                evidence, route_run = self._run_manual_evidence_classifier(
+                    turn=turn,
+                    user_request=user_request,
+                    cancellation=cancellation,
+                )
+            decision = manual_routing_decision(
+                selection=turn.model_selection,
+                catalog=catalog,
+                user_request=user_request,
+                evidence=evidence,
             )
             self._require_available_route(decision, catalog)
             self._require_selection_compatibility(turn.model_selection, decision)
-            self._bind_routing(turn.id, decision)
+            self._bind_routing(turn.id, decision, run=route_run)
             return decision
         return self._run_auto_router(
             turn=turn,
@@ -126,23 +130,6 @@ class AssistantRoutingMixin:
             catalog=catalog,
             cancellation=cancellation,
         )
-
-    def _routing_inputs(self, turn_id: UUID) -> tuple[str, ModelCatalogSnapshot]:
-        with self._unit_of_work_factory() as unit_of_work:
-            turn = require_turn(unit_of_work, turn_id)
-            user_message = unit_of_work.assistant.message_for_turn(
-                turn.id,
-                MessageRole.USER,
-            )
-            if user_message is None:
-                raise RuntimeError("Assistant Turn has no user message")
-            catalog = unit_of_work.model_catalog.get_catalog()
-        if catalog is None:
-            catalog = baseline_catalog(
-                now=datetime.now(UTC),
-                credential_status=ProviderCredentialStatus.CONFIGURED,
-            )
-        return user_message.content, catalog
 
     def _run_auto_router(
         self,
@@ -182,7 +169,7 @@ class AssistantRoutingMixin:
                 request,
                 cancellation,
                 on_attempt=self._provider_attempts.observer(turn.id, 1, run=run),
-                attempt_validator=_validate_router_attempt,
+                attempt_validator=validate_router_attempt,
             ):
                 cancellation.raise_if_cancelled()
                 self._turns.require_active(turn.id)
@@ -221,12 +208,16 @@ class AssistantRoutingMixin:
         decision: RoutingDecision,
         *,
         run: CommandRun | None = None,
+        replace_evidence: bool = False,
     ) -> None:
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
             expected_status = turn.status
             expected_revision = turn.cancellation_revision
-            turn.bind_routing(decision)
+            if replace_evidence:
+                turn.bind_routing_evidence(decision)
+            else:
+                turn.bind_routing(decision)
             unit_of_work.assistant.update_turn(
                 turn,
                 expected_status=expected_status,
@@ -568,6 +559,7 @@ class AssistantRoutingMixin:
         chunk_index: int,
         usage: dict[str, int],
         cancellation: CancellationToken,
+        cited_evidence_receipt_ids: tuple[str, ...] = (),
     ) -> AssistantTurn:
         if decision.reviewer_model_id is None:
             raise ValueError("reviewer model is not configured")
@@ -672,6 +664,7 @@ class AssistantRoutingMixin:
                 run=run,
                 content="".join(reviewed),
                 usage=usage,
+                cited_evidence_receipt_ids=cited_evidence_receipt_ids,
             )
         except ProviderCancelledError:
             if cancellation.is_interrupted:
@@ -863,7 +856,7 @@ class AssistantRoutingMixin:
                 "complexity": decision.complexity.value,
                 "primary_model": primary,
                 "reviewer_model": reviewer,
-                "public_summary": _route_step_summary(decision),
+                "public_summary": route_step_summary(decision),
             },
             lease_owner=(run.lease_owner if run.status is CommandStatus.RUNNING else None),
             lease_fence=(run.lease_fence if run.status is CommandStatus.RUNNING else None),
@@ -1161,7 +1154,7 @@ class AssistantRoutingMixin:
             run=run,
             kind=TraceStepKind.ROUTE,
             status=TraceStepStatus.SUCCEEDED,
-            public_summary=_route_step_summary(decision),
+            public_summary=route_step_summary(decision),
             caused_by_step_id=caused_by_step_id,
         )
 

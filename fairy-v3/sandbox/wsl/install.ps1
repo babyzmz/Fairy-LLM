@@ -142,6 +142,7 @@ Invoke-Wsl @(
     "--distribution", "FairySandbox", "--user", "root", "--exec",
     "/usr/bin/apt-get", "install", "--yes", "--no-install-recommends",
     "bubblewrap", "ca-certificates", "cargo", "curl", "gnupg", "python3", "python3-pip",
+    "ripgrep",
     "python3-venv", "xz-utils"
 )
 
@@ -216,13 +217,14 @@ if ($LASTEXITCODE -ne 0) {
 $HealthDocument = $Health | ConvertFrom-Json
 if (
     $HealthDocument.executor -ne "wsl_fairy_sandbox" -or
-    $HealthDocument.runner_version -ne "1.0.0" -or
+    $HealthDocument.runner_version -ne "1.1.0" -or
     $HealthDocument.user -ne "fairy" -or
     $HealthDocument.uid -le 0 -or
     $HealthDocument.toolchain.node -ne "v24.18.0" -or
     $HealthDocument.toolchain.pnpm -ne "10.34.4" -or
     $HealthDocument.toolchain.yarn -ne "1.22.22" -or
-    $HealthDocument.toolchain.uv -notmatch "^uv 0\.11\.28(?: |$)"
+    $HealthDocument.toolchain.uv -notmatch "^uv 0\.11\.28(?: |$)" -or
+    $HealthDocument.toolchain.rg -notmatch "^ripgrep 1[4-9]\."
 ) {
     throw "FairySandbox returned an invalid health document"
 }

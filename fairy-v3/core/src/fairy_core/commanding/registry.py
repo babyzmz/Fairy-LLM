@@ -586,6 +586,20 @@ def build_default_registry() -> ToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        _tool(
+            "realtime.context",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "realtime_assistance",
+            idempotent=True,
+            description=(
+                "Read the current governed Realtime Companion observation for this Task. "
+                "Unavailable outside a Realtime Assistance request."
+            ),
+            input_schema={"type": "object", "additionalProperties": False},
+        ),
         *system_action_definitions(active_profiles),
         *_information_definitions(all_profiles),
         _tool(
@@ -904,6 +918,45 @@ def build_default_registry() -> ToolRegistry:
             "review_worker",
             idempotent=True,
             model_visible=False,
+        ),
+        _tool(
+            "terminal.inspect",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "sandbox_worker",
+            sandbox=True,
+            idempotent=True,
+            description=(
+                "Inspect the immutable Task-bound Workspace with a bounded read-only argv. "
+                "Only rg, ls, head, tail, wc, and stat are permitted; host shell access, "
+                "network access, writes, pipes, and command substitution are unavailable."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "argv": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 4_096},
+                    },
+                    "cwd": {"type": "string", "minLength": 1, "maxLength": 1_024},
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 30,
+                    },
+                    "output_limit_bytes": {
+                        "type": "integer",
+                        "minimum": 1_024,
+                        "maximum": 262_144,
+                    },
+                },
+                "required": ["argv"],
+                "additionalProperties": False,
+            },
         ),
         _tool(
             "run.sandboxed",

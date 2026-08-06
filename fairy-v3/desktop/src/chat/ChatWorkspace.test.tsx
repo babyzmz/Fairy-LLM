@@ -235,6 +235,7 @@ const TURN: AssistantTurn = {
   budget_approval_run_id: null,
   status: "completed",
   cancellation_revision: 0,
+  cited_evidence_receipt_ids: [],
   usage: {},
   error_code: null,
   created_at: "2026-07-11T00:00:00Z",

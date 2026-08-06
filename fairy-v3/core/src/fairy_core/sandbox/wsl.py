@@ -27,7 +27,7 @@ _DISTRO = "FairySandbox"
 _USER = "fairy"
 _RUNNER = "/usr/local/bin/fairy-sandbox-runner"
 _EXECUTOR = "wsl_fairy_sandbox"
-_RUNNER_VERSION = "1.0.0"
+_RUNNER_VERSION = "1.1.0"
 _SAFE_ENVIRONMENT_KEYS = ("SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP")
 
 

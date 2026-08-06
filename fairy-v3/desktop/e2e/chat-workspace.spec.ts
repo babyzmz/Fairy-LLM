@@ -268,6 +268,65 @@ test("ordinary chat exposes the shared workspace file inspector", async ({ page 
   await expect(page.getByRole("button", { name: "Use this version" })).toHaveCount(0);
 });
 
+test("completed answers expose safe evidence and open the cited immutable Workspace source", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 880, height: 680 });
+  await page.goto("/");
+  await openScratchChat(page);
+
+  const sources = page.locator(".evidence-sources");
+  await expect(sources.locator("summary")).toContainText("Sources");
+  await expect(sources.getByText("Fairy evidence guide")).toBeHidden();
+  await sources.locator("summary").click();
+  await expect(sources.getByText("Fairy evidence guide")).toBeVisible();
+  await expect(sources.getByText("src/main.ts:1")).toBeVisible();
+
+  await sources.getByRole("button", { name: /Fairy evidence guide/ }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    window.__FAIRY_FIXTURE_CALLS__.some((call) =>
+      call.method === "system.actions.execute" &&
+      call.params.action != null &&
+      typeof call.params.action === "object" &&
+      (call.params.action as { type?: string; url?: string }).type === "open_url" &&
+      (call.params.action as { type?: string; url?: string }).url ===
+        "https://example.com/fairy-evidence",
+    ),
+  )).toBe(true);
+
+  await expect(page.locator(".workspace-files")).toHaveCount(1);
+  const openedSource = page.evaluate(() => new Promise<{
+    path: string;
+    versionId: string;
+  }>((resolve) => {
+    window.addEventListener("fairy:open-workspace-source", (event) => {
+      const detail = (event as CustomEvent<{ path: string; versionId: string }>).detail;
+      resolve({ path: detail.path, versionId: detail.versionId });
+    }, { once: true });
+  }));
+  await sources.getByRole("button", { name: /Workspace source/ }).click();
+  await expect(openedSource).resolves.toEqual({
+    path: "src/main.ts",
+    versionId: "1298f4de-0114-7000-8000-000000000004",
+  });
+  const inspector = page.getByRole("complementary", { name: "Workspace inspector" });
+  await expect(inspector.getByRole("tab", { name: /Files/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect.poll(async () => page.evaluate(() =>
+    window.__FAIRY_FIXTURE_CALLS__.some((call) =>
+      call.method === "workspaces.files.read" &&
+      call.params.version_id === "1298f4de-0114-7000-8000-000000000004" &&
+      call.params.path === "src/main.ts",
+    ),
+  )).toBe(true);
+  await expect(inspector.getByText("console.log('Fairy');")).toBeVisible();
+  await expect(inspector.getByText(/cited Version 1298f4de/)).toBeVisible();
+  await expect(inspector.getByRole("button", { name: "Rename file" })).toHaveCount(0);
+  await expect(inspector.getByRole("button", { name: "Delete file" })).toHaveCount(0);
+});
+
 test("model selector stays inside the window and persists the global choice", async ({
   page,
 }, testInfo) => {

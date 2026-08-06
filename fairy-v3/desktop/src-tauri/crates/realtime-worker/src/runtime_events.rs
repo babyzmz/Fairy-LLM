@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 
 use crate::backend::{BackendError, RealtimeBackendKind};
-use crate::protocol::WorkerEvent;
+use crate::protocol::{RealtimeStartupStage, WorkerEvent};
 use crate::runtime::RuntimeIdentity;
 
 pub(super) fn emit_usage(
@@ -89,4 +89,46 @@ pub(super) fn emit_cancelled(events: &mpsc::Sender<WorkerEvent>, identity: &Runt
         cloud_provider: identity.cloud_provider,
         error_code: None,
     });
+}
+
+pub(super) fn emit_startup_stage(
+    events: &mpsc::Sender<WorkerEvent>,
+    identity: &RuntimeIdentity,
+    stage: RealtimeStartupStage,
+) {
+    let _ = events.send(WorkerEvent::StartupStage {
+        session_id: identity.session_id.clone(),
+        segment_id: identity.segment_id.clone(),
+        context_epoch: identity.context_epoch,
+        stage,
+    });
+}
+
+pub(super) fn emit_finished(
+    events: &mpsc::Sender<WorkerEvent>,
+    identity: RuntimeIdentity,
+    usage: (u64, u64, u64, u64, u64),
+    local_backend_unloaded: bool,
+) {
+    emit_usage(
+        events, &identity, usage.0, usage.1, usage.2, usage.3, usage.4,
+    );
+    let event = if local_backend_unloaded {
+        WorkerEvent::LocalBackendUnloaded {
+            session_id: identity.session_id,
+            segment_id: identity.segment_id,
+            context_epoch: identity.context_epoch,
+        }
+    } else {
+        WorkerEvent::SessionState {
+            session_id: identity.session_id,
+            segment_id: identity.segment_id,
+            context_epoch: identity.context_epoch,
+            status: "completed".to_owned(),
+            backend: identity.backend,
+            cloud_provider: identity.cloud_provider,
+            error_code: None,
+        }
+    };
+    let _ = events.send(event);
 }

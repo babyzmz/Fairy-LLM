@@ -1027,6 +1027,9 @@ function workspaceModel(): WorkspaceModel {
     readWorkspaceFile: vi.fn(async () => {
       throw new Error("not used");
     }),
+    readWorkspaceSource: vi.fn(async () => {
+      throw new Error("source unavailable");
+    }),
     openWorkspaceFileStream: vi.fn(async () => {
       throw new Error("not used");
     }),

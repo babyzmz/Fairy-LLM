@@ -2852,6 +2852,11 @@ export interface components {
             budget_approval_run_id: string | null;
             /** Cancellation Revision */
             cancellation_revision: number;
+            /**
+             * Cited Evidence Receipt Ids
+             * @default []
+             */
+            cited_evidence_receipt_ids: string[];
             /** Completed At */
             completed_at: string | null;
             /**
@@ -3564,6 +3569,50 @@ export interface components {
          * @enum {string}
          */
         EventVisibilityModel: "user" | "developer" | "internal";
+        /**
+         * EvidenceRequirementKind
+         * @enum {string}
+         */
+        EvidenceRequirementKind: "workspace_structure" | "workspace_content" | "web_current" | "runtime_current" | "private_current";
+        /**
+         * EvidenceSourceKind
+         * @enum {string}
+         */
+        EvidenceSourceKind: "project_index" | "project_file" | "terminal_inspection" | "web_document" | "structured_information" | "runtime_snapshot" | "private_snapshot";
+        /** EvidenceSourceModel */
+        EvidenceSourceModel: {
+            /** Expires At */
+            expires_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Line End */
+            line_end?: number | null;
+            /** Line Start */
+            line_start?: number | null;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Public Label */
+            public_label: string;
+            /** Relative Path */
+            relative_path?: string | null;
+            /** Safe Url */
+            safe_url?: string | null;
+            source_kind: components["schemas"]["EvidenceSourceKind"];
+            /** Tool Name */
+            tool_name: string;
+            /** Truncated */
+            truncated: boolean;
+            /** Version Id */
+            version_id?: string | null;
+            /** Workspace Id */
+            workspace_id?: string | null;
+        };
         /** ExecutionPlanContextModel */
         ExecutionPlanContextModel: {
             plan: components["schemas"]["ExecutionPlanModel"];
@@ -6610,6 +6659,16 @@ export interface components {
             estimated_cost_usd?: string | null;
             /** Estimated Output Tokens */
             estimated_output_tokens: number;
+            /**
+             * Evidence Classified
+             * @default true
+             */
+            evidence_classified: boolean;
+            /**
+             * Evidence Requirements
+             * @default []
+             */
+            evidence_requirements: components["schemas"]["EvidenceRequirementKind"][];
             /** Media Model Id */
             media_model_id?: string | null;
             /** Primary Model Id */
@@ -7515,6 +7574,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Evidence Sources */
+            evidence_sources: components["schemas"]["EvidenceSourceModel"][];
             /**
              * Id
              * Format: uuid

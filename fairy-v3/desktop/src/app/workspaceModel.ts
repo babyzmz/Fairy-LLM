@@ -1130,6 +1130,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     copyMessage: actions.copyMessage,
     openMessageLink: actions.openMessageLink,
     readWorkspaceFile: actions.readWorkspaceFile,
+    readWorkspaceSource: actions.readWorkspaceSource,
     openWorkspaceFileStream: actions.openWorkspaceFileStream,
     presentWorkspaceFile: actions.presentWorkspaceFile,
     compareWorkspaceFile: actions.compareWorkspaceFile,

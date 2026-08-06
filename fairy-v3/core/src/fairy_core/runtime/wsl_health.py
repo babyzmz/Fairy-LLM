@@ -77,7 +77,7 @@ class WslSandboxHealthProbe:
         *,
         runner: ProcessRunner | None = None,
         wsl_executable: Path | None = None,
-        expected_runner_version: str = "1.0.0",
+        expected_runner_version: str = "1.1.0",
         host_environment: Mapping[str, str] | None = None,
         timeout_seconds: float = 5.0,
     ) -> None:

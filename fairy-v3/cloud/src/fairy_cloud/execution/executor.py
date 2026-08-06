@@ -89,7 +89,7 @@ class CloudSandboxExecutor:
         if (
             not health.available
             or health.executor != "cloud_oci_worker"
-            or health.version != "1.0.0"
+            or health.version != "1.1.0"
         ):
             raise WorkerInterruptedError(
                 "WORKER_INTERRUPTED: no attested Cloud OCI execution worker is ready"

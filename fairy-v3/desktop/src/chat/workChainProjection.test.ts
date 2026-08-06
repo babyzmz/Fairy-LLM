@@ -262,6 +262,7 @@ function turnTrace(steps: TraceStep[]): TurnTrace {
     updated_at: "2026-07-15T00:00:05Z",
     started_at: "2026-07-15T00:00:00Z",
     completed_at: "2026-07-15T00:00:05Z",
+    evidence_sources: [],
     steps,
   };
 }

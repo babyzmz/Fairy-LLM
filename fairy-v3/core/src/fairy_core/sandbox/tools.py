@@ -3,6 +3,11 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 
+from fairy_core.assistant.evidence import (
+    EvidenceDraft,
+    EvidenceRequirementKind,
+    EvidenceSourceKind,
+)
 from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
 from fairy_core.commanding.models import CommandRun, CommandStatus
 from fairy_core.commanding.registry import ToolDefinition
@@ -12,16 +17,19 @@ from fairy_core.domain.models import ScopeContract
 from fairy_core.sandbox.archive import WorkspaceArchiveBuilder
 from fairy_core.sandbox.models import (
     SandboxNetworkPolicy,
+    SandboxPurpose,
     SandboxRequest,
     SandboxResult,
     SandboxResultStatus,
+    _validate_inspection_argv,
 )
 from fairy_core.sandbox.ports import SandboxExecutor
 from fairy_core.sandbox.wsl import SandboxUnavailableError
 
 _TOOL_NAME = "run.sandboxed"
+_INSPECT_TOOL_NAME = "terminal.inspect"
 _EXECUTOR = "wsl_fairy_sandbox"
-_EXECUTOR_VERSION = "1.0.0"
+_EXECUTOR_VERSION = "1.1.0"
 
 
 class SandboxCommandFailedError(RuntimeError):
@@ -87,7 +95,7 @@ class SandboxToolExecutor:
         scope: ScopeContract,
         arguments: dict[str, object],
     ) -> ToolResult:
-        if definition.name == _TOOL_NAME:
+        if definition.name in {_TOOL_NAME, _INSPECT_TOOL_NAME}:
             raise SandboxUnavailableError(
                 "SANDBOX_UNAVAILABLE: Sandbox execution requires a durable CommandRun"
             )
@@ -101,7 +109,7 @@ class SandboxToolExecutor:
         *,
         command_run: CommandRun,
     ) -> ToolResult:
-        if definition.name != _TOOL_NAME:
+        if definition.name not in {_TOOL_NAME, _INSPECT_TOOL_NAME}:
             delegated = getattr(self._delegate, "execute_command", None)
             if callable(delegated):
                 return delegated(
@@ -117,7 +125,10 @@ class SandboxToolExecutor:
                 "SANDBOX_UNAVAILABLE: Sandbox executor does not match execution target"
             )
         argv = _arguments(arguments)
-        if _starts_runtime_server(argv):
+        is_inspection = definition.name == _INSPECT_TOOL_NAME
+        if is_inspection:
+            argv = _validate_inspection_argv(argv)
+        if not is_inspection and _starts_runtime_server(argv):
             raise SandboxCommandFailedError(
                 "Long-running servers must be started by the Core Preview runtime",
                 error_code="CAPABILITY_NOT_AVAILABLE",
@@ -140,18 +151,21 @@ class SandboxToolExecutor:
             lease_fence=command_run.lease_fence,
             argv=argv,
             cwd=_optional_string(arguments, "cwd", default="."),
-            environment=_environment(arguments),
+            environment={} if is_inspection else _environment(arguments),
             timeout_seconds=_optional_integer(
                 arguments,
                 "timeout_seconds",
-                default=120,
+                default=10 if is_inspection else 120,
             ),
             output_limit_bytes=_optional_integer(
                 arguments,
                 "output_limit_bytes",
-                default=262_144,
+                default=65_536 if is_inspection else 262_144,
             ),
-            network_policy=_network_policy(scope),
+            network_policy=(
+                SandboxNetworkPolicy.NONE if is_inspection else _network_policy(scope)
+            ),
+            purpose=SandboxPurpose.INSPECT if is_inspection else SandboxPurpose.RAW,
             workspace_archive=archive.content,
         )
         result = self._executor.execute(request)
@@ -169,10 +183,10 @@ class SandboxToolExecutor:
                 ),
                 model_detail=_failure_model_detail(result),
             )
-        return _tool_result(result)
+        return _tool_result(result, request=request, argv=argv)
 
     def cancel_command(self, command_run: CommandRun) -> None:
-        if command_run.command_name == _TOOL_NAME:
+        if command_run.command_name in {_TOOL_NAME, _INSPECT_TOOL_NAME}:
             if command_run.status is CommandStatus.RUNNING:
                 self._executor.cancel(command_run.id)
             return
@@ -314,7 +328,12 @@ def _network_policy(scope: ScopeContract) -> SandboxNetworkPolicy:
     return SandboxNetworkPolicy.NONE
 
 
-def _tool_result(result: SandboxResult) -> ToolResult:
+def _tool_result(
+    result: SandboxResult,
+    *,
+    request: SandboxRequest,
+    argv: tuple[str, ...],
+) -> ToolResult:
     payload = {
         "job_id": str(result.job_id),
         "status": result.status.value,
@@ -327,6 +346,25 @@ def _tool_result(result: SandboxResult) -> ToolResult:
         "started_at": result.started_at.isoformat(),
         "finished_at": result.finished_at.isoformat(),
     }
+    evidence: tuple[EvidenceDraft, ...] = ()
+    if request.purpose is SandboxPurpose.INSPECT:
+        requirement = (
+            EvidenceRequirementKind.WORKSPACE_STRUCTURE
+            if argv[0] in {"ls", "stat"} or (argv[0] == "rg" and "--files" in argv)
+            else EvidenceRequirementKind.WORKSPACE_CONTENT
+        )
+        evidence = (
+            EvidenceDraft(
+                requirement_kind=requirement,
+                source_kind=EvidenceSourceKind.TERMINAL_INSPECTION,
+                public_label=f"Workspace inspection ({argv[0]})",
+                content_hash=result.stdout_sha256,
+                source_revision=request.archive_sha256,
+                workspace_generation=result.workspace_generation,
+                observed_at=result.finished_at,
+                truncated=result.output_truncated,
+            ),
+        )
     return ToolResult.create(
         public_summary=f"Sandbox command {result.status.value}",
         model_content=json.dumps(
@@ -337,6 +375,7 @@ def _tool_result(result: SandboxResult) -> ToolResult:
             sort_keys=True,
         ),
         artifact_ids=(),
+        evidence_drafts=evidence,
     )
 
 

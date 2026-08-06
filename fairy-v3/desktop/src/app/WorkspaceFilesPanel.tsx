@@ -29,6 +29,10 @@ import type {
   FileCompareResult,
 } from "../core/client";
 import { ActionDialog } from "../ui/ActionDialog";
+import {
+  OPEN_WORKSPACE_SOURCE_EVENT,
+  type OpenWorkspaceSourceDetail,
+} from "./workspaceNavigation";
 import { assertModelFileSetBudget } from "./viewers/previewLimits";
 
 const PdfViewer = lazy(() => import("./viewers/PdfViewer"));
@@ -61,6 +65,7 @@ interface WorkspaceFilesPanelProps {
   currentVersionId: string | null;
   loading: boolean;
   onRead(path: string): Promise<WorkspaceFileContent>;
+  onReadSource(workspaceId: string, versionId: string, path: string): Promise<WorkspaceFileContent>;
   onOpenStream(path: string): Promise<FileReadSession>;
   onPresent(path: string): Promise<FilePresentationResult>;
   onCompare(leftVersionId: string, rightVersionId: string, path: string): Promise<FileCompareResult>;
@@ -89,6 +94,7 @@ export function WorkspaceFilesPanel({
   currentVersionId,
   loading,
   onRead,
+  onReadSource,
   onOpenStream,
   onPresent,
   onCompare,
@@ -108,6 +114,8 @@ export function WorkspaceFilesPanel({
   const selectionRequestRef = useRef(0);
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [sourceVersionId, setSourceVersionId] = useState<string | null>(currentVersionId);
+  const [sourceLine, setSourceLine] = useState<{ start: number; end: number } | null>(null);
   const [content, setContent] = useState<WorkspaceFileContent | null>(null);
   const [readSession, setReadSession] = useState<FileReadSession | null>(null);
   const [modelSource, setModelSource] = useState<ModelSource | null>(null);
@@ -134,6 +142,8 @@ export function WorkspaceFilesPanel({
     selectionRequestRef.current += 1;
     setQuery("");
     setSelectedPath(null);
+    setSourceVersionId(currentVersionId);
+    setSourceLine(null);
     setContent(null);
     setReadSession(null);
     setModelSource(null);
@@ -156,7 +166,11 @@ export function WorkspaceFilesPanel({
   }, [compareVersionId, comparisonVersions]);
 
   useEffect(() => {
-    if (selectedPath !== null && !files.some((file) => file.path === selectedPath)) {
+    if (
+      selectedPath !== null
+      && sourceVersionId === currentVersionId
+      && !files.some((file) => file.path === selectedPath)
+    ) {
       setSelectedPath(null);
       setContent(null);
       setReadSession(null);
@@ -166,11 +180,16 @@ export function WorkspaceFilesPanel({
       setAnnotations(null);
       setSelection(null);
     }
-  }, [files, selectedPath]);
+  }, [currentVersionId, files, selectedPath, sourceVersionId]);
 
-  const selectFile = async (path: string) => {
+  const selectFile = async (
+    path: string,
+    line: { start: number; end: number } | null = null,
+  ) => {
     const request = ++selectionRequestRef.current;
     setSelectedPath(path);
+    setSourceVersionId(currentVersionId);
+    setSourceLine(line);
     setContent(null);
     setReadSession(null);
     setModelSource(null);
@@ -244,6 +263,46 @@ export function WorkspaceFilesPanel({
       setError(readError instanceof Error ? readError.message : "File could not be read");
     }
   };
+
+  useEffect(() => {
+    const openSource = (event: Event) => {
+      const detail = (event as CustomEvent<OpenWorkspaceSourceDetail>).detail;
+      if (detail?.path == null || detail.workspaceId == null || detail.versionId == null) return;
+      const line = detail.lineStart === null
+        ? null
+        : { start: detail.lineStart, end: detail.lineEnd ?? detail.lineStart };
+      if (detail.versionId === currentVersionId && files.some((file) => file.path === detail.path)) {
+        void selectFile(detail.path, line);
+        return;
+      }
+      const request = ++selectionRequestRef.current;
+      setSelectedPath(detail.path);
+      setSourceVersionId(detail.versionId);
+      setSourceLine(line);
+      setContent(null);
+      setReadSession(null);
+      setModelSource(null);
+      setCaptionSessions([]);
+      setPresentation(null);
+      setAnnotations(null);
+      setSelection(null);
+      setSelectionSaved(false);
+      setComparison(null);
+      setError(null);
+      void onReadSource(detail.workspaceId, detail.versionId, detail.path)
+        .then((nextContent) => {
+          if (request === selectionRequestRef.current) setContent(nextContent);
+        })
+        .catch((readError) => {
+          if (request !== selectionRequestRef.current) return;
+          setError(readError instanceof Error ? readError.message : "Cited source could not be read");
+        });
+    };
+    window.addEventListener(OPEN_WORKSPACE_SOURCE_EVENT, openSource);
+    return () => window.removeEventListener(OPEN_WORKSPACE_SOURCE_EVENT, openSource);
+  }, [currentVersionId, files, onReadSource, scopeKey]);
+
+  const historicalSource = sourceVersionId !== null && sourceVersionId !== currentVersionId;
 
   return (
     <div className="workspace-files">
@@ -373,9 +432,10 @@ export function WorkspaceFilesPanel({
                 <div>
                   <strong>{content.file.path}</strong>
                   <span>{formatBytes(content.file.byte_length)}</span>
+                  {historicalSource ? <span>cited Version {sourceVersionId.slice(0, 8)}</span> : null}
                 </div>
                 <div>
-                  <button
+                  {historicalSource ? null : <button
                     className="icon-button"
                     type="button"
                     aria-label="Show in File Explorer"
@@ -383,8 +443,8 @@ export function WorkspaceFilesPanel({
                     onClick={() => void onReveal(content.file.path)}
                   >
                     <FolderOpen size={15} />
-                  </button>
-                  <button
+                  </button>}
+                  {historicalSource ? null : <button
                     className="icon-button"
                     type="button"
                     aria-label="Rename file"
@@ -392,8 +452,8 @@ export function WorkspaceFilesPanel({
                     onClick={() => setFileAction({ kind: "rename", file: content.file })}
                   >
                     <Pencil size={15} />
-                  </button>
-                  <button
+                  </button>}
+                  {historicalSource ? null : <button
                     className="icon-button danger"
                     type="button"
                     aria-label="Delete file"
@@ -401,7 +461,7 @@ export function WorkspaceFilesPanel({
                     onClick={() => setFileAction({ kind: "delete", file: content.file })}
                   >
                     <Trash2 size={15} />
-                  </button>
+                  </button>}
                   <button
                     className="icon-button"
                     type="button"
@@ -420,6 +480,7 @@ export function WorkspaceFilesPanel({
                 captionSessions={captionSessions}
                 presentation={presentation}
                 modelSource={modelSource}
+                focusLine={sourceLine}
                 onTextSelection={(value) => {
                   setSelection(value === null ? null : { kind: "text_range", ...value });
                   setSelectionSaved(false);
@@ -558,6 +619,7 @@ function FileContent({
   captionSessions,
   presentation,
   modelSource,
+  focusLine,
   onTextSelection,
   onSceneSelection,
 }: {
@@ -566,6 +628,7 @@ function FileContent({
   captionSessions: Array<{ label: string; language: string; src: string }>;
   presentation: FilePresentationResult | null;
   modelSource: ModelSource | null;
+  focusLine: { start: number; end: number } | null;
   onTextSelection(value: { start: number; end: number } | null): void;
   onSceneSelection(nodePath: string, label: string): void;
 }) {
@@ -613,7 +676,7 @@ function FileContent({
         </Suspense>
       );
     }
-    return <TextViewer text={content.text} onSelection={onTextSelection} />;
+    return <TextViewer text={content.text} focusLine={focusLine} onSelection={onTextSelection} />;
   }
   if (readSession !== null && /^image\/(png|jpeg|gif|webp|avif)$/.test(content.media_type)) {
     return (
@@ -651,14 +714,37 @@ function FileContent({
 
 function TextViewer({
   text,
+  focusLine,
   onSelection,
 }: {
   text: string;
+  focusLine: { start: number; end: number } | null;
   onSelection(value: { start: number; end: number } | null): void;
 }) {
+  const preRef = useRef<HTMLPreElement>(null);
   const codeRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const root = codeRef.current;
+    const container = preRef.current;
+    const textNode = root?.firstChild;
+    if (focusLine === null || root === null || container === null || textNode == null) return;
+    const lines = text.split("\n");
+    const startLine = Math.min(Math.max(focusLine.start, 1), lines.length);
+    const endLine = Math.min(Math.max(focusLine.end, startLine), lines.length);
+    const start = lines.slice(0, startLine - 1).reduce((total, line) => total + line.length + 1, 0);
+    const end = lines.slice(0, endLine).reduce((total, line) => total + line.length + 1, 0) - 1;
+    const range = document.createRange();
+    range.setStart(textNode, Math.min(start, text.length));
+    range.setEnd(textNode, Math.min(Math.max(start, end), text.length));
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const progress = lines.length <= 1 ? 0 : (startLine - 1) / (lines.length - 1);
+    container.scrollTop = progress * Math.max(0, container.scrollHeight - container.clientHeight);
+  }, [focusLine, text]);
   return (
     <pre
+      ref={preRef}
       className="workspace-file-text"
       onMouseUp={() => {
         const root = codeRef.current;

@@ -3,13 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
+from fairy_core.assistant.evidence import EvidenceReceipt
 from fairy_core.assistant.routing import RoutingDecision
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.ids import new_id
@@ -319,6 +320,7 @@ class AssistantTurn:
     model_selection: ModelSelectionSnapshot | None = None
     routing_decision: RoutingDecision | None = None
     budget_approval_run_id: UUID | None = None
+    cited_evidence_receipt_ids: tuple[UUID, ...] = ()
     status: AssistantTurnStatus = AssistantTurnStatus.CREATED
     cancellation_revision: int = 0
     usage: dict[str, int] = field(default_factory=dict)
@@ -387,6 +389,24 @@ class AssistantTurn:
         self.routing_decision = decision
         self.updated_at = _now()
 
+    def bind_routing_evidence(self, decision: RoutingDecision) -> None:
+        current = self.routing_decision
+        if current is None or current.evidence_classified or not decision.evidence_classified:
+            raise InvalidTransitionError("Assistant Turn is not waiting for evidence routing")
+        expected = replace(
+            current,
+            requires_workspace_changes=decision.requires_workspace_changes,
+            public_summary=decision.public_summary,
+            evidence_requirements=decision.evidence_requirements,
+            evidence_classified=True,
+        )
+        if expected != decision:
+            raise InvalidTransitionError("evidence classification changed the selected route")
+        if self.is_terminal:
+            raise InvalidTransitionError("terminal Assistant Turn cannot bind routing evidence")
+        self.routing_decision = decision
+        self.updated_at = _now()
+
     def wait_for_budget_approval(self, *, command_run_id: UUID) -> None:
         if self.routing_decision is None or not self.routing_decision.approval_required:
             raise InvalidTransitionError("Assistant Turn does not require budget approval")
@@ -420,6 +440,15 @@ class AssistantTurn:
         self._transition_to(AssistantTurnStatus.COMPLETED)
         self.usage = normalized_usage
         self.completed_at = self.updated_at
+
+    def cite_evidence(self, receipt_ids: tuple[UUID, ...]) -> None:
+        if self.is_terminal:
+            raise InvalidTransitionError("terminal Assistant Turn cannot cite evidence")
+        normalized = tuple(receipt_ids)
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("cited evidence receipt ids must be unique")
+        self.cited_evidence_receipt_ids = normalized
+        self.updated_at = _now()
 
     def cancel(self) -> None:
         self._transition_to(AssistantTurnStatus.CANCELLED)
@@ -465,6 +494,7 @@ class ToolInvocation:
     public_summary: str | None = None
     model_content: str | None = None
     artifact_ids: tuple[UUID, ...] = ()
+    evidence_receipts: tuple[EvidenceReceipt, ...] = ()
     error_code: str | None = None
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
@@ -541,6 +571,7 @@ class ToolInvocation:
         public_summary: str,
         model_content: str,
         artifact_ids: tuple[UUID, ...] = (),
+        evidence_receipts: tuple[EvidenceReceipt, ...] = (),
     ) -> None:
         summary = _required_text(public_summary, "public_summary", maximum=_MAX_SUMMARY_LENGTH)
         content = _required_text(
@@ -552,6 +583,19 @@ class ToolInvocation:
         self.public_summary = summary
         self.model_content = content
         self.artifact_ids = tuple(artifact_ids)
+        receipts = tuple(evidence_receipts)
+        if len({receipt.id for receipt in receipts}) != len(receipts):
+            raise ValueError("Tool Invocation evidence receipt ids must be unique")
+        if any(
+            receipt.tool_invocation_id != self.id
+            or receipt.turn_id != self.turn_id
+            or receipt.task_id != self.task_id
+            or receipt.scope_digest != self.scope_digest
+            or receipt.tool_name != self.tool_name
+            for receipt in receipts
+        ):
+            raise ValueError("Evidence Receipt does not match its Tool Invocation")
+        self.evidence_receipts = receipts
 
     def revise_completed_result(
         self,

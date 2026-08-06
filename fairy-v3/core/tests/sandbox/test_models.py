@@ -75,6 +75,41 @@ def test_raw_request_cannot_smuggle_a_dependency_layer() -> None:
         _request(dependency_key="b" * 64, dependency_manager="npm")
 
 
+def test_inspection_request_is_read_only_and_strictly_bounded() -> None:
+    request = _request(
+        purpose=SandboxPurpose.INSPECT,
+        argv=("rg", "--line-number", "needle", "src"),
+        environment={},
+        timeout_seconds=30,
+        output_limit_bytes=262_144,
+    )
+
+    assert request.purpose is SandboxPurpose.INSPECT
+    assert request.network_policy is SandboxNetworkPolicy.NONE
+
+    for argv in (
+        ("python", "-V"),
+        ("rg", "needle", "../escape"),
+        ("rg", "needle", "src | wc"),
+        ("rg", "--pre=python", "needle"),
+    ):
+        with pytest.raises(ValueError, match="inspection"):
+            _request(
+                purpose=SandboxPurpose.INSPECT,
+                argv=argv,
+                environment={},
+                timeout_seconds=10,
+            )
+
+    with pytest.raises(ValueError, match="inspection timeout"):
+        _request(
+            purpose=SandboxPurpose.INSPECT,
+            argv=("ls",),
+            environment={},
+            timeout_seconds=31,
+        )
+
+
 @pytest.mark.parametrize(
     ("changes", "message"),
     [

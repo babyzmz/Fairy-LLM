@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -13,6 +14,35 @@ from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.transports.stdio import build_local_service
 from tests.assistant.support import ScriptedProvider, wait_for_turn
 from tests.runtime_support import FakeRuntimeExecutor
+
+
+class EvidenceCitingProvider(ScriptedProvider):
+    def stream(self, request, cancellation):
+        if self.rounds:
+            yield from super().stream(request, cancellation)
+            return
+        self.requests.append(request)
+        receipt_ids = re.findall(
+            r'"receipt_id":"([0-9a-f-]{36})"',
+            "\n".join(message.content for message in request.messages),
+        )
+        yield ModelDelta.tool_call(
+            profile_id="scripted",
+            sequence=1,
+            tool_call_id="call-answer",
+            tool_name="direct_answer",
+            arguments_fragment=json.dumps(
+                {
+                    "answer": "The current Workspace contains the requested symbol.",
+                    "evidence_receipt_ids": receipt_ids,
+                }
+            ),
+        )
+        yield ModelDelta.done(
+            profile_id="scripted",
+            sequence=2,
+            finish_reason="tool_calls",
+        )
 
 
 def _provider(tool_name: str, arguments: str, final_text: str) -> ScriptedProvider:
@@ -210,11 +240,25 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
                 ModelDelta.tool_call(
                     profile_id="scripted",
                     sequence=1,
+                    tool_call_id="call-read",
+                    tool_name="project.read",
+                    arguments_fragment='{"path":"README.md"}',
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
                     tool_call_id="call-plan",
                     tool_name="execution.plan",
                     arguments_fragment=(
                         '{"files":[{"path":"README.md","purpose":"Update copy",'
-                        '"batch":1}],'
+                        f'"batch":1,"expected_hash":"{base_hash}"}}],'
                         '"validation_commands":[]}'
                     ),
                 ),
@@ -321,6 +365,80 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
         )
         assert reviewed_plan["plan"]["status"] == "completed"
         assert all(step["status"] in {"completed", "skipped"} for step in reviewed_plan["steps"])
+    finally:
+        service.close()
+
+
+def test_project_list_and_search_are_task_bound_and_emit_evidence(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    (source / "src").mkdir(parents=True)
+    (source / "README.md").write_text("Project notes\n", encoding="utf-8")
+    (source / "src" / "main.py").write_text(
+        "def fairy_needle():\n    return 'found'\n",
+        encoding="utf-8",
+    )
+    provider = EvidenceCitingProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-list",
+                    tool_name="project.list",
+                    arguments_fragment='{"prefix":"src","limit":10}',
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-search",
+                    tool_name="project.search",
+                    arguments_fragment=(
+                        '{"query":"fairy_needle","glob":"*.py","limit":10}'
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+        ]
+    )
+    service = build_local_service(
+        tmp_path / "data",
+        provider_registry=ProviderRegistry((provider,)),
+    )
+    try:
+        _context, turn = _project_turn(service, source, key="list-search")
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+
+        assert completed["status"] == "completed"
+        assert "src/main.py" in provider.requests[1].messages[-1].content
+        assert "fairy_needle" in provider.requests[2].messages[-1].content
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            invocations = unit_of_work.assistant.list_tool_invocations(turn["id"])
+        assert [item.tool_name for item in invocations] == ["project.list", "project.search"]
+        assert [item.evidence_receipts[0].requirement_kind.value for item in invocations] == [
+            "workspace_structure",
+            "workspace_content",
+        ]
+        assert all(
+            item.evidence_receipts[0].scope_digest == completed["scope_digest"]
+            for item in invocations
+        )
+        trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
+        assert [source["tool_name"] for source in trace["evidence_sources"]] == [
+            "project.list",
+            "project.search",
+        ]
     finally:
         service.close()
 

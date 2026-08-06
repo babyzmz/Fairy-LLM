@@ -5,6 +5,7 @@ import threading
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.runtime.models import RuntimeExecutorHealth
@@ -23,7 +24,7 @@ class RecordingSandboxExecutor:
         return RuntimeExecutorHealth(
             available=self.healthy,
             executor="wsl_fairy_sandbox",
-            version="1.0.0" if self.healthy else None,
+            version="1.1.0" if self.healthy else None,
             error_code=None if self.healthy else "SANDBOX_UNAVAILABLE",
             diagnostics=("test attestation",),
         )
@@ -34,7 +35,7 @@ class RecordingSandboxExecutor:
         return SandboxResult.create(
             request=request,
             executor="wsl_fairy_sandbox",
-            executor_version="1.0.0",
+            executor_version="1.1.0",
             status=SandboxResultStatus.COMPLETED,
             exit_code=0,
             stdout=b"sandbox complete\n",
@@ -67,7 +68,7 @@ class BlockingSandboxExecutor(RecordingSandboxExecutor):
         return SandboxResult.create(
             request=request,
             executor="wsl_fairy_sandbox",
-            executor_version="1.0.0",
+            executor_version="1.1.0",
             status=status,
             exit_code=None,
             stdout=b"",
@@ -89,7 +90,7 @@ class FailedSandboxExecutor(RecordingSandboxExecutor):
         return SandboxResult.create(
             request=request,
             executor="wsl_fairy_sandbox",
-            executor_version="1.0.0",
+            executor_version="1.1.0",
             status=SandboxResultStatus.FAILED,
             exit_code=1,
             stdout=b"",
@@ -229,6 +230,70 @@ def test_sandbox_tool_uses_core_owned_scope_archive_generation_and_fence(
         assert request.scope_digest == command.scope_digest
         assert request.lease_fence == command.lease_fence
         assert "sandbox complete" in provider.requests[1].messages[-1].content
+    finally:
+        service.close()
+
+
+def test_terminal_inspection_uses_read_only_purpose_and_records_evidence(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "README.md").write_text("needle\n", encoding="utf-8")
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-inspect",
+                    tool_name="terminal.inspect",
+                    arguments_fragment=(
+                        '{"argv":["rg","--line-number","needle","README.md"],'
+                        '"timeout_seconds":10,"output_limit_bytes":4096}'
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(profile_id="scripted", sequence=1, text="Inspection complete"),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ]
+    )
+    executor = RecordingSandboxExecutor()
+    service = build_local_service(
+        tmp_path / "data",
+        provider_registry=ProviderRegistry((provider,)),
+        sandbox_executor=executor,
+    )
+    try:
+        context, turn = _project_turn(service, source)
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+
+        assert completed["status"] == "completed"
+        assert len(executor.requests) == 1
+        request = executor.requests[0]
+        assert request.purpose.value == "inspect"
+        assert request.network_policy.value == "none"
+        assert request.environment == {}
+        assert request.timeout_seconds == 10
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            invocations = unit_of_work.assistant.list_tool_invocations(turn["id"])
+        assert len(invocations) == 1
+        receipt = invocations[0].evidence_receipts[0]
+        assert receipt.source_kind.value == "terminal_inspection"
+        assert receipt.requirement_kind.value == "workspace_content"
+        assert receipt.task_id == UUID(str(context["task"]["id"]))
     finally:
         service.close()
 
@@ -450,6 +515,17 @@ def test_sandbox_tool_schema_is_closed_and_has_no_scope_or_network_fields(
             "argv",
             "cwd",
             "environment",
+            "timeout_seconds",
+            "output_limit_bytes",
+        }
+        inspection = service._registry.get("terminal.inspect")  # type: ignore[attr-defined]
+        assert inspection is not None
+        assert inspection.side_effect.value == "read"
+        assert inspection.approval_policy.value == "never"
+        assert inspection.requires_sandbox is True
+        assert set(inspection.input_schema["properties"]) == {
+            "argv",
+            "cwd",
             "timeout_seconds",
             "output_limit_bytes",
         }

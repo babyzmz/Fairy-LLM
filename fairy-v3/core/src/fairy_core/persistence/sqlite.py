@@ -17,6 +17,7 @@ from fairy_core.persistence.sqlite_split_migration import import_split_sqlite_da
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.storage.schema import state_metadata
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
+from fairy_core.storage.sqlite_evidence_migration import migrate_assistant_evidence
 from fairy_core.storage.sqlite_migrations import (
     migrate_assistant_model_routing,
     migrate_checkpoint_evidence,
@@ -51,6 +52,7 @@ def create_sqlite_core_engine(
         prepare_pre_tenant_schema(engine)
         state_metadata.create_all(engine)
         migrate_assistant_model_routing(engine)
+        migrate_assistant_evidence(engine)
         migrate_workspace_identity(engine)
         migrate_runtime_workspace_binding(engine)
         migrate_runtime_graph(engine)

@@ -98,7 +98,11 @@ def purge_conversation_content(
                 assistant_turns.c.tenant_id == tenant_id,
                 assistant_turns.c.conversation_id == conversation_key,
             )
-            .values(model_selection=None, routing_decision=None)
+            .values(
+                model_selection=None,
+                routing_decision=None,
+                cited_evidence_receipt_ids=[],
+            )
         )
         connection.execute(
             update(changesets)
@@ -164,6 +168,7 @@ def purge_conversation_content(
                     public_summary=None,
                     model_content=None,
                     artifact_ids=[],
+                    evidence_receipts=[],
                 )
             )
             connection.execute(
