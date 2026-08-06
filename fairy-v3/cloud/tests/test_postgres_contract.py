@@ -232,6 +232,9 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "fk_core_workflow_nodes_plan",
         "fk_core_workflow_attempts_node",
         "fk_core_workflow_instructions_run",
+        "ck_core_assistant_turns_execution_engine",
+        "uq_core_assistant_turns_workflow_run",
+        "fk_core_assistant_turns_workflow_run",
     } <= constraint_names
     assert "fk_domain_events_run" not in constraint_names
     index_names = {

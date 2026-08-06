@@ -24,6 +24,7 @@ from fairy_core.providers.models import (
     ProviderAttemptStatus,
     ProviderErrorCategory,
 )
+from fairy_core.workflow.models import WorkflowBudgetTier, WorkflowRunStatus
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _MAX_MESSAGE_LENGTH = 1_000_000
@@ -303,6 +304,24 @@ class ConversationMove:
     created_at: datetime = field(default_factory=_now)
 
 
+@dataclass(frozen=True, slots=True)
+class AssistantWorkflowSummary:
+    run_id: UUID
+    status: WorkflowRunStatus
+    budget_tier: WorkflowBudgetTier
+    active_plan_revision: int
+    current_phase: str | None
+    public_summary: str | None
+    completed_nodes: int
+    total_nodes: int
+    model_rounds_used: int
+    max_model_rounds: int
+    tool_invocations_used: int
+    max_tool_invocations: int
+    pause_requested: bool
+    updated_at: datetime
+
+
 @dataclass(slots=True)
 class AssistantTurn:
     id: UUID
@@ -317,6 +336,9 @@ class AssistantTurn:
     harness_manifest_id: UUID | None
     harness_manifest_hash: str | None
     idempotency_key: str
+    workflow_run_id: UUID | None = None
+    execution_engine_version: int = 1
+    workflow_summary: AssistantWorkflowSummary | None = None
     model_selection: ModelSelectionSnapshot | None = None
     routing_decision: RoutingDecision | None = None
     budget_approval_run_id: UUID | None = None
@@ -339,6 +361,7 @@ class AssistantTurn:
         profile_id: str,
         idempotency_key: str,
         model_selection: ModelSelectionSnapshot | None = None,
+        execution_engine_version: int = 1,
     ) -> AssistantTurn:
         if scope.task_id != task.id or scope.conversation_id != task.conversation_id:
             raise ValueError("Scope does not match the Task")
@@ -363,6 +386,8 @@ class AssistantTurn:
         normalized_profile = _required_text(profile_id, "profile_id", maximum=255)
         normalized_key = _required_text(idempotency_key, "idempotency_key", maximum=512)
         _require_digest(scope.scope_digest, "scope_digest")
+        if execution_engine_version < 1:
+            raise ValueError("Assistant execution engine version must be positive")
         return cls(
             id=new_id(),
             conversation_id=task.conversation_id,
@@ -376,8 +401,22 @@ class AssistantTurn:
             harness_manifest_id=task.harness_manifest_id,
             harness_manifest_hash=task.harness_manifest_hash,
             idempotency_key=normalized_key,
+            execution_engine_version=execution_engine_version,
             model_selection=model_selection,
         )
+
+    def bind_workflow(self, run_id: UUID, *, engine_version: int) -> None:
+        if engine_version < 2:
+            raise ValueError("Workflow-backed Assistant engine version must be at least 2")
+        if self.workflow_run_id not in {None, run_id}:
+            raise InvalidTransitionError("Assistant Turn is already bound to another Workflow")
+        if self.execution_engine_version not in {engine_version, 1}:
+            raise InvalidTransitionError("Assistant Turn is already bound to another engine")
+        if self.is_terminal:
+            raise InvalidTransitionError("terminal Assistant Turn cannot bind a Workflow")
+        self.workflow_run_id = run_id
+        self.execution_engine_version = engine_version
+        self.updated_at = _now()
 
     def bind_routing(self, decision: RoutingDecision) -> None:
         if self.routing_decision is not None:
@@ -684,6 +723,7 @@ def _normalized_cost(value: str | None) -> str | None:
 __all__ = [
     "AssistantTurn",
     "AssistantTurnStatus",
+    "AssistantWorkflowSummary",
     "Message",
     "MessageRole",
     "MessageVisibility",

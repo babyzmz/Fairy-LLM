@@ -89,6 +89,13 @@ class WorkflowRepository(Protocol):
         result: Mapping[str, Any],
     ) -> WorkflowSnapshot: ...
 
+    def wait_for_approval(
+        self,
+        claim: WorkflowAttemptClaim,
+        *,
+        result: Mapping[str, Any],
+    ) -> WorkflowSnapshot: ...
+
     def fail(self, claim: WorkflowAttemptClaim, *, error_code: str) -> WorkflowSnapshot: ...
 
     def abandon(self, claim: WorkflowAttemptClaim) -> bool: ...

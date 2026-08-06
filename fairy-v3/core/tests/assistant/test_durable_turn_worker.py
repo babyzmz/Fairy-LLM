@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic, sleep
@@ -9,13 +10,16 @@ import pytest
 from sqlalchemy import update
 
 from fairy_core.assistant.ledger import AssistantLedgerApplication
+from fairy_core.assistant.models import Message, MessageRole, MessageVisibility
 from fairy_core.assistant.trace_models import TraceStepKind
 from fairy_core.commanding.schema import command_runs
+from fairy_core.domain.ids import new_id
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.providers import ModelDelta, ProviderRegistry
-from fairy_core.storage.schema import assistant_turn_work
+from fairy_core.storage.schema import workflow_attempts
 from fairy_core.transports.stdio import build_local_service
+from fairy_core.workflow.repository import SqlAlchemyWorkflowRepository
 from tests.assistant.support import ScriptedProvider, wait_for_turn
 from tests.assistant.test_application import BlockingProvider, _scratch_task, _turn
 
@@ -39,25 +43,26 @@ def test_started_turn_recovers_from_an_expired_durable_work_claim(tmp_path: Path
     )
     task = _scratch_task(first_service, "Complete after a Core restart")
     turn = _turn(first_service, task, "turn:durable-worker:restart")
+    workflow_run_id = UUID(turn["workflow_run_id"])
     first_service.close()
 
     engine = create_sqlite_core_engine(tmp_path / "core.db")
     factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
-    ledger = AssistantLedgerApplication(
-        unit_of_work_factory=factory,
-        scope_resolver=lambda _state, _task: (_ for _ in ()).throw(AssertionError()),
-    )
-    ledger.enqueue_turn_work(UUID(turn["id"]))
-    claim = ledger.claim_turn_work(
-        UUID(turn["id"]),
-        worker_id="crashed-core",
-        lease_until=datetime.now(UTC) + timedelta(seconds=30),
-    )
-    assert claim is not None
+    with factory() as unit_of_work:
+        unit_of_work.workflows.resume(workflow_run_id)
+        (claim,) = unit_of_work.workflows.claim_ready(
+            worker_id="crashed-core",
+            lease_until=datetime.now(UTC) + timedelta(seconds=30),
+            limit=1,
+        )
+        unit_of_work.commit()
     with engine.begin() as connection:
         connection.execute(
-            update(assistant_turn_work)
-            .where(assistant_turn_work.c.turn_id == turn["id"])
+            update(workflow_attempts)
+            .where(
+                workflow_attempts.c.node_id == str(claim.node_id),
+                workflow_attempts.c.attempt_number == claim.attempt_number,
+            )
             .values(lease_until=datetime.now(UTC) - timedelta(seconds=1))
         )
     engine.dispose()
@@ -93,6 +98,8 @@ def test_recovered_model_round_reclaims_command_and_resets_partial_projection(
     task = _scratch_task(first_service, "Replace interrupted model text")
     turn = _turn(first_service, task, "turn:durable-worker:model-reclaim")
     turn_id = UUID(turn["id"])
+    workflow_run_id = UUID(turn["workflow_run_id"])
+    first_service._workflow_scheduler.close()  # type: ignore[attr-defined]
     _persisted, run = first_service._assistant_application._start_model_round(  # type: ignore[attr-defined]
         turn_id,
         1,
@@ -105,20 +112,23 @@ def test_recovered_model_round_reclaims_command_and_resets_partial_projection(
         chunk_index=1,
         text="stale partial",
     )
-    first_service._assistant_scheduler.close()  # type: ignore[attr-defined]
-    first_service._assistant_ledger.enqueue_turn_work(turn_id)  # type: ignore[attr-defined]
-    claim = first_service._assistant_ledger.claim_turn_work(  # type: ignore[attr-defined]
-        turn_id,
-        worker_id="crashed-core",
-        lease_until=datetime.now(UTC) + timedelta(seconds=30),
-    )
-    assert claim is not None
+    with first_service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+        unit_of_work.workflows.resume(workflow_run_id)
+        (claim,) = unit_of_work.workflows.claim_ready(
+            worker_id="crashed-core",
+            lease_until=datetime.now(UTC) + timedelta(seconds=30),
+            limit=1,
+        )
+        unit_of_work.commit()
     engine = first_service._unit_of_work_factory._engine  # type: ignore[attr-defined]
     with engine.begin() as connection:
         expired = datetime.now(UTC) - timedelta(seconds=1)
         connection.execute(
-            update(assistant_turn_work)
-            .where(assistant_turn_work.c.turn_id == turn["id"])
+            update(workflow_attempts)
+            .where(
+                workflow_attempts.c.node_id == str(claim.node_id),
+                workflow_attempts.c.attempt_number == claim.attempt_number,
+            )
             .values(lease_until=expired)
         )
         connection.execute(
@@ -171,7 +181,9 @@ def test_active_turn_survives_graceful_core_close(tmp_path: Path) -> None:
     )
     interrupted = ledger.get_turn(UUID(turn["id"]))
     assert interrupted.status.value == "running"
-    assert ledger.pending_turn_work_ids() == (UUID(turn["id"]),)
+    assert interrupted.workflow_summary is not None
+    assert interrupted.workflow_summary.status.value == "paused"
+    assert ledger.pending_turn_work_ids() == ()
     engine.dispose()
 
     recovered_provider = _completion_provider()
@@ -197,15 +209,23 @@ def test_lost_heartbeat_retries_without_consuming_turn_work(tmp_path: Path) -> N
         task = _scratch_task(service, "Retry after losing the worker lease")
         turn = _turn(service, task, "turn:durable-worker:heartbeat")
         turn_id = UUID(turn["id"])
+        workflow_run_id = UUID(turn["workflow_run_id"])
         service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
         assert provider.started.wait(timeout=2)
 
-        scheduler = service._assistant_scheduler  # type: ignore[attr-defined]
+        scheduler = service._workflow_scheduler  # type: ignore[attr-defined]
         deadline = monotonic() + 2
         active = None
         while monotonic() < deadline:
             with scheduler._lock:  # type: ignore[attr-defined]
-                active = scheduler._active.get(turn_id)  # type: ignore[attr-defined]
+                active = next(  # type: ignore[attr-defined]
+                    (
+                        item
+                        for item in scheduler._active.values()  # type: ignore[attr-defined]
+                        if item.claim.run_id == workflow_run_id
+                    ),
+                    None,
+                )
             if active is not None:
                 break
             sleep(0.01)
@@ -231,7 +251,9 @@ def test_lost_heartbeat_retries_without_consuming_turn_work(tmp_path: Path) -> N
         assert renewed_command.lease_until is not None
         assert renewed_command.lease_until > initial_command.lease_until
 
-        assert service._assistant_ledger.abandon_turn_work(active.claim)  # type: ignore[attr-defined]
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            assert unit_of_work.workflows.abandon(active.claim)
+            unit_of_work.commit()
 
         scheduler._last_heartbeat = 0  # type: ignore[attr-defined]
         scheduler._heartbeat_if_due()  # type: ignore[attr-defined]
@@ -259,26 +281,76 @@ def test_coordinator_retries_after_a_transient_claim_error(
         tmp_path,
         provider_registry=ProviderRegistry((provider,)),
     )
-    ledger = service._assistant_ledger  # type: ignore[attr-defined]
-    original_claim = ledger.claim_next_turn_work
+    original_claim = SqlAlchemyWorkflowRepository.claim_ready
     attempts = 0
 
-    def flaky_claim(*, worker_id: str, lease_until: datetime):
+    def flaky_claim(self, *, worker_id: str, lease_until: datetime, limit: int):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
             raise RuntimeError("transient database failure")
-        return original_claim(worker_id=worker_id, lease_until=lease_until)
+        return original_claim(
+            self,
+            worker_id=worker_id,
+            lease_until=lease_until,
+            limit=limit,
+        )
 
-    monkeypatch.setattr(ledger, "claim_next_turn_work", flaky_claim)
     try:
         task = _scratch_task(service, "Continue after a transient queue error")
         turn = _turn(service, task, "turn:durable-worker:transient-claim")
+        monkeypatch.setattr(SqlAlchemyWorkflowRepository, "claim_ready", flaky_claim)
         service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
 
         completed = wait_for_turn(service, turn["id"])
         assert completed["status"] == "completed"
         assert attempts >= 2
+        assert len(provider.requests) == 1
+    finally:
+        service.close()
+
+
+def test_pre_workflow_turn_drains_only_through_the_legacy_worker(tmp_path: Path) -> None:
+    provider = _completion_provider()
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((provider,)),
+    )
+    try:
+        task = _scratch_task(service, "Finish a legacy Turn without dual execution")
+        template = _turn(service, task, "turn:workflow-template")
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            current = unit_of_work.assistant.get_turn(UUID(template["id"]))
+            assert current is not None
+            legacy = replace(
+                current,
+                id=new_id(),
+                idempotency_key="turn:legacy-drain",
+                workflow_run_id=None,
+                execution_engine_version=1,
+                workflow_summary=None,
+            )
+            unit_of_work.assistant.save_turn(legacy)
+            unit_of_work.assistant.append_message(
+                Message.create(
+                    conversation_id=legacy.conversation_id,
+                    task_id=legacy.task_id,
+                    turn_id=legacy.id,
+                    sequence=unit_of_work.assistant.next_message_sequence(legacy.conversation_id),
+                    role=MessageRole.USER,
+                    visibility=MessageVisibility.INTERNAL,
+                    content="Finish the legacy Turn",
+                )
+            )
+            unit_of_work.commit()
+
+        started = service.invoke("assistant.turns.start", {"turn_id": str(legacy.id)})
+        assert started["workflow_run_id"] is None
+        completed = wait_for_turn(service, str(legacy.id))
+
+        assert completed["status"] == "completed"
+        assert completed["execution_engine_version"] == 1
+        assert completed["workflow_summary"] is None
         assert len(provider.requests) == 1
     finally:
         service.close()

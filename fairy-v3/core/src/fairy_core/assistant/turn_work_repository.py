@@ -230,6 +230,7 @@ class TurnWorkRepositoryMixin:
                     assistant_turn_work.c.request_revision
                     > assistant_turn_work.c.completed_revision,
                     assistant_turns.c.status.not_in(_TERMINAL_STATUSES),
+                    assistant_turns.c.workflow_run_id.is_(None),
                 )
                 .order_by(assistant_turn_work.c.requested_at, assistant_turn_work.c.turn_id)
             ).all()
@@ -262,6 +263,7 @@ class TurnWorkRepositoryMixin:
                     assistant_turn_work.c.request_revision
                     > assistant_turn_work.c.completed_revision,
                     assistant_turns.c.status.not_in(_TERMINAL_STATUSES),
+                    assistant_turns.c.workflow_run_id.is_(None),
                     or_(
                         assistant_turn_work.c.lease_until.is_(None),
                         assistant_turn_work.c.lease_until <= now,

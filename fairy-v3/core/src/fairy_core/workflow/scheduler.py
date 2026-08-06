@@ -47,6 +47,16 @@ class WorkflowRetryableError(RuntimeError):
         self.error_code = error_code
 
 
+class WorkflowWaitingForApproval(RuntimeError):
+    def __init__(self, result: Mapping[str, Any] | None = None) -> None:
+        super().__init__("Workflow is waiting for approval")
+        self.result = dict(result or {})
+
+
+class WorkflowCancelled(RuntimeError):
+    pass
+
+
 class WorkflowAdapterRegistry:
     def __init__(self, adapters: Mapping[str, WorkflowNodeAdapter] | None = None) -> None:
         self._adapters = dict(adapters or {})
@@ -120,6 +130,15 @@ class WorkflowScheduler:
             self._closed = True
             active = tuple(self._active.values())
             for item in active:
+                try:
+                    with self._unit_of_work_factory() as unit_of_work:
+                        unit_of_work.workflows.request_pause(item.claim.run_id)
+                        unit_of_work.commit()
+                except Exception:
+                    logger.exception(
+                        "Workflow Run %s could not be paused during shutdown",
+                        item.claim.run_id,
+                    )
                 item.cancellation.interrupt()
         self._wake.set()
         self._changed.set()
@@ -220,6 +239,14 @@ class WorkflowScheduler:
                     )
                     if renewed:
                         unit_of_work.commit()
+                        snapshot = unit_of_work.workflows.get(item.claim.run_id)
+                    else:
+                        snapshot = None
+                if renewed and snapshot is not None:
+                    node = next(value for value in snapshot.nodes if value.id == item.claim.node_id)
+                    heartbeat = getattr(self._adapters.require(node.kind), "heartbeat", None)
+                    if callable(heartbeat):
+                        renewed = bool(heartbeat(node))
             except Exception:
                 logger.exception("Workflow node %s heartbeat failed", item.claim.node_id)
                 renewed = False
@@ -303,6 +330,22 @@ class WorkflowScheduler:
                     settled = True
                 except Exception:
                     logger.exception("Workflow node %s retry could not settle", claim.node_id)
+        except WorkflowWaitingForApproval as waiting:
+            try:
+                with self._unit_of_work_factory() as unit_of_work:
+                    unit_of_work.workflows.wait_for_approval(claim, result=waiting.result)
+                    unit_of_work.commit()
+                settled = True
+            except Exception:
+                logger.exception("Workflow node %s could not wait for approval", claim.node_id)
+        except WorkflowCancelled:
+            try:
+                with self._unit_of_work_factory() as unit_of_work:
+                    unit_of_work.workflows.cancel(claim.run_id)
+                    unit_of_work.commit()
+                settled = True
+            except Exception:
+                logger.exception("Workflow Run %s could not be cancelled", claim.run_id)
         except ProviderCancelledError:
             if active.cancellation.is_interrupted:
                 self._abandon(claim)
@@ -326,10 +369,16 @@ class WorkflowScheduler:
         finally:
             if not settled:
                 self._abandon(claim)
+            self._finish_active(active)
+
+    def _finish_active(self, active: _ActiveNode) -> None:
+        claim = active.claim
+        try:
             with self._lock:
                 current = self._active.get(claim.node_id)
                 if current is active:
                     self._active.pop(claim.node_id, None)
+        finally:
             self._changed.set()
             self._wake.set()
 
@@ -348,8 +397,10 @@ class WorkflowScheduler:
 __all__ = [
     "WORKFLOW_LEASE_DURATION",
     "WorkflowAdapterRegistry",
+    "WorkflowCancelled",
     "WorkflowNodeAdapter",
     "WorkflowNodeResult",
     "WorkflowRetryableError",
     "WorkflowScheduler",
+    "WorkflowWaitingForApproval",
 ]

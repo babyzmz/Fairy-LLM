@@ -25,6 +25,7 @@ from fairy_core.application.runtime_review import RuntimeReviewApplication
 from fairy_core.application.runtime_service import runtime_service_handlers
 from fairy_core.application.service_endpoints import CoreServiceEndpointsMixin
 from fairy_core.application.workspace_service import WorkspaceService
+from fairy_core.assistant import workflow_adapter as assistant_workflow
 from fairy_core.assistant.application import AssistantApplication
 from fairy_core.assistant.image_inputs import build_image_attachments
 from fairy_core.assistant.ledger import AssistantLedgerApplication
@@ -304,6 +305,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             scope_resolver=application.scope_for_task,
             registry=registry,
             execution_policy=self._execution_policy,
+            execution_target=default_execution_target,
         )
         self._turn_trace_service = TurnTraceService(unit_of_work_factory)
         self._turn_trace_runtime = TurnTraceRuntime(unit_of_work_factory)
@@ -415,9 +417,15 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             execution_policy=self._execution_policy,
             execution_completion_hook=self._finalize_assistant_execution,
         )
+        self._workflow_scheduler = assistant_workflow.build_assistant_workflow_scheduler(
+            unit_of_work_factory=unit_of_work_factory,
+            application=self._assistant_application,
+            ledger=self._assistant_ledger,
+        )
         self._assistant_scheduler = AssistantTurnScheduler(
             application=self._assistant_application,
             ledger=self._assistant_ledger,
+            workflow_scheduler=self._workflow_scheduler,
         )
         self._realtime_service = RealtimeService(
             unit_of_work_factory,
@@ -573,6 +581,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             self._preview_idle_scheduler.close()
         self._knowledge_sync_scheduler.close()
         self._assistant_scheduler.close()
+        self._workflow_scheduler.close()
         if self._media_scheduler is not None:
             self._media_scheduler.close()
         close_resources(
@@ -612,7 +621,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             media=self._media_application,
             verify_running_previews=verify_running_previews,
         )
-        for turn_id in self._assistant_ledger.resumable_waiting_turn_ids():
+        for turn_id in assistant_workflow.resumable_assistant_turn_ids(self._assistant_ledger):
             self._assistant_scheduler.start(turn_id)
         return result
 

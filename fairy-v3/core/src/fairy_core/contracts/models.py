@@ -163,6 +163,7 @@ from fairy_core.domain.models import (
 )
 from fairy_core.perception import ImagePersistence
 from fairy_core.voice import AudioMediaType
+from fairy_core.workflow.models import WorkflowBudgetTier, WorkflowRunStatus
 
 
 class TaskCreate(ContractModel):
@@ -603,6 +604,23 @@ class MessageModel(ContractModel):
     created_at: datetime
 
 
+class AssistantWorkflowSummaryModel(ContractModel):
+    run_id: UUID
+    status: WorkflowRunStatus
+    budget_tier: WorkflowBudgetTier
+    active_plan_revision: int = Field(ge=1)
+    current_phase: str | None = Field(default=None, max_length=128)
+    public_summary: str | None = Field(default=None, max_length=500)
+    completed_nodes: int = Field(ge=0)
+    total_nodes: int = Field(ge=1)
+    model_rounds_used: int = Field(ge=0)
+    max_model_rounds: int = Field(ge=1)
+    tool_invocations_used: int = Field(ge=0)
+    max_tool_invocations: int = Field(ge=1)
+    pause_requested: bool
+    updated_at: datetime
+
+
 class AssistantTurnModel(ContractModel):
     id: UUID
     conversation_id: UUID
@@ -626,6 +644,9 @@ class AssistantTurnModel(ContractModel):
     routing_decision: RoutingDecisionModel | None
     budget_approval_run_id: UUID | None
     cited_evidence_receipt_ids: tuple[UUID, ...] = Field(default=(), max_length=32)
+    workflow_run_id: UUID | None = None
+    execution_engine_version: int = Field(default=1, ge=1)
+    workflow_summary: AssistantWorkflowSummaryModel | None = None
     status: AssistantTurnStatus
     cancellation_revision: int = Field(ge=0)
     usage: dict[str, int]
@@ -647,6 +668,16 @@ class AssistantTurnModel(ContractModel):
             self.harness_manifest_hash,
             "Harness Manifest",
         )
+        if self.workflow_run_id is None:
+            if self.workflow_summary is not None:
+                raise ValueError("Workflow summary requires a Workflow Run binding")
+        elif self.execution_engine_version < 2:
+            raise ValueError("Workflow-backed Assistant Turns require execution engine v2")
+        elif (
+            self.workflow_summary is not None
+            and self.workflow_summary.run_id != self.workflow_run_id
+        ):
+            raise ValueError("Workflow summary does not match the Assistant Turn binding")
         return self
 
     @field_validator("usage")

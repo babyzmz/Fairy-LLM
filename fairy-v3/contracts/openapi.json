@@ -867,6 +867,12 @@
             ],
             "title": "Error Code"
           },
+          "execution_engine_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Execution Engine Version",
+            "type": "integer"
+          },
           "harness_manifest_hash": {
             "anyOf": [
               {
@@ -998,6 +1004,28 @@
             },
             "title": "Usage",
             "type": "object"
+          },
+          "workflow_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Run Id"
+          },
+          "workflow_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssistantWorkflowSummaryModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1087,6 +1115,106 @@
         ],
         "title": "AssistantTurnStatus",
         "type": "string"
+      },
+      "AssistantWorkflowSummaryModel": {
+        "additionalProperties": false,
+        "properties": {
+          "active_plan_revision": {
+            "minimum": 1.0,
+            "title": "Active Plan Revision",
+            "type": "integer"
+          },
+          "budget_tier": {
+            "$ref": "#/components/schemas/WorkflowBudgetTier"
+          },
+          "completed_nodes": {
+            "minimum": 0.0,
+            "title": "Completed Nodes",
+            "type": "integer"
+          },
+          "current_phase": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Phase"
+          },
+          "max_model_rounds": {
+            "minimum": 1.0,
+            "title": "Max Model Rounds",
+            "type": "integer"
+          },
+          "max_tool_invocations": {
+            "minimum": 1.0,
+            "title": "Max Tool Invocations",
+            "type": "integer"
+          },
+          "model_rounds_used": {
+            "minimum": 0.0,
+            "title": "Model Rounds Used",
+            "type": "integer"
+          },
+          "pause_requested": {
+            "title": "Pause Requested",
+            "type": "boolean"
+          },
+          "public_summary": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Summary"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowRunStatus"
+          },
+          "tool_invocations_used": {
+            "minimum": 0.0,
+            "title": "Tool Invocations Used",
+            "type": "integer"
+          },
+          "total_nodes": {
+            "minimum": 1.0,
+            "title": "Total Nodes",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "budget_tier",
+          "active_plan_revision",
+          "completed_nodes",
+          "total_nodes",
+          "model_rounds_used",
+          "max_model_rounds",
+          "tool_invocations_used",
+          "max_tool_invocations",
+          "pause_requested",
+          "updated_at"
+        ],
+        "title": "AssistantWorkflowSummaryModel",
+        "type": "object"
       },
       "AudioMediaType": {
         "enum": [
@@ -14141,6 +14269,27 @@
         ],
         "title": "VoiceTranscriptModel",
         "type": "object"
+      },
+      "WorkflowBudgetTier": {
+        "enum": [
+          "normal",
+          "deep"
+        ],
+        "title": "WorkflowBudgetTier",
+        "type": "string"
+      },
+      "WorkflowRunStatus": {
+        "enum": [
+          "queued",
+          "running",
+          "waiting_for_approval",
+          "paused",
+          "completed",
+          "cancelled",
+          "failed"
+        ],
+        "title": "WorkflowRunStatus",
+        "type": "string"
       },
       "WorkspaceExportInput": {
         "additionalProperties": false,

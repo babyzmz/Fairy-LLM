@@ -182,18 +182,18 @@ def test_approval_queued_before_prior_background_runner_exits_resumes_once(
     first_finish_reached = Event()
     release_first_finish = Event()
     finish_calls = 0
-    scheduler = service._assistant_scheduler  # type: ignore[attr-defined]
-    original_finish = scheduler._finish  # type: ignore[attr-defined]
+    scheduler = service._workflow_scheduler  # type: ignore[attr-defined]
+    original_finish = scheduler._finish_active  # type: ignore[attr-defined]
 
-    def delayed_first_finish(turn_id, cancellation) -> None:
+    def delayed_first_finish(active) -> None:
         nonlocal finish_calls
         finish_calls += 1
         if finish_calls == 1:
             first_finish_reached.set()
             assert release_first_finish.wait(timeout=5)
-        original_finish(turn_id, cancellation)
+        original_finish(active)
 
-    scheduler._finish = delayed_first_finish  # type: ignore[attr-defined,method-assign]
+    scheduler._finish_active = delayed_first_finish  # type: ignore[attr-defined,method-assign]
     try:
         task = _scratch_task(
             service,

@@ -54,6 +54,7 @@ const TURN: AssistantTurn = {
   model_selection: null,
   routing_decision: null,
   budget_approval_run_id: null,
+  execution_engine_version: 2,
   status: "running",
   cancellation_revision: 0,
   cited_evidence_receipt_ids: [],

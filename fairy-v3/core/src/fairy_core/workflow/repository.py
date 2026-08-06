@@ -18,6 +18,7 @@ from fairy_core.storage.schema import (
     workflow_plan_revisions,
     workflow_runs,
 )
+from fairy_core.workflow.approval_repository import WorkflowApprovalRepositoryMixin
 from fairy_core.workflow.errors import (
     WorkflowBudgetExceeded,
     WorkflowFenceError,
@@ -62,7 +63,7 @@ _NODE_TERMINAL = {
 }
 
 
-class SqlAlchemyWorkflowRepository:
+class SqlAlchemyWorkflowRepository(WorkflowApprovalRepositoryMixin):
     def __init__(self, connection: Connection, *, tenant_id: str) -> None:
         self._connection = connection
         self._tenant_id = normalize_tenant_id(tenant_id)
@@ -769,6 +770,17 @@ class SqlAlchemyWorkflowRepository:
         run = run_from_row(self._locked_run(run_id))
         if run.status in _RUN_TERMINAL:
             return load_snapshot(self._connection, self._tenant_id, run)
+        if run.status is WorkflowRunStatus.WAITING_FOR_APPROVAL:
+            self._connection.execute(
+                update(workflow_nodes)
+                .where(
+                    workflow_nodes.c.tenant_id == self._tenant_id,
+                    workflow_nodes.c.run_id == str(run_id),
+                    workflow_nodes.c.plan_revision == run.active_plan_revision,
+                    workflow_nodes.c.status == WorkflowNodeStatus.WAITING_FOR_APPROVAL.value,
+                )
+                .values(status=WorkflowNodeStatus.READY.value, updated_at=now)
+            )
         self._connection.execute(
             update(workflow_runs)
             .where(

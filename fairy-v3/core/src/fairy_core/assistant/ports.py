@@ -26,6 +26,14 @@ class AssistantRepository(Protocol):
 
     def create_turn_if_absent(self, turn: AssistantTurn) -> tuple[AssistantTurn, bool]: ...
 
+    def bind_turn_workflow(
+        self,
+        turn_id: UUID,
+        *,
+        workflow_run_id: UUID,
+        engine_version: int,
+    ) -> None: ...
+
     def update_turn(
         self,
         turn: AssistantTurn,
@@ -131,6 +139,8 @@ class AssistantRepository(Protocol):
     def live_turn_ids(self) -> tuple[UUID, ...]: ...
 
     def resumable_waiting_turn_ids(self) -> tuple[UUID, ...]: ...
+
+    def resumable_workflow_turn_ids(self) -> tuple[UUID, ...]: ...
 
     def enqueue_turn_work(self, turn_id: UUID, *, force: bool) -> int: ...
 

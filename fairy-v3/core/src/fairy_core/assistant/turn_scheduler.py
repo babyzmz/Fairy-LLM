@@ -19,6 +19,8 @@ from fairy_core.assistant.work_queue import (
 )
 from fairy_core.domain.ids import new_id
 from fairy_core.providers import CancellationToken
+from fairy_core.workflow.models import WorkflowRunStatus
+from fairy_core.workflow.scheduler import WorkflowScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ class AssistantTurnScheduler:
         *,
         application: AssistantApplication,
         ledger: AssistantLedgerApplication,
+        workflow_scheduler: WorkflowScheduler,
         max_workers: int = 4,
         lease_duration: timedelta = ASSISTANT_TURN_LEASE_DURATION,
         heartbeat_interval: float = 5.0,
@@ -52,6 +55,7 @@ class AssistantTurnScheduler:
             raise ValueError("heartbeat_interval must be shorter than Command leases")
         self._application = application
         self._ledger = ledger
+        self._workflow_scheduler = workflow_scheduler
         self._max_workers = max_workers
         self._lease_duration = lease_duration
         self._heartbeat_interval = heartbeat_interval
@@ -87,6 +91,16 @@ class AssistantTurnScheduler:
             self._active.clear()
 
     def cancel(self, turn_id: UUID) -> bool:
+        turn = self._ledger.get_turn(turn_id)
+        if turn.workflow_run_id is not None:
+            if turn.workflow_summary is None or turn.workflow_summary.status in {
+                WorkflowRunStatus.COMPLETED,
+                WorkflowRunStatus.CANCELLED,
+                WorkflowRunStatus.FAILED,
+            }:
+                return False
+            self._workflow_scheduler.cancel(turn.workflow_run_id)
+            return True
         with self._lock:
             active = self._active.get(turn_id)
             if active is not None:
@@ -96,6 +110,23 @@ class AssistantTurnScheduler:
         return active is not None or cancelled
 
     def run(self, turn_id: UUID) -> AssistantTurn:
+        turn = self._ledger.get_turn(turn_id)
+        if turn.workflow_run_id is not None:
+            self._start_workflow(turn)
+            deadline = time.monotonic() + 2 * 60 * 60
+            snapshot = self._workflow_scheduler.wait(
+                turn.workflow_run_id,
+                timeout=2 * 60 * 60,
+            )
+            if snapshot.run.status is not WorkflowRunStatus.CANCELLED:
+                return self._ledger.get_turn(turn_id)
+            while True:
+                turn = self._ledger.get_turn(turn_id)
+                if turn.status in _TERMINAL_TURN_STATUSES:
+                    return turn
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Assistant Turn did not settle with its Workflow")
+                time.sleep(self._poll_interval)
         with self._lock:
             if self._closed:
                 raise RuntimeError("Core service is closing")
@@ -125,12 +156,32 @@ class AssistantTurnScheduler:
         turn = self._ledger.get_turn(turn_id)
         if turn.status in _TERMINAL_TURN_STATUSES:
             return turn
+        if turn.workflow_run_id is not None:
+            self._start_workflow(turn)
+            return self._ledger.get_turn(turn_id)
         with self._lock:
             if self._closed:
                 raise RuntimeError("Core service is closing")
         self._ledger.enqueue_turn_work(turn_id, force=restart_if_running)
         self._wake.set()
         return self._ledger.get_turn(turn_id)
+
+    def _start_workflow(self, turn: AssistantTurn) -> None:
+        assert turn.workflow_run_id is not None
+        summary = turn.workflow_summary
+        if summary is None:
+            raise RuntimeError("Assistant Workflow summary is unavailable")
+        if summary.status in {
+            WorkflowRunStatus.WAITING_FOR_APPROVAL,
+            WorkflowRunStatus.PAUSED,
+        }:
+            self._workflow_scheduler.resume(turn.workflow_run_id)
+        elif summary.status not in {
+            WorkflowRunStatus.COMPLETED,
+            WorkflowRunStatus.CANCELLED,
+            WorkflowRunStatus.FAILED,
+        }:
+            self._workflow_scheduler.wake()
 
     def _coordinate(self) -> None:
         while True:

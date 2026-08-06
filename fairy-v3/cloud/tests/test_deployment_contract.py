@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260807_0045"]
+    assert scripts.get_heads() == ["20260807_0046"]
+    assert scripts.get_revision("20260807_0046").down_revision == "20260807_0045"
     assert scripts.get_revision("20260724_0043").down_revision == "20260723_0042"
     assert scripts.get_revision("20260723_0042").down_revision == "20260723_0041"
     assert scripts.get_revision("20260723_0041").down_revision == "20260722_0040"
@@ -125,6 +126,9 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     assert "UQ_CORE_RUNTIME_SESSIONS_TENANT_IDEMPOTENCY" in ddl
     assert "UQ_CORE_PREVIEW_SESSIONS_TENANT_IDEMPOTENCY" in ddl
     assert "UQ_CORE_PREVIEW_SESSIONS_ACTIVE_TASK" in ddl
+    assert "ALTER TABLE CORE_ASSISTANT_TURNS ADD COLUMN WORKFLOW_RUN_ID" in ddl
+    assert "ALTER TABLE CORE_ASSISTANT_TURNS ADD COLUMN EXECUTION_ENGINE_VERSION" in ddl
+    assert "FK_CORE_ASSISTANT_TURNS_WORKFLOW_RUN" in ddl
     assert "CK_CORE_RUNTIME_SESSIONS_HANDLE_PORT" in ddl
     assert "CK_CORE_PREVIEW_SESSIONS_ACTIVE_URL" in ddl
     assert "UQ_CORE_APPROVALS_TENANT_COMMAND_RUN" in ddl

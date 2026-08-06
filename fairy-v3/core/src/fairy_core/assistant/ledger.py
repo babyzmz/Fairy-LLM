@@ -19,6 +19,7 @@ from fairy_core.assistant.work_queue import AssistantTurnWorkClaim
 from fairy_core.commanding.models import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
+from fairy_core.contracts.common import ExecutionTarget
 from fairy_core.domain.errors import (
     IdempotencyConflictError,
     InvalidTransitionError,
@@ -30,6 +31,14 @@ from fairy_core.model_catalog.models import ModelSelectionSnapshot
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.storage.pagination import StatePage
 from fairy_core.storage.ports import StateStore
+from fairy_core.workflow.models import (
+    WorkflowNode,
+    WorkflowRun,
+    WorkflowTriggerKind,
+)
+
+ASSISTANT_WORKFLOW_ENGINE_VERSION = 2
+ASSISTANT_WORKFLOW_NODE_KIND = "assistant.turn.execute"
 
 ScopeResolver = Callable[[StateStore, Task], ScopeContract]
 
@@ -42,6 +51,7 @@ class AssistantLedgerApplication:
         scope_resolver: ScopeResolver,
         registry: ToolRegistry | None = None,
         execution_policy: ExecutionPolicyResolver | None = None,
+        execution_target: ExecutionTarget = ExecutionTarget.LOCAL,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._scope_resolver = scope_resolver
@@ -51,6 +61,7 @@ class AssistantLedgerApplication:
             execution_policy,
         )
         self._trace = TurnTraceRuntime(unit_of_work_factory)
+        self._execution_target = ExecutionTarget(execution_target)
 
     def create_turn(
         self,
@@ -99,6 +110,7 @@ class AssistantLedgerApplication:
                 profile_id=profile_id,
                 idempotency_key=idempotency_key,
                 model_selection=model_selection,
+                execution_engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION,
             )
             persisted, inserted = unit_of_work.assistant.create_turn_if_absent(turn)
             if not inserted:
@@ -113,6 +125,7 @@ class AssistantLedgerApplication:
                     unit_of_work.commit()
                 return persisted
             self._ensure_trace(unit_of_work, turn, legacy=False)
+            self._bind_new_workflow(unit_of_work, turn=turn, task=task)
             message = Message.create(
                 conversation_id=task.conversation_id,
                 task_id=task.id,
@@ -124,7 +137,7 @@ class AssistantLedgerApplication:
             )
             unit_of_work.assistant.append_message(message)
             unit_of_work.commit()
-        return turn
+        return self.get_turn(turn.id)
 
     def _bind_harness_context(
         self,
@@ -372,6 +385,7 @@ class AssistantLedgerApplication:
                 profile_id=original.profile_id,
                 idempotency_key=normalized_key,
                 model_selection=original.model_selection,
+                execution_engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION,
             )
             persisted, inserted = unit_of_work.assistant.create_turn_if_absent(retry)
             if not inserted:
@@ -386,6 +400,7 @@ class AssistantLedgerApplication:
                     unit_of_work.commit()
                 return persisted
             self._ensure_trace(unit_of_work, retry, legacy=False)
+            self._bind_new_workflow(unit_of_work, turn=retry, task=task)
             retry_message = Message.create(
                 conversation_id=task.conversation_id,
                 task_id=task.id,
@@ -401,7 +416,38 @@ class AssistantLedgerApplication:
             )
             unit_of_work.assistant.append_message(retry_message)
             unit_of_work.commit()
-        return retry
+        return self.get_turn(retry.id)
+
+    def _bind_new_workflow(self, unit_of_work, *, turn: AssistantTurn, task: Task) -> None:
+        run = WorkflowRun.create(
+            owner_kind="assistant_turn",
+            owner_id=str(turn.id),
+            execution_target=self._execution_target,
+            trigger_kind=WorkflowTriggerKind.USER_TURN,
+            idempotency_key=f"assistant-turn:{turn.id}",
+            conversation_id=turn.conversation_id,
+            task_id=turn.task_id,
+            project_id=task.project_id,
+            engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION,
+        )
+        node = WorkflowNode.create(
+            run_id=run.id,
+            plan_revision=1,
+            node_key="execute",
+            kind=ASSISTANT_WORKFLOW_NODE_KIND,
+            payload={"turn_id": str(turn.id)},
+            public_summary="Preparing Fairy's response",
+            resource_keys=(f"assistant-turn:{turn.id}",),
+            max_attempts=128,
+        )
+        unit_of_work.workflows.create(run, nodes=(node,), edges=())
+        unit_of_work.workflows.request_pause(run.id)
+        turn.bind_workflow(run.id, engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION)
+        unit_of_work.assistant.bind_turn_workflow(
+            turn.id,
+            workflow_run_id=run.id,
+            engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION,
+        )
 
     @staticmethod
     def _ensure_trace(unit_of_work, turn: AssistantTurn, *, legacy: bool) -> bool:
@@ -521,6 +567,10 @@ class AssistantLedgerApplication:
     def resumable_waiting_turn_ids(self) -> tuple[UUID, ...]:
         with self._unit_of_work_factory() as unit_of_work:
             return unit_of_work.assistant.resumable_waiting_turn_ids()
+
+    def resumable_workflow_turn_ids(self) -> tuple[UUID, ...]:
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.assistant.resumable_workflow_turn_ids()
 
     def _interrupt_command(self, unit_of_work, turn_id: UUID, run: CommandRun) -> None:
         if run.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}:

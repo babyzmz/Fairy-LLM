@@ -86,6 +86,10 @@ def test_core_service_creates_idempotent_task_bound_turn_and_user_message(
         assert created["memory_snapshot_id"] == task["memory_snapshot_id"]
         assert created["memory_snapshot_hash"] == task["memory_snapshot_hash"]
         assert created["status"] == "created"
+        assert created["execution_engine_version"] == 2
+        assert created["workflow_run_id"] is not None
+        assert created["workflow_summary"]["status"] == "paused"
+        assert created["workflow_summary"]["current_phase"] == "assistant.turn.execute"
         assert [(message["role"], message["content"]) for message in messages["items"]] == [
             ("user", "Explain Fairy")
         ]
@@ -173,10 +177,12 @@ def test_active_turn_cancel_tolerates_concurrent_terminal_write(
                 "idempotency_key": "turn:cancel-race",
             },
         )
-        turn_id = UUID(str(created["id"]))
+        workflow_run_id = UUID(str(created["workflow_run_id"]))
         cancellation = CancellationToken()
-        scheduler = service._assistant_scheduler  # type: ignore[attr-defined]
-        scheduler._active[turn_id] = SimpleNamespace(  # type: ignore[attr-defined]
+        scheduler = service._workflow_scheduler  # type: ignore[attr-defined]
+        active_key = UUID(int=0)
+        scheduler._active[active_key] = SimpleNamespace(  # type: ignore[attr-defined]
+            claim=SimpleNamespace(run_id=workflow_run_id),
             cancellation=cancellation,
         )
         original_cancel = service._assistant_ledger.cancel_turn  # type: ignore[attr-defined]
@@ -195,6 +201,7 @@ def test_active_turn_cancel_tolerates_concurrent_terminal_write(
             "assistant.turns.cancel",
             {"turn_id": created["id"], "expected_cancellation_revision": 0},
         )
+        scheduler._active.pop(active_key)  # type: ignore[attr-defined]
 
         assert cancellation.is_cancelled is True
         assert cancelled["status"] == "cancelled"

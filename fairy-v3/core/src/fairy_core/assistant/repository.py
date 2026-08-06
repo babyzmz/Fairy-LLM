@@ -36,12 +36,14 @@ from fairy_core.assistant.models import (
     ToolInvocation,
     ToolInvocationStatus,
 )
+from fairy_core.assistant.repository_records import provider_attempt_values
 from fairy_core.assistant.routing import (
     routing_decision_from_record,
     routing_decision_record,
 )
 from fairy_core.assistant.trace_repository import TurnTraceRepositoryMixin
 from fairy_core.assistant.turn_work_repository import TurnWorkRepositoryMixin
+from fairy_core.assistant.workflow_projection import attach_workflow_summary
 from fairy_core.commanding.models import CommandStatus
 from fairy_core.commanding.schema import command_runs
 from fairy_core.domain.errors import InvalidTransitionError
@@ -66,7 +68,9 @@ from fairy_core.storage.schema import (
     assistant_tool_invocations,
     assistant_turns,
     conversation_moves,
+    workflow_runs,
 )
+from fairy_core.workflow.models import WorkflowRunStatus
 
 _ACTIVE_TURN_STATUSES = (
     AssistantTurnStatus.RUNNING.value,
@@ -106,7 +110,32 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                 .mappings()
                 .one()
             )
-        return self._turn_from_row(row), inserted_id is not None
+        return self._with_workflow_summary(self._turn_from_row(row)), inserted_id is not None
+
+    def bind_turn_workflow(
+        self,
+        turn_id: UUID,
+        *,
+        workflow_run_id: UUID,
+        engine_version: int,
+    ) -> None:
+        if engine_version < 2:
+            raise ValueError("Workflow-backed Assistant engine version must be at least 2")
+        with self._session.write() as connection:
+            changed = connection.execute(
+                update(assistant_turns)
+                .where(
+                    assistant_turns.c.tenant_id == self._tenant_id,
+                    assistant_turns.c.id == str(turn_id),
+                    assistant_turns.c.workflow_run_id.is_(None),
+                    assistant_turns.c.execution_engine_version == engine_version,
+                )
+                .values(workflow_run_id=str(workflow_run_id))
+            ).rowcount
+        if changed != 1:
+            current = self.get_turn(turn_id)
+            if current is None or current.workflow_run_id != workflow_run_id:
+                raise InvalidTransitionError("Assistant Turn Workflow binding changed concurrently")
 
     def update_turn(
         self,
@@ -142,6 +171,9 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                     ),
                     assistant_turns.c.harness_manifest_hash == turn.harness_manifest_hash,
                     assistant_turns.c.idempotency_key == turn.idempotency_key,
+                    assistant_turns.c.workflow_run_id
+                    == (str(turn.workflow_run_id) if turn.workflow_run_id else None),
+                    assistant_turns.c.execution_engine_version == turn.execution_engine_version,
                     assistant_turns.c.status == expected_status.value,
                     assistant_turns.c.cancellation_revision == expected_cancellation_revision,
                 )
@@ -157,7 +189,7 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                 assistant_turns.c.id == str(turn_id),
             )
         )
-        return self._turn_from_row(row) if row is not None else None
+        return self._with_workflow_summary(self._turn_from_row(row)) if row is not None else None
 
     def find_turn_by_idempotency_key(self, idempotency_key: str) -> AssistantTurn | None:
         row = self._first(
@@ -166,7 +198,7 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                 assistant_turns.c.idempotency_key == idempotency_key,
             )
         )
-        return self._turn_from_row(row) if row is not None else None
+        return self._with_workflow_summary(self._turn_from_row(row)) if row is not None else None
 
     def nonterminal_turns_for_tasks(
         self,
@@ -194,14 +226,14 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                 .mappings()
                 .all()
             )
-        return tuple(self._turn_from_row(row) for row in rows)
+        return tuple(self._with_workflow_summary(self._turn_from_row(row)) for row in rows)
 
     def save_provider_attempt(self, attempt: ProviderAttempt) -> None:
         with self._session.write() as connection:
             connection.execute(
                 insert(assistant_provider_attempts).values(
                     tenant_id=self._tenant_id,
-                    **self._provider_attempt_values(attempt),
+                    **provider_attempt_values(attempt),
                 )
             )
 
@@ -556,8 +588,7 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                     model_content=invocation.model_content,
                     artifact_ids=[str(value) for value in invocation.artifact_ids],
                     evidence_receipts=[
-                        evidence_receipt_record(value)
-                        for value in invocation.evidence_receipts
+                        evidence_receipt_record(value) for value in invocation.evidence_receipts
                     ],
                     error_code=invocation.error_code,
                     updated_at=invocation.updated_at,
@@ -797,6 +828,27 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
         turn_ids = {UUID(str(row[0])) for row in (*tool_rows, *budget_rows)}
         return tuple(sorted(turn_ids, key=str))
 
+    def resumable_workflow_turn_ids(self) -> tuple[UUID, ...]:
+        with self._session.read() as connection:
+            rows = connection.execute(
+                select(assistant_turns.c.id)
+                .join(
+                    workflow_runs,
+                    and_(
+                        workflow_runs.c.tenant_id == assistant_turns.c.tenant_id,
+                        workflow_runs.c.id == assistant_turns.c.workflow_run_id,
+                    ),
+                )
+                .where(
+                    assistant_turns.c.tenant_id == self._tenant_id,
+                    assistant_turns.c.status == AssistantTurnStatus.RUNNING.value,
+                    assistant_turns.c.workflow_run_id.is_not(None),
+                    workflow_runs.c.status == WorkflowRunStatus.PAUSED.value,
+                )
+                .order_by(assistant_turns.c.created_at, assistant_turns.c.id)
+            ).all()
+        return tuple(UUID(str(row[0])) for row in rows)
+
     def interrupt_orphaned_turns(
         self,
         *,
@@ -805,6 +857,7 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
         statement = select(assistant_turns).where(
             assistant_turns.c.tenant_id == self._tenant_id,
             assistant_turns.c.status.in_(_ACTIVE_TURN_STATUSES),
+            assistant_turns.c.workflow_run_id.is_(None),
         )
         if live_turn_ids:
             statement = statement.where(
@@ -813,7 +866,7 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
         statement = statement.order_by(assistant_turns.c.created_at, assistant_turns.c.id)
         with self._session.read() as connection:
             rows = connection.execute(statement).mappings().all()
-        interrupted = tuple(self._turn_from_row(row) for row in rows)
+        interrupted = tuple(self._with_workflow_summary(self._turn_from_row(row)) for row in rows)
         for turn in interrupted:
             expected_status = turn.status
             expected_revision = turn.cancellation_revision
@@ -864,9 +917,9 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             "budget_approval_run_id": (
                 str(turn.budget_approval_run_id) if turn.budget_approval_run_id else None
             ),
-            "cited_evidence_receipt_ids": [
-                str(value) for value in turn.cited_evidence_receipt_ids
-            ],
+            "cited_evidence_receipt_ids": [str(value) for value in turn.cited_evidence_receipt_ids],
+            "workflow_run_id": str(turn.workflow_run_id) if turn.workflow_run_id else None,
+            "execution_engine_version": turn.execution_engine_version,
             "status": turn.status.value,
             "cancellation_revision": turn.cancellation_revision,
             "usage": dict(turn.usage),
@@ -892,9 +945,7 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             "budget_approval_run_id": (
                 str(turn.budget_approval_run_id) if turn.budget_approval_run_id else None
             ),
-            "cited_evidence_receipt_ids": [
-                str(value) for value in turn.cited_evidence_receipt_ids
-            ],
+            "cited_evidence_receipt_ids": [str(value) for value in turn.cited_evidence_receipt_ids],
             "updated_at": turn.updated_at,
             "started_at": turn.started_at,
             "completed_at": turn.completed_at,
@@ -931,9 +982,12 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                 else None
             ),
             cited_evidence_receipt_ids=tuple(
-                UUID(str(value))
-                for value in row.get("cited_evidence_receipt_ids", ())
+                UUID(str(value)) for value in row.get("cited_evidence_receipt_ids", ())
             ),
+            workflow_run_id=(
+                UUID(row["workflow_run_id"]) if row.get("workflow_run_id") is not None else None
+            ),
+            execution_engine_version=int(row.get("execution_engine_version", 1)),
             status=AssistantTurnStatus(row["status"]),
             cancellation_revision=int(row["cancellation_revision"]),
             usage={name: int(value) for name, value in row["usage"].items()},
@@ -944,27 +998,12 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             completed_at=_optional_datetime(row["completed_at"]),
         )
 
-    @staticmethod
-    def _provider_attempt_values(attempt: ProviderAttempt) -> dict[str, object]:
-        return {
-            "id": str(attempt.id),
-            "turn_id": str(attempt.turn_id),
-            "task_id": str(attempt.task_id),
-            "model_round": attempt.model_round,
-            "attempt_number": attempt.attempt_number,
-            "profile_id": attempt.profile_id,
-            "model_id": attempt.model_id,
-            "endpoint_kind": attempt.endpoint_kind.value,
-            "model_role": attempt.model_role.value,
-            "status": attempt.status.value,
-            "error_category": (
-                attempt.error_category.value if attempt.error_category is not None else None
-            ),
-            "usage": dict(attempt.usage),
-            "usage_cost": attempt.usage_cost,
-            "created_at": attempt.created_at,
-            "completed_at": attempt.completed_at,
-        }
+    def _with_workflow_summary(self, turn: AssistantTurn) -> AssistantTurn:
+        return attach_workflow_summary(
+            self._session,
+            tenant_id=self._tenant_id,
+            turn=turn,
+        )
 
     @staticmethod
     def _provider_attempt_from_row(row: Mapping[str, Any]) -> ProviderAttempt:
@@ -1041,8 +1080,7 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             model_content=row["model_content"],
             artifact_ids=tuple(UUID(value) for value in row["artifact_ids"]),
             evidence_receipts=tuple(
-                evidence_receipt_from_record(value)
-                for value in row.get("evidence_receipts", ())
+                evidence_receipt_from_record(value) for value in row.get("evidence_receipts", ())
             ),
             error_code=row["error_code"],
             created_at=_datetime(row["created_at"]),

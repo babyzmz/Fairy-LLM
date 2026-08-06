@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import inspect, text
 
+from fairy_core.assistant.sqlite_migrations import migrate_assistant_workflow_binding
 from fairy_core.commanding import SqlAlchemyCommandLedger
 from fairy_core.commanding.registry import RiskLevel
 from fairy_core.commanding.schema import command_metadata
@@ -202,6 +203,37 @@ def test_preview_runtime_pool_migrates_existing_access_time(tmp_path: Path) -> N
         )
     indexes = {item["name"] for item in inspect(engine).get_indexes("core_preview_sessions")}
     assert "ix_core_preview_sessions_tenant_active_access" in indexes
+    engine.dispose()
+
+
+def test_assistant_workflow_binding_preserves_legacy_turn_engine(tmp_path: Path) -> None:
+    engine = create_sqlite_engine(tmp_path / "legacy-assistant.db")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE core_assistant_turns ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "status VARCHAR(32) NOT NULL, PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_assistant_turns VALUES ('local', 'turn-1', 'running')"
+        )
+
+    migrate_assistant_workflow_binding(engine)
+    migrate_assistant_workflow_binding(engine)
+
+    columns = {
+        column["name"]: column for column in inspect(engine).get_columns("core_assistant_turns")
+    }
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT workflow_run_id, execution_engine_version "
+                "FROM core_assistant_turns WHERE id = 'turn-1'"
+            )
+        ).one()
+    assert {"workflow_run_id", "execution_engine_version"} <= columns.keys()
+    assert row.workflow_run_id is None
+    assert row.execution_engine_version == 1
     engine.dispose()
 
 

@@ -2871,6 +2871,11 @@ export interface components {
             created_at: string;
             /** Error Code */
             error_code: string | null;
+            /**
+             * Execution Engine Version
+             * @default 1
+             */
+            execution_engine_version: number;
             /** Harness Manifest Hash */
             harness_manifest_hash?: string | null;
             /** Harness Manifest Id */
@@ -2916,6 +2921,9 @@ export interface components {
             usage: {
                 [key: string]: number;
             };
+            /** Workflow Run Id */
+            workflow_run_id?: string | null;
+            workflow_summary?: components["schemas"]["AssistantWorkflowSummaryModel"] | null;
         };
         /** AssistantTurnRetryInput */
         AssistantTurnRetryInput: {
@@ -2948,6 +2956,41 @@ export interface components {
          * @enum {string}
          */
         AssistantTurnStatus: "created" | "running" | "waiting_for_tool" | "completed" | "cancelled" | "failed";
+        /** AssistantWorkflowSummaryModel */
+        AssistantWorkflowSummaryModel: {
+            /** Active Plan Revision */
+            active_plan_revision: number;
+            budget_tier: components["schemas"]["WorkflowBudgetTier"];
+            /** Completed Nodes */
+            completed_nodes: number;
+            /** Current Phase */
+            current_phase?: string | null;
+            /** Max Model Rounds */
+            max_model_rounds: number;
+            /** Max Tool Invocations */
+            max_tool_invocations: number;
+            /** Model Rounds Used */
+            model_rounds_used: number;
+            /** Pause Requested */
+            pause_requested: boolean;
+            /** Public Summary */
+            public_summary?: string | null;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            status: components["schemas"]["WorkflowRunStatus"];
+            /** Tool Invocations Used */
+            tool_invocations_used: number;
+            /** Total Nodes */
+            total_nodes: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /**
          * AudioMediaType
          * @enum {string}
@@ -7873,6 +7916,16 @@ export interface components {
             /** Text */
             text: string;
         };
+        /**
+         * WorkflowBudgetTier
+         * @enum {string}
+         */
+        WorkflowBudgetTier: "normal" | "deep";
+        /**
+         * WorkflowRunStatus
+         * @enum {string}
+         */
+        WorkflowRunStatus: "queued" | "running" | "waiting_for_approval" | "paused" | "completed" | "cancelled" | "failed";
         /** WorkspaceExportInput */
         WorkspaceExportInput: {
             /**

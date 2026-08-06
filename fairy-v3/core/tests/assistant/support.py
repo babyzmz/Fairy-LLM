@@ -29,7 +29,14 @@ def wait_for_turn(
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         turn = service.invoke("assistant.turns.get", {"turn_id": turn_id})
-        if turn["status"] == status:
+        workflow = turn.get("workflow_summary")
+        workflow_status = workflow.get("status") if isinstance(workflow, dict) else None
+        workflow_settled = (
+            status not in {"completed", "cancelled", "failed"}
+            or workflow_status is None
+            or workflow_status == status
+        )
+        if turn["status"] == status and workflow_settled:
             return turn
         time.sleep(0.01)
     current = service.invoke("assistant.turns.get", {"turn_id": turn_id})

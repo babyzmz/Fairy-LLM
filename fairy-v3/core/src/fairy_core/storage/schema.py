@@ -40,6 +40,8 @@ from fairy_core.storage.types import UTCDateTime
 from fairy_core.storage.workflow_schema import build_workflow_schema
 
 ID_LENGTH = 36
+_ASSISTANT_TURN_IDEMPOTENCY_UQ = "uq_core_assistant_turns_tenant_idempotency"
+_ASSISTANT_TURN_ENGINE_CK = "ck_core_assistant_turns_execution_engine"
 
 state_metadata = MetaData()
 
@@ -371,6 +373,8 @@ assistant_turns = Table(
     Column("routing_decision", JSON),
     Column("budget_approval_run_id", String(ID_LENGTH)),
     Column("cited_evidence_receipt_ids", JSON, nullable=False),
+    Column("workflow_run_id", String(ID_LENGTH)),
+    Column("execution_engine_version", Integer, nullable=False),
     Column("status", String(32), nullable=False),
     Column("cancellation_revision", BigInteger, nullable=False),
     Column("usage", JSON, nullable=False),
@@ -380,11 +384,7 @@ assistant_turns = Table(
     Column("started_at", UTCDateTime()),
     Column("completed_at", UTCDateTime()),
     PrimaryKeyConstraint("tenant_id", "id", name="pk_core_assistant_turns"),
-    UniqueConstraint(
-        "tenant_id",
-        "idempotency_key",
-        name="uq_core_assistant_turns_tenant_idempotency",
-    ),
+    UniqueConstraint("tenant_id", "idempotency_key", name=_ASSISTANT_TURN_IDEMPOTENCY_UQ),
     UniqueConstraint(
         "tenant_id",
         "id",
@@ -398,6 +398,7 @@ assistant_turns = Table(
         "task_id",
         name="uq_core_assistant_turns_task_scope",
     ),
+    UniqueConstraint("tenant_id", "workflow_run_id", name="uq_core_assistant_turns_workflow_run"),
     CheckConstraint(
         "status IN ('created', 'running', 'waiting_for_tool', 'completed', 'cancelled', 'failed')",
         name="ck_core_assistant_turns_status",
@@ -406,6 +407,7 @@ assistant_turns = Table(
         "cancellation_revision >= 0",
         name="ck_core_assistant_turns_cancellation_revision",
     ),
+    CheckConstraint("execution_engine_version >= 1", name=_ASSISTANT_TURN_ENGINE_CK),
     CheckConstraint(
         "length(scope_digest) = 64 AND scope_digest = lower(scope_digest)",
         name="ck_core_assistant_turns_scope_digest",
@@ -435,6 +437,11 @@ assistant_turns = Table(
         ["tenant_id", "task_id"],
         [tasks.c.tenant_id, tasks.c.id],
         name="fk_core_assistant_turns_task",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "workflow_run_id"],
+        [workflow_runs.c.tenant_id, workflow_runs.c.id],
+        name="fk_core_assistant_turns_workflow_run",
     ),
 )
 
