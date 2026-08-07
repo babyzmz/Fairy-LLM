@@ -46,3 +46,11 @@
 - SQLite migration and Alembic offline checks do not prove live PostgreSQL locking or RLS.
 - Native Tauri notification/focus and a real local provider remain explicit manual gates.
 - Docker, Tauri release, and production image builds are outside this development change.
+
+## Recovery gate
+
+`uv run --project core fairy-agent-eval` must report every deterministic scenario as passed. Its
+local-automation scenarios cover exactly-once scheduled Turn creation, same-chat serialization,
+snapshot invalidation, restart-style re-sweeps, claim fencing, overlap coalescing, three-failure
+pause, DST gaps/folds, and offline compensation. Store both JSON and Markdown reports with release
+evidence; they are not substitutes for the native and live-service gates above.

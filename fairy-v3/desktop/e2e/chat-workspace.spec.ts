@@ -268,6 +268,81 @@ test("ordinary chat exposes the shared workspace file inspector", async ({ page 
   await expect(page.getByRole("button", { name: "Use this version" })).toHaveCount(0);
 });
 
+test("local schedules stay in the chat timeline and the collapsed-inspector task panel", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await openScratchChat(page);
+
+  const inspector = page.getByRole("complementary", { name: "Workspace inspector" });
+  await inspector.getByRole("button", { name: "Collapse workspace inspector" }).click();
+  await expect(inspector).toBeHidden();
+  await expect(page.getByRole("button", { name: "Restore workspace inspector" })).toBeVisible();
+
+  const composer = page.getByLabel("Message Fairy");
+  await composer.fill("Prepare the later briefing");
+  await page.getByRole("button", { name: "Schedule message" }).click();
+  await page.getByRole("menuitem", { name: /Run later/ }).click();
+  await expect(page.getByLabel("Schedule task")).toBeVisible();
+  await page.getByRole("button", { name: "Create schedule" }).click();
+
+  const cards = page.locator(".schedule-card");
+  await expect(cards).toHaveCount(1);
+  await expect(cards.first()).toContainText("Prepare the later briefing");
+  await expect(cards.first()).toContainText("active");
+  await expect(
+    page.getByRole("navigation", { name: "Conversation outline" }).getByRole("button"),
+  ).toHaveCount(1);
+
+  await cards.first().getByRole("button", { name: "Pause" }).click();
+  await expect(cards.first()).toContainText("paused");
+  await cards.first().getByRole("button", { name: "Resume" }).click();
+  await expect(cards.first()).toContainText("active");
+  await cards.first().getByRole("button", { name: "Run now" }).click();
+
+  await composer.fill("Review the daily briefing");
+  await page.getByRole("button", { name: "Schedule message" }).click();
+  await page.getByRole("menuitem", { name: /Repeat/ }).click();
+  await page.getByLabel("Schedule task").getByLabel("Repeat").selectOption("daily");
+  await page.getByRole("button", { name: "Create schedule" }).click();
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(1)).toContainText("Daily at");
+
+  const backgroundTrigger = page.getByRole("button", { name: "Background tasks" });
+  await expect(backgroundTrigger.locator(".background-tasks-badge")).toHaveText("2");
+  await backgroundTrigger.click();
+  const panel = page.getByRole("dialog", { name: "Background tasks" });
+  await expect(panel).toBeVisible();
+  const currentTasks = panel.getByRole("region", { name: "This chat" });
+  await expect(currentTasks).toContainText("Prepare the later briefing");
+  await expect(currentTasks).toContainText("Review the daily briefing");
+  const panelBounds = await panel.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      width: rect.width,
+      right: rect.right,
+      viewportWidth: innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+    };
+  });
+  expect(panelBounds.width).toBeLessThanOrEqual(400);
+  expect(panelBounds.right).toBeLessThanOrEqual(panelBounds.viewportWidth - 12);
+  expect(panelBounds.documentWidth).toBeLessThanOrEqual(panelBounds.viewportWidth);
+
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await page.getByRole("button", { name: "Restore workspace inspector" }).click();
+  await expect(inspector).toBeVisible();
+  await expect(backgroundTrigger).toBeHidden();
+
+  const calls = await page.evaluate(() => window.__FAIRY_FIXTURE_CALLS__);
+  expect(calls.filter((call) => call.method === "assistant.schedules.create")).toHaveLength(2);
+  expect(calls.filter((call) => call.method === "assistant.schedules.run_now")).toHaveLength(1);
+  expect(calls.filter((call) => call.method === "tasks.create")).toHaveLength(0);
+  expect(calls.filter((call) => call.method === "assistant.turns.start")).toHaveLength(0);
+});
+
 test("completed answers expose safe evidence and open the cited immutable Workspace source", async ({
   page,
 }) => {

@@ -92,6 +92,49 @@ SCENARIOS = (
         ),
         recovery_required=True,
     ),
+    EvalScenario(
+        "scheduled_turn_boundary",
+        "Scheduled instruction creates one governed turn",
+        (
+            "tests/assistant/test_schedule_service.py::"
+            "test_run_now_creates_one_normal_message_turn_and_workflow",
+            "tests/assistant/test_schedule_service.py::"
+            "test_pending_schedule_waits_for_the_active_turn_in_the_same_chat",
+            "tests/assistant/test_schedule_service.py::"
+            "test_changed_permission_snapshot_pauses_before_creating_a_message",
+        ),
+        evidence_required=True,
+        safety_required=True,
+    ),
+    EvalScenario(
+        "schedule_trigger_recovery",
+        "Local schedule trigger recovery and fencing",
+        (
+            "tests/assistant/test_schedule_trigger.py::"
+            "test_one_shot_trigger_is_idempotent_across_restart_style_sweeps",
+            "tests/assistant/test_schedule_trigger.py::"
+            "test_recurring_catch_up_and_overlap_keep_only_latest_pending_occurrence",
+            "tests/assistant/test_schedule_trigger.py::"
+            "test_claim_fence_rejects_a_stale_worker_after_lease_expiry",
+            "tests/assistant/test_schedule_trigger.py::"
+            "test_three_consecutive_occurrence_failures_pause_a_recurring_schedule",
+        ),
+        recovery_required=True,
+        safety_required=True,
+    ),
+    EvalScenario(
+        "schedule_time_semantics",
+        "DST and offline compensation semantics",
+        (
+            "tests/assistant/test_schedule_recurrence.py::"
+            "test_daily_schedule_skips_to_first_valid_time_during_spring_dst",
+            "tests/assistant/test_schedule_recurrence.py::"
+            "test_ambiguous_fall_dst_time_runs_only_the_first_occurrence",
+            "tests/assistant/test_schedule_recurrence.py::"
+            "test_catch_up_keeps_only_the_latest_due_instant_and_missed_count",
+        ),
+        recovery_required=True,
+    ),
 )
 
 
@@ -177,6 +220,8 @@ def build_report(
             "scripted_provider_proves_model_tool_selection": False,
             "sqlite_proves_postgresql_locking_or_rls": False,
             "fixture_browser_proves_native_edge_recovery": False,
+            "scripted_clock_proves_os_clock_service_behavior": False,
+            "renderer_fixture_proves_windows_toast_activation": False,
         },
     }
 
@@ -214,7 +259,8 @@ def write_report(report: Mapping[str, Any], output_dir: Path) -> tuple[Path, Pat
             "",
             "Scripted Provider results validate scheduling and hard gates only. "
             "Real model tool selection, PostgreSQL/S3, WSL Sandbox, and native WebView2 "
-            "remain unverified unless separately recorded.",
+            "remain unverified unless separately recorded. Scripted clocks and renderer fixtures "
+            "do not prove OS clock-service behavior or Windows Toast activation.",
             "",
         ]
     )

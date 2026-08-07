@@ -36,6 +36,16 @@ def test_eval_report_is_machine_readable_and_marks_live_provider_unverified(
     assert persisted["overall_status"] == "passed"
     assert persisted["deterministic"]["metrics"]["success_rate"] == 1.0
     assert persisted["live_provider"]["status"] == "unverified"
+    assert {
+        "scheduled_turn_boundary",
+        "schedule_trigger_recovery",
+        "schedule_time_semantics",
+    }.issubset(
+        {scenario["name"] for scenario in persisted["deterministic"]["scenarios"]}
+    )
+    assert not persisted["verification_boundaries"][
+        "renderer_fixture_proves_windows_toast_activation"
+    ]
     assert "Real model tool selection" in markdown_path.read_text(encoding="utf-8")
 
 

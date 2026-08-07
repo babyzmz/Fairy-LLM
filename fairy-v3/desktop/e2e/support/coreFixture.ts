@@ -200,6 +200,8 @@ async function installCoreFixture(page: Page) {
         pdfFileSet: "0198f4de-0114-7000-8000-000000000027",
         pdfRenderJob: "0198f4de-0114-7000-8000-000000000028",
         pdfPresentation: "0198f4de-0114-7000-8000-000000000029",
+        schedule: "0198f4de-0114-7000-8000-000000000046",
+        occurrence: "0198f4de-0114-7000-8000-000000000099",
       };
       const timestamp = "2026-07-11T00:00:00Z";
       const fixtureParams = new URLSearchParams(window.location.search);
@@ -616,6 +618,60 @@ async function installCoreFixture(page: Page) {
         ? lineSidebarMessages
         : [scratchMessage, toolMessage];
       let latestUserRequest = "";
+      let scheduleSequence = 0;
+      let schedules: Array<Record<string, unknown>> = [];
+      const scheduleId = () =>
+        scheduleSequence === 0
+          ? id.schedule
+          : `0198f4de-0114-7000-8000-${String(46 + scheduleSequence).padStart(12, "0")}`;
+      const findSchedule = (scheduleIdValue: unknown) =>
+        schedules.find((item) => item.id === scheduleIdValue);
+      const projectBackgroundTasks = (currentConversationId: unknown) => {
+        const tasks = schedules
+          .filter((schedule) => schedule.status !== "cancelled")
+          .map((schedule) => {
+            const isCurrent = schedule.conversation_id === currentConversationId;
+            const status = schedule.status === "active" ? "scheduled" : String(schedule.status);
+            return {
+              id: `schedule:${String(schedule.id)}`,
+              kind: "schedule",
+              conversation_id: schedule.conversation_id,
+              conversation_title:
+                schedule.conversation_id === id.scratchConversation
+                  ? scratchConversation.title
+                  : conversation.title,
+              project_id: schedule.project_id,
+              task_id: schedule.task_id,
+              turn_id: null,
+              workflow_run_id: null,
+              schedule_id: schedule.id,
+              occurrence_id: null,
+              title: schedule.instruction,
+              status,
+              public_error: null,
+              attention_code: schedule.attention_code,
+              current_conversation: isCurrent,
+              scheduled_for: null,
+              next_fire_at: schedule.next_fire_at,
+              schedule_revision: schedule.active_revision,
+              turn_status: null,
+              turn_cancellation_revision: null,
+              workflow_budget_tier: null,
+              created_at: schedule.created_at,
+              updated_at: schedule.updated_at,
+              can_pause: schedule.status === "active",
+              can_resume: schedule.status === "paused",
+              can_cancel: schedule.status === "active" || schedule.status === "paused",
+              can_run_now: schedule.status === "active",
+            };
+          });
+        return {
+          current: tasks.filter((task) => task.current_conversation),
+          other: tasks.filter((task) => !task.current_conversation),
+          recent: [],
+          nonterminal_count: tasks.length,
+        };
+      };
       fixtureWindow.__FAIRY_PUSH_EVENT__ = (message) => {
         const startedAt = performance.now();
         const cursor = (events.at(-1)?.cursor ?? 0) + 1;
@@ -2205,6 +2261,142 @@ async function installCoreFixture(page: Page) {
           }
           if (request.method === "tasks.create") {
             await new Promise((resolve) => window.setTimeout(resolve, 180));
+          }
+          if (request.method === "assistant.schedules.create") {
+            const now = new Date().toISOString();
+            const created = {
+              id: scheduleId(),
+              conversation_id: String(request.params.conversation_id),
+              task_id: null,
+              project_id:
+                request.params.conversation_id === id.scratchConversation ? null : id.project,
+              workspace_id:
+                request.params.conversation_id === id.scratchConversation
+                  ? id.scratchConversation
+                  : id.project,
+              version_id:
+                request.params.conversation_id === id.scratchConversation
+                  ? id.scratchVersion
+                  : id.version,
+              instruction: String(request.params.instruction),
+              operation_mode: request.params.operation_mode,
+              trigger_kind: request.params.trigger_kind,
+              trigger_rule: request.params.trigger_rule,
+              timezone: request.params.timezone,
+              next_fire_at: request.params.next_fire_at,
+              execution_target: "local",
+              profile_id: request.params.profile_id ?? null,
+              model_selection: request.params.model_selection ?? null,
+              permission_profile: permissions.profile,
+              timeline_sequence: 10 + scheduleSequence,
+              status: "active",
+              active_revision: 1,
+              consecutive_failures: 0,
+              attention_code: null,
+              created_at: now,
+              updated_at: now,
+              last_fire_at: null,
+              paused_at: null,
+              completed_at: null,
+              cancelled_at: null,
+            };
+            scheduleSequence += 1;
+            schedules = [...schedules, created];
+            return { jsonrpc: "2.0", id: request.id, result: created };
+          }
+          if (request.method === "assistant.schedules.list") {
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                items: schedules.filter(
+                  (schedule) =>
+                    request.params.conversation_id === null ||
+                    request.params.conversation_id === undefined ||
+                    schedule.conversation_id === request.params.conversation_id,
+                ),
+              },
+            };
+          }
+          if (request.method === "assistant.schedules.get") {
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: findSchedule(request.params.schedule_id),
+            };
+          }
+          if (request.method === "assistant.background_tasks.list") {
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: projectBackgroundTasks(request.params.current_conversation_id),
+            };
+          }
+          if (
+            request.method === "assistant.schedules.pause" ||
+            request.method === "assistant.schedules.resume" ||
+            request.method === "assistant.schedules.cancel" ||
+            request.method === "assistant.schedules.update"
+          ) {
+            const index = schedules.findIndex(
+              (schedule) => schedule.id === request.params.schedule_id,
+            );
+            const current = schedules[index];
+            if (current === undefined) throw new Error("Unknown fixture schedule");
+            const now = new Date().toISOString();
+            const status =
+              request.method === "assistant.schedules.pause"
+                ? "paused"
+                : request.method === "assistant.schedules.resume"
+                  ? "active"
+                  : request.method === "assistant.schedules.cancel"
+                    ? "cancelled"
+                    : current.status;
+            const updated = {
+              ...current,
+              ...(request.method === "assistant.schedules.update"
+                ? {
+                    instruction: request.params.instruction,
+                    operation_mode: request.params.operation_mode,
+                    trigger_kind: request.params.trigger_kind,
+                    trigger_rule: request.params.trigger_rule,
+                    timezone: request.params.timezone,
+                    next_fire_at: request.params.next_fire_at,
+                  }
+                : {}),
+              status,
+              active_revision: Number(current.active_revision) + 1,
+              updated_at: now,
+              paused_at: status === "paused" ? now : null,
+              cancelled_at: status === "cancelled" ? now : null,
+            };
+            schedules = schedules.map((schedule, itemIndex) =>
+              itemIndex === index ? updated : schedule,
+            );
+            return { jsonrpc: "2.0", id: request.id, result: updated };
+          }
+          if (request.method === "assistant.schedules.run_now") {
+            const schedule = findSchedule(request.params.schedule_id);
+            if (schedule === undefined) throw new Error("Unknown fixture schedule");
+            const now = new Date().toISOString();
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                id: id.occurrence,
+                schedule_id: schedule.id,
+                schedule_revision: schedule.active_revision,
+                scheduled_for: now,
+                status: "pending",
+                coalesced_count: 0,
+                turn_id: null,
+                workflow_run_id: null,
+                public_error: null,
+                created_at: now,
+                dispatched_at: null,
+                completed_at: null,
+              },
+            };
           }
           if (request.method === "browser.health") {
             return {

@@ -29,8 +29,35 @@ remain readable after migration.
 - Failed or cancelled Run: terminal; user retry creates new durable work.
 - Corrupt/missing plan or cross-scope identity: fail closed and retain evidence for diagnosis.
 
+## Local scheduled instructions
+
+- Closing to the tray keeps schedule sweeps active. Explicit exit stops new occurrence claims;
+  startup performs the next compensation sweep before normal polling resumes.
+- A one-shot schedule missed while Fairy was stopped dispatches once. A recurring schedule keeps
+  only its latest missed instant and records the earlier count on the occurrence.
+- The occurrence identity is `(tenant_id, schedule_id, scheduled_for)`. If restart diagnostics
+  show more than one Message, Turn, or Workflow Run for that identity, stop the current Core and
+  preserve the database and Ledger before retrying.
+- A busy conversation or a still-running previous occurrence may retain one latest pending
+  occurrence. Waiting approval counts as active and must not be bypassed by a later trigger.
+- A stale claim may not settle after its lease expires because the replacement claim owns a newer
+  fence. Do not manually clear a claim without retaining its attempt and fence evidence.
+- `context_attention` pauses future occurrences when Provider, credential, permission, Workspace,
+  Version, or execution-target snapshots no longer match. Repair the named binding, review the
+  retained instruction, then explicitly resume; never substitute a new binding automatically.
+- Three consecutive failed occurrences pause a recurring schedule. Diagnose the public error and
+  underlying Turn trace before resuming. Pausing or cancelling the Schedule never cancels an
+  already dispatched Turn.
+
+Windows notifications contain only a public summary and scoped navigation IDs. A missing Toast is
+not execution evidence: inspect the Schedule card, background-task projection, occurrence, Turn,
+Workflow Run, and Ledger in that order. Toast activation requires an installed Windows app identity
+and is verified separately from renderer tests.
+
 ## Verification
 
 Run `uv run --project core fairy-agent-eval`. Preserve `report.json` and `report.md` with the build
-evidence. A missing real Provider, PostgreSQL/S3, WSL Sandbox, or native WebView2 environment must
+evidence. The deterministic report includes schedule dispatch boundaries, restart idempotency,
+lease fencing, overlap coalescing, failure pause, DST, and offline compensation. A missing real
+Provider, PostgreSQL/S3, WSL Sandbox, Windows Toast activation, or native WebView2 environment must
 be recorded as `unverified`; deterministic fixture success cannot substitute for it.
