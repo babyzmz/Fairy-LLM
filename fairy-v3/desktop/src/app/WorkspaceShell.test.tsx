@@ -145,6 +145,53 @@ describe("WorkspaceShell", () => {
     expect(preview).toHaveAttribute("aria-selected", "true");
   });
 
+  it("keeps the chat Inspector mounted and restores its active tab and focus", () => {
+    const project = projectFixture();
+    const chat = {
+      ...projectConversationFixture(project),
+      project_id: null,
+      workspace_type: "chat_scratch" as const,
+      title: "Collapsible chat",
+    };
+    const task = { ...workspaceTask(), conversation_id: chat.id, project_id: null };
+    const model = workspaceModel();
+    model.mode = "chat";
+    model.selectedChatConversation = chat;
+    model.workspaceTask = task;
+    model.workspaceFiles = [workspaceFile("notes/fairy.md")];
+    const { container } = render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    const activePanel = screen.getByRole("tabpanel");
+    activePanel.scrollTop = 47;
+    fireEvent.click(screen.getByRole("button", { name: "Collapse workspace inspector" }));
+
+    const inspector = screen.getByLabelText("Workspace inspector");
+    expect(inspector).toHaveAttribute("hidden");
+    expect(inspector).toHaveAttribute("inert");
+    expect(activePanel).toBeInTheDocument();
+    expect(activePanel.scrollTop).toBe(47);
+    expect(container.querySelector(".unified-workspace-chat")).toHaveAttribute(
+      "data-inspector-collapsed",
+      "true",
+    );
+    expect(window.localStorage.getItem("fairy.workspace.chat-inspector-collapsed")).toBe("true");
+    const restore = screen.getByRole("button", { name: "Restore workspace inspector" });
+    expect(restore).toHaveFocus();
+
+    fireEvent.keyDown(restore, { key: "Enter" });
+    fireEvent.click(restore);
+
+    expect(inspector).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("tab", { name: /Files/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Collapse workspace inspector" })).toHaveFocus();
+    expect(activePanel.scrollTop).toBe(47);
+    expect(window.localStorage.getItem("fairy.workspace.chat-inspector-collapsed")).toBe("false");
+  });
+
   it("keeps an empty workspace inspector collapsed", () => {
     render(<WorkspaceShell model={workspaceModel()} />);
 

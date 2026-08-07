@@ -6,6 +6,7 @@ import { Composer } from "../chat/Composer";
 import { HistorySidebar } from "./HistorySidebar";
 import { ContextBar } from "./ContextBar";
 import { WorkspaceInspector } from "./WorkspaceInspector";
+import { usePersistedBoolean } from "./workspacePreferences";
 import {
   EmptyWorkspace,
   folderName,
@@ -26,6 +27,10 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
   const [projectName, setProjectName] = useState("");
   const [importPath, setImportPath] = useState("");
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
+  const [chatInspectorCollapsed, setChatInspectorCollapsed] = usePersistedBoolean(
+    "fairy.workspace.chat-inspector-collapsed",
+    false,
+  );
   const providerAvailable = model.modelSelectionBlockReason === null;
 
   return (
@@ -78,7 +83,10 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             onRetry={model.retryWorkspace}
           />
         ) : model.mode === "chat" ? (
-          <div className="unified-workspace unified-workspace-chat">
+          <div
+            className="unified-workspace unified-workspace-chat"
+            data-inspector-collapsed={chatInspectorCollapsed}
+          >
             <ChatWorkspace
               conversationAvailable={model.selectedChatConversation !== null}
               contentState={model.conversationContentState}
@@ -122,8 +130,15 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               onDecision={model.decideApproval}
               onSelectModel={model.selectModel}
               onOpenModelSettings={() => model.openSettings("models")}
+              inspectorCollapsed={chatInspectorCollapsed}
+              onRestoreInspector={() => setChatInspectorCollapsed(false)}
             />
-            <WorkspaceInspector model={model} />
+            <WorkspaceInspector
+              model={model}
+              collapsible
+              collapsed={chatInspectorCollapsed}
+              onCollapse={() => setChatInspectorCollapsed(true)}
+            />
           </div>
         ) : model.state === "ready" && model.selectedProject !== null && model.selectedConversation === null ? (
           <ProjectOverview model={model} />

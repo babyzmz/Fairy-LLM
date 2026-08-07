@@ -1,5 +1,12 @@
-import { AlertTriangle, Check, MessageSquarePlus, RotateCcw, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  MessageSquarePlus,
+  PanelRightOpen,
+  RotateCcw,
+  X,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   Approval,
@@ -71,11 +78,15 @@ export interface ChatWorkspaceProps {
   onDecision(approvalId: string, approved: boolean): Promise<void>;
   onSelectModel(mode: "auto" | "manual", modelId: string | null): Promise<void>;
   onOpenModelSettings(): Promise<void>;
+  inspectorCollapsed?: boolean;
+  onRestoreInspector?(): void;
 }
 
 export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [composerDraft, setComposerDraft] = useState<AssistantDraft | null>(null);
+  const restoreInspectorRef = useRef<HTMLButtonElement | null>(null);
+  const inspectorWasCollapsed = useRef(props.inspectorCollapsed ?? false);
   const providerAvailable = props.modelSelectionBlockReason === null;
   const contentState = props.contentState ?? "ready";
   const retryAvailable = ["failed", "cancelled"].includes(props.turn?.status ?? "");
@@ -97,6 +108,14 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     if (props.isBusy) return "Fairy is working";
     return "Ready";
   }, [pendingApproval, props.isBusy, props.offline, providerAvailable, workflowSummary?.status]);
+
+  useEffect(() => {
+    const collapsed = props.inspectorCollapsed ?? false;
+    if (collapsed && !inspectorWasCollapsed.current) {
+      restoreInspectorRef.current?.focus();
+    }
+    inspectorWasCollapsed.current = collapsed;
+  }, [props.inspectorCollapsed]);
 
   const submit = async (
     value: string,
@@ -177,6 +196,20 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           >
             {statusLabel}
           </span>
+          {props.inspectorCollapsed ? (
+            <button
+              ref={restoreInspectorRef}
+              className="icon-button"
+              type="button"
+              aria-label="Restore workspace inspector"
+              aria-controls="workspace-inspector"
+              aria-expanded="false"
+              title="Restore inspector"
+              onClick={props.onRestoreInspector}
+            >
+              <PanelRightOpen size={17} />
+            </button>
+          ) : null}
           <button
             className="icon-button"
             type="button"

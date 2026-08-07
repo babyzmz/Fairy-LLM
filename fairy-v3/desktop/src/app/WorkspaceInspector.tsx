@@ -1,4 +1,4 @@
-import { Eye, Files, Network } from "lucide-react";
+import { Eye, Files, Network, PanelRightClose } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -23,7 +23,19 @@ const MIN_INSPECTOR_WIDTH = 360;
 const MIN_CHAT_COLUMN_WIDTH = 420;
 const INSPECTOR_RESIZE_STEP = 24;
 
-export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
+interface WorkspaceInspectorProps {
+  model: WorkspaceModel;
+  collapsible?: boolean;
+  collapsed?: boolean;
+  onCollapse?(): void;
+}
+
+export function WorkspaceInspector({
+  model,
+  collapsible = false,
+  collapsed = false,
+  onCollapse,
+}: WorkspaceInspectorProps) {
   const hasFiles = model.workspaceFiles.length > 0;
   const previewReady = model.preview?.preview.status === "ready";
   const previewStarting = model.previewActivationLoading ||
@@ -51,6 +63,8 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
     obsidian: null,
   });
   const manuallySelectedTab = useRef(false);
+  const collapseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const inspectorWasCollapsed = useRef(collapsed);
   const scopeKey = [
     model.workspaceTask?.conversation_id ?? "no-conversation",
     model.workspaceTask?.id ?? "no-task",
@@ -58,6 +72,13 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
     model.workspaceTask?.target_version_id ?? "no-version",
   ].join(":");
   const recommendedTab = hasPreview ? "preview" : hasFiles ? "files" : "preview";
+
+  useEffect(() => {
+    if (!collapsed && inspectorWasCollapsed.current) {
+      collapseButtonRef.current?.focus();
+    }
+    inspectorWasCollapsed.current = collapsed;
+  }, [collapsed]);
 
   useEffect(() => {
     manuallySelectedTab.current = false;
@@ -142,7 +163,13 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   if (model.workspaceTask === null && !hasFiles && !hasMedia && !hasKnowledgeScope) return null;
 
   return (
-    <aside className="workspace-inspector" aria-label="Workspace inspector">
+    <aside
+      id="workspace-inspector"
+      className="workspace-inspector"
+      aria-label="Workspace inspector"
+      hidden={collapsed}
+      inert={collapsed}
+    >
       <div
         className="workspace-inspector-resizer"
         role="separator"
@@ -172,8 +199,9 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
         }}
         onPointerDown={(event) => startResize(event, updateInspectorWidth)}
       />
-      <div className="workspace-inspector-tabs" role="tablist" aria-label="Workspace view">
-        <button
+      <div className="workspace-inspector-tabs">
+        <div className="workspace-inspector-tablist" role="tablist" aria-label="Workspace view">
+          <button
           ref={(node) => { tabRefs.current.preview = node; }}
           id={tabId("preview")}
           type="button"
@@ -185,8 +213,8 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
           onKeyDown={(event) => moveTabWithKeyboard(event, "preview")}
         >
           <Eye size={14} /> Preview
-        </button>
-        <button
+          </button>
+          <button
           ref={(node) => { tabRefs.current.files = node; }}
           id={tabId("files")}
           type="button"
@@ -199,8 +227,8 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
         >
           <Files size={14} /> Files
           {hasFiles ? <span>{model.workspaceFiles.length}</span> : null}
-        </button>
-        <button
+          </button>
+          <button
           ref={(node) => { tabRefs.current.obsidian = node; }}
           id={tabId("obsidian")}
           type="button"
@@ -212,7 +240,22 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
           onKeyDown={(event) => moveTabWithKeyboard(event, "obsidian")}
         >
           <Network size={14} /> Obsidian
-        </button>
+          </button>
+        </div>
+        {collapsible ? (
+          <button
+            ref={collapseButtonRef}
+            className="workspace-inspector-collapse"
+            type="button"
+            aria-label="Collapse workspace inspector"
+            aria-controls="workspace-inspector"
+            aria-expanded="true"
+            title="Collapse inspector"
+            onClick={onCollapse}
+          >
+            <PanelRightClose size={15} />
+          </button>
+        ) : null}
       </div>
       {INSPECTOR_TABS.map((panel) => (
         <div
