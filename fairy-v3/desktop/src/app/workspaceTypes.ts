@@ -1,9 +1,12 @@
 import type { AssistantDraft, AssistantTurnClient, OptimisticUserMessage } from "../chat/useAssistantTurn";
+import type { ScheduleRuleDraft } from "../chat/scheduleRules";
+import type { ChatTimelineTarget } from "../chat/timelineTarget";
 import type { TurnTraceQueryState } from "../chat/useTurnTraces";
 import type {
   Approval,
   AssistantBackgroundTask,
   AssistantBackgroundTaskPage,
+  AssistantSchedule,
   BrowserActionInput,
   BrowserSession,
   BrowserSnapshot,
@@ -207,6 +210,9 @@ export interface WorkspaceModel {
   chatError: string | null;
   backgroundTasks: AssistantBackgroundTaskPage;
   backgroundTasksLoading: boolean;
+  chatTimelineTarget: ChatTimelineTarget | null;
+  chatSchedules: AssistantSchedule[];
+  chatSchedulesLoading: boolean;
   projectTurn: AssistantTurn | null;
   projectTrace: TurnTrace | null;
   projectTraceState: TurnTraceQueryState | null;
@@ -273,6 +279,13 @@ export interface WorkspaceModel {
     action: BackgroundTaskAction,
   ): Promise<void>;
   openBackgroundTask(task: AssistantBackgroundTask): void;
+  clearChatTimelineTarget(key: string): void;
+  createChatSchedule(instruction: string, rule: ScheduleRuleDraft): Promise<void>;
+  updateChatSchedule(schedule: AssistantSchedule, rule: ScheduleRuleDraft): Promise<void>;
+  pauseChatSchedule(schedule: AssistantSchedule): Promise<void>;
+  resumeChatSchedule(schedule: AssistantSchedule): Promise<void>;
+  runNowChatSchedule(schedule: AssistantSchedule): Promise<void>;
+  cancelChatSchedule(schedule: AssistantSchedule): Promise<void>;
   retryPendingChatMessage(): Promise<void>;
   deletePendingChatMessage(): void;
   takePendingChatMessageForEdit(): AssistantDraft | null;

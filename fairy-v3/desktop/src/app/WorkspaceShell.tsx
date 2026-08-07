@@ -133,8 +133,18 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               conversationId={model.selectedChatConversation?.id ?? null}
               backgroundTasks={model.backgroundTasks}
               backgroundTasksLoading={model.backgroundTasksLoading}
+              schedules={model.chatSchedules}
+              schedulesLoading={model.chatSchedulesLoading}
+              onCreateSchedule={model.createChatSchedule}
+              onUpdateSchedule={model.updateChatSchedule}
+              onPauseSchedule={model.pauseChatSchedule}
+              onResumeSchedule={model.resumeChatSchedule}
+              onRunNowSchedule={model.runNowChatSchedule}
+              onCancelSchedule={model.cancelChatSchedule}
               onOpenBackgroundTask={model.openBackgroundTask}
               onManageBackgroundTask={model.manageBackgroundTask}
+              timelineTarget={model.chatTimelineTarget}
+              onTimelineTargetLocated={model.clearChatTimelineTarget}
               inspectorCollapsed={chatInspectorCollapsed}
               onRestoreInspector={() => setChatInspectorCollapsed(false)}
             />

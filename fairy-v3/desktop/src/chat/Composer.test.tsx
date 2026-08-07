@@ -111,6 +111,69 @@ describe("Composer", () => {
 
     expect(onResumeWorkflow).toHaveBeenCalledTimes(1);
   });
+
+  it("creates a future schedule and clears the accepted draft", async () => {
+    const user = userEvent.setup();
+    const onSchedule = vi.fn(async () => undefined);
+    render(
+      <Composer
+        disabled={false}
+        isBusy={false}
+        visionAvailable={false}
+        modelCatalog={null}
+        modelSelection={null}
+        onSubmit={vi.fn(async () => undefined)}
+        onSchedule={onSchedule}
+        onStop={vi.fn(async () => undefined)}
+        onSelectModel={vi.fn(async () => undefined)}
+        onOpenModelSettings={vi.fn(async () => undefined)}
+      />,
+    );
+
+    const input = screen.getByLabelText("Message Fairy");
+    await user.type(input, "Summarize tomorrow's workspace changes");
+    await user.click(screen.getByRole("button", { name: "Schedule message" }));
+    await user.click(screen.getByRole("menuitem", { name: /Run later/u }));
+    await user.click(screen.getByRole("button", { name: "Create schedule" }));
+
+    await waitFor(() => expect(onSchedule).toHaveBeenCalledTimes(1));
+    expect(onSchedule).toHaveBeenCalledWith(
+      "Summarize tomorrow's workspace changes",
+      expect.objectContaining({ trigger_kind: "once" }),
+    );
+    expect(input).toHaveValue("");
+  });
+
+  it("blocks temporary documents from scheduled execution", async () => {
+    const user = userEvent.setup();
+    const onSchedule = vi.fn(async () => undefined);
+    render(
+      <Composer
+        disabled={false}
+        isBusy={false}
+        visionAvailable={false}
+        modelCatalog={null}
+        modelSelection={null}
+        onSubmit={vi.fn(async () => undefined)}
+        onSchedule={onSchedule}
+        onStop={vi.fn(async () => undefined)}
+        onSelectModel={vi.fn(async () => undefined)}
+        onOpenModelSettings={vi.fn(async () => undefined)}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("Message Fairy"), "Review this later");
+    await user.upload(
+      screen.getByLabelText("Attach documents", { selector: "input" }),
+      new File(["draft"], "draft.md", { type: "text/markdown" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Schedule message" }));
+    await user.click(screen.getByRole("menuitem", { name: /Run later/u }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("temporary attachments or screenshots");
+    expect(screen.queryByLabelText("Schedule task")).not.toBeInTheDocument();
+    expect(onSchedule).not.toHaveBeenCalled();
+  });
 });
 
 function renderComposer(

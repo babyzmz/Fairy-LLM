@@ -4,10 +4,11 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AssistantTurn, Message } from "../core/client";
+import type { AssistantSchedule, AssistantTurn, Message } from "../core/client";
 import { MessageList } from "./MessageList";
 
 afterEach(cleanup);
@@ -121,6 +122,50 @@ describe("MessageList outline integration", () => {
     }))
       .toHaveAttribute("aria-current", "location");
   });
+
+  it("orders schedule cards in the durable timeline without adding outline lines", () => {
+    render(
+      messageList(
+        [MESSAGES[0], { ...MESSAGES[1], sequence: 3 }],
+        {},
+        [schedule({ timeline_sequence: 2 })],
+      ),
+    );
+
+    const sequences = Array.from(document.querySelectorAll("[data-message-sequence]"))
+      .map((node) => node.getAttribute("data-message-sequence"));
+    expect(sequences).toEqual(["1", "2", "3"]);
+    expect(screen.getAllByRole("button", { name: /Durable request:/u })).toHaveLength(1);
+    expect(document.querySelector(`[data-schedule-id]`)).not.toBeNull();
+  });
+
+  it("locates a scheduled task selected from the background panel", async () => {
+    const scheduled = schedule();
+    const onLocated = vi.fn();
+    const view = render(messageList(MESSAGES, {}, [scheduled]));
+    const list = screen.getByLabelText("Conversation messages");
+    const scrollTo = vi.fn();
+    Object.defineProperties(list, {
+      scrollTop: { configurable: true, writable: true, value: 0 },
+      scrollTo: { configurable: true, value: scrollTo },
+    });
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect({ top: 100 }));
+    const card = document.querySelector<HTMLElement>(`[data-schedule-id="${scheduled.id}"]`);
+    vi.spyOn(card as HTMLElement, "getBoundingClientRect").mockReturnValue(rect({ top: 360 }));
+
+    view.rerender(messageList(MESSAGES, {
+      timelineTarget: {
+        key: "locate-1",
+        scheduleId: scheduled.id,
+        turnId: null,
+      },
+      onTimelineTargetLocated: onLocated,
+    }, [scheduled]));
+
+    await waitFor(() => expect(onLocated).toHaveBeenCalledWith("locate-1"));
+    expect(scrollTo).toHaveBeenCalledWith({ top: 242, behavior: "smooth" });
+    expect(card).toHaveFocus();
+  });
 });
 
 const CONVERSATION_ID = "019f7b34-9300-7000-8000-000000000010";
@@ -150,27 +195,25 @@ const THREE_EXCHANGES: Message[] = [
 
 function renderMessageList(
   messages: Message[],
-  overrides: {
-    streamedText?: string;
-    turn?: AssistantTurn | null;
-  } = {},
+  overrides: MessageListOverrides = {},
 ) {
   return render(messageList(messages, overrides));
 }
 
 function messageList(
   messages: Message[],
-  overrides: {
-    streamedText?: string;
-    turn?: AssistantTurn | null;
-  } = {},
+  overrides: MessageListOverrides = {},
+  schedules: AssistantSchedule[] = [],
 ) {
   return (
     <MessageList
       messages={messages}
+      schedules={schedules}
       realtimeTranscript={[]}
       streamedText={overrides.streamedText ?? ""}
       turn={overrides.turn ?? null}
+      timelineTarget={overrides.timelineTarget ?? null}
+      onTimelineTargetLocated={overrides.onTimelineTargetLocated}
       turnTraces={{}}
       turnTraceStates={{}}
       events={[]}
@@ -183,6 +226,50 @@ function messageList(
       onOpenLink={vi.fn(async () => undefined)}
     />
   );
+}
+
+interface MessageListOverrides {
+  streamedText?: string;
+  turn?: AssistantTurn | null;
+  timelineTarget?: {
+    key: string;
+    scheduleId: string | null;
+    turnId: string | null;
+  } | null;
+  onTimelineTargetLocated?(key: string): void;
+}
+
+function schedule(overrides: Partial<AssistantSchedule> = {}): AssistantSchedule {
+  return {
+    id: "019f7b34-9300-7000-8000-000000000070",
+    conversation_id: CONVERSATION_ID,
+    task_id: null,
+    project_id: null,
+    workspace_id: "019f7b34-9300-7000-8000-000000000071",
+    version_id: null,
+    instruction: "Summarize the workspace",
+    operation_mode: "answer",
+    trigger_kind: "daily",
+    trigger_rule: { local_time: "09:30" },
+    timezone: "Australia/Sydney",
+    next_fire_at: "2026-08-08T23:30:00Z",
+    execution_target: "local",
+    profile_id: null,
+    model_selection: null,
+    permission_profile: "standard",
+    timeline_sequence: 2,
+    status: "active",
+    active_revision: 1,
+    consecutive_failures: 0,
+    attention_code: null,
+    created_at: "2026-08-07T00:00:00Z",
+    updated_at: "2026-08-07T00:00:00Z",
+    last_fire_at: null,
+    paused_at: null,
+    completed_at: null,
+    cancelled_at: null,
+    ...overrides,
+  };
 }
 
 function message(

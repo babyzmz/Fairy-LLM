@@ -13,6 +13,7 @@ import type {
   Approval,
   AssistantBackgroundTask,
   AssistantBackgroundTaskPage,
+  AssistantSchedule,
   AssistantTurn,
   EventEnvelope,
   Message,
@@ -29,6 +30,9 @@ import type { BackgroundTaskAction } from "../app/workspaceTypes";
 import { BackgroundTasksPopover } from "./BackgroundTasksPopover";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
+import type { ScheduleCardActions } from "./ScheduleCard";
+import type { ScheduleRuleDraft } from "./scheduleRules";
+import type { ChatTimelineTarget } from "./timelineTarget";
 import type { AssistantDraft, OptimisticUserMessage } from "./useAssistantTurn";
 import type { TurnTraceQueryState } from "./useTurnTraces";
 import { parseSlashCommand, slashCommandHelp } from "./slashCommands";
@@ -93,6 +97,16 @@ export interface ChatWorkspaceProps {
     task: AssistantBackgroundTask,
     action: BackgroundTaskAction,
   ): Promise<void>;
+  schedules?: AssistantSchedule[];
+  schedulesLoading?: boolean;
+  onCreateSchedule?(instruction: string, rule: ScheduleRuleDraft): Promise<void>;
+  onUpdateSchedule?(schedule: AssistantSchedule, rule: ScheduleRuleDraft): Promise<void>;
+  onPauseSchedule?(schedule: AssistantSchedule): Promise<void>;
+  onResumeSchedule?(schedule: AssistantSchedule): Promise<void>;
+  onRunNowSchedule?(schedule: AssistantSchedule): Promise<void>;
+  onCancelSchedule?(schedule: AssistantSchedule): Promise<void>;
+  timelineTarget?: ChatTimelineTarget | null;
+  onTimelineTargetLocated?(key: string): void;
 }
 
 export function ChatWorkspace(props: ChatWorkspaceProps) {
@@ -124,6 +138,30 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     if (props.isBusy) return "Fairy is working";
     return "Ready";
   }, [pendingApproval, props.isBusy, props.offline, providerAvailable, workflowSummary?.status]);
+  const scheduleActions = useMemo<ScheduleCardActions>(() => ({
+    update: (schedule, rule) => requiredScheduleAction(props.onUpdateSchedule)(schedule, rule),
+    pause: (schedule) => requiredScheduleAction(props.onPauseSchedule)(schedule),
+    resume: (schedule) => requiredScheduleAction(props.onResumeSchedule)(schedule),
+    runNow: (schedule) => requiredScheduleAction(props.onRunNowSchedule)(schedule),
+    cancel: (schedule) => requiredScheduleAction(props.onCancelSchedule)(schedule),
+  }), [
+    props.onCancelSchedule,
+    props.onPauseSchedule,
+    props.onResumeSchedule,
+    props.onRunNowSchedule,
+    props.onUpdateSchedule,
+  ]);
+  const scheduleRunNowAvailability = useMemo(() => {
+    const tasks = [
+      ...(props.backgroundTasks?.current ?? []),
+      ...(props.backgroundTasks?.other ?? []),
+    ];
+    return new Map(
+      tasks
+        .filter((task) => task.schedule_id !== null)
+        .map((task) => [task.schedule_id as string, task.can_run_now]),
+    );
+  }, [props.backgroundTasks]);
 
   useEffect(() => {
     const collapsed = props.inspectorCollapsed ?? false;
@@ -336,6 +374,13 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       ) : props.conversationAvailable ? (
         <MessageList
           messages={props.messages}
+          schedules={props.schedules ?? []}
+          schedulesLoading={props.schedulesLoading ?? false}
+          scheduleBusy={props.isActing}
+          scheduleActions={scheduleActions}
+          scheduleCanRunNow={(schedule) => scheduleRunNowAvailability.get(schedule.id) ?? true}
+          timelineTarget={props.timelineTarget ?? null}
+          onTimelineTargetLocated={props.onTimelineTargetLocated}
           realtimeTranscript={props.realtimeTranscript}
           events={props.events}
           streamedText={props.streamedText}
@@ -430,6 +475,14 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         workflowSummary={workflowSummary}
         draft={composerDraft}
         onSubmit={submit}
+        onSchedule={props.onCreateSchedule === undefined ? undefined : async (instruction, rule) => {
+          const command = parseSlashCommand(instruction, props.slashCommands);
+          if (command !== null) {
+            throw new Error("Slash commands cannot be scheduled");
+          }
+          await props.onCreateSchedule?.(instruction, rule);
+          setNotice("Scheduled task added to this conversation");
+        }}
         onStop={props.onCancel}
         onPauseWorkflow={props.onPauseWorkflow}
         onResumeWorkflow={props.onResumeWorkflow}
@@ -449,4 +502,15 @@ const EMPTY_BACKGROUND_TASKS: AssistantBackgroundTaskPage = {
 
 function settle(operation: Promise<void>): void {
   void operation.catch(() => undefined);
+}
+
+function requiredScheduleAction<T extends unknown[], R>(
+  action: ((...args: T) => Promise<R>) | undefined,
+): (...args: T) => Promise<R> {
+  if (action === undefined) {
+    return async () => {
+      throw new Error("Schedule controls are unavailable");
+    };
+  }
+  return action;
 }

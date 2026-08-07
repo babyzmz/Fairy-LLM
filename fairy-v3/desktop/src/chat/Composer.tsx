@@ -1,4 +1,4 @@
-import { Paperclip, Pause, Play, Send, Square, X } from "lucide-react";
+import { CalendarClock, ChevronDown, Paperclip, Pause, Play, Send, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -12,6 +12,8 @@ import type {
   ModelSelectionPreference,
 } from "../core/client";
 import { ModelSelector } from "../models/ModelSelector";
+import { ScheduleRuleEditor } from "./ScheduleRuleEditor";
+import type { ScheduleRuleDraft } from "./scheduleRules";
 import type { AssistantDraft } from "./useAssistantTurn";
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -33,6 +35,7 @@ interface ComposerProps {
     files: File[],
     images: PendingImageAttachment[],
   ): Promise<void>;
+  onSchedule?(value: string, rule: ScheduleRuleDraft): Promise<void>;
   onStop(): Promise<void>;
   onPauseWorkflow?(): Promise<void>;
   onResumeWorkflow?(): Promise<void>;
@@ -52,6 +55,7 @@ export function Composer({
   workflowSummary = null,
   draft = null,
   onSubmit,
+  onSchedule,
   onStop,
   onPauseWorkflow,
   onResumeWorkflow,
@@ -63,8 +67,11 @@ export function Composer({
   const [capture, setCapture] = useState<PendingImageAttachment | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [scheduleMenuOpen, setScheduleMenuOpen] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState<"later" | "repeat" | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const scheduleMenuRef = useRef<HTMLDivElement>(null);
   const draftRevisionRef = useRef(0);
   const submittingRef = useRef(false);
   const taskUpdateMode =
@@ -107,6 +114,25 @@ export function Composer({
     input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
   }, [value]);
 
+  useEffect(() => {
+    if (!scheduleMenuOpen) return;
+    const closeOnOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && !scheduleMenuRef.current?.contains(target)) {
+        setScheduleMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setScheduleMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnOutside, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutside, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [scheduleMenuOpen]);
+
   const submit = async () => {
     if (!canSubmit || submittingRef.current) return;
     const submittedDraft = {
@@ -138,6 +164,45 @@ export function Composer({
       throw error;
     } finally {
       submittingRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
+  const openScheduleEditor = (mode: "later" | "repeat") => {
+    setScheduleMenuOpen(false);
+    if (value.trim().length === 0) {
+      setAttachmentError("Enter an instruction before scheduling it");
+      inputRef.current?.focus();
+      return;
+    }
+    if (files.length > 0 || capture !== null) {
+      setAttachmentError(
+        "Scheduled tasks cannot use temporary attachments or screenshots. Remove them or bind files to the Workspace first.",
+      );
+      return;
+    }
+    setAttachmentError(null);
+    setScheduleMode(mode);
+  };
+
+  const createSchedule = async (rule: ScheduleRuleDraft) => {
+    if (onSchedule === undefined) throw new Error("Scheduling is unavailable");
+    const instruction = value.trim();
+    if (!instruction) throw new Error("Enter an instruction before scheduling it");
+    if (files.length > 0 || capture !== null) {
+      throw new Error("Scheduled tasks cannot use temporary attachments or screenshots");
+    }
+    const revision = draftRevisionRef.current;
+    setIsSubmitting(true);
+    try {
+      await onSchedule(instruction, rule);
+      if (draftRevisionRef.current === revision) {
+        draftRevisionRef.current += 1;
+        setValue("");
+      }
+      setScheduleMode(null);
+      inputRef.current?.focus();
+    } finally {
       setIsSubmitting(false);
     }
   };
@@ -331,19 +396,65 @@ export function Composer({
                 <Square size={15} />
               </button>
             ) : (
-              <button
-                className="send-button"
-                type="submit"
-                aria-label="Send message"
-                title="Send message"
-                disabled={!canSubmit}
-              >
-                <Send size={17} />
-              </button>
+              <>
+                {onSchedule !== undefined ? (
+                  <div className="composer-schedule-menu" ref={scheduleMenuRef}>
+                    <button
+                      className="icon-button composer-schedule-trigger"
+                      type="button"
+                      aria-label="Schedule message"
+                      aria-expanded={scheduleMenuOpen}
+                      title="Schedule message"
+                      disabled={disabled || effectiveBusy}
+                      onClick={() => setScheduleMenuOpen((open) => !open)}
+                    >
+                      <CalendarClock size={16} />
+                      <ChevronDown size={11} />
+                    </button>
+                    {scheduleMenuOpen ? (
+                      <div className="composer-schedule-options" role="menu" aria-label="Execution time">
+                        <button type="button" role="menuitem" onClick={() => void submit().catch(() => undefined)}>
+                          <Send size={14} />
+                          <span><strong>Run now</strong><small>Send this message immediately</small></span>
+                        </button>
+                        <button type="button" role="menuitem" onClick={() => openScheduleEditor("later")}>
+                          <CalendarClock size={14} />
+                          <span><strong>Run later</strong><small>Choose a future local time</small></span>
+                        </button>
+                        <button type="button" role="menuitem" onClick={() => openScheduleEditor("repeat")}>
+                          <Play size={14} />
+                          <span><strong>Repeat</strong><small>Daily, weekly, or an interval</small></span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                <button
+                  className="send-button"
+                  type="submit"
+                  aria-label="Send message"
+                  title="Send message"
+                  disabled={!canSubmit}
+                >
+                  <Send size={17} />
+                </button>
+              </>
             )}
           </div>
         </div>
       </div>
+      {scheduleMode !== null ? (
+        <ScheduleRuleEditor
+          key={scheduleMode}
+          mode={scheduleMode}
+          busy={isSubmitting}
+          onSubmit={createSchedule}
+          onCancel={() => {
+            setScheduleMode(null);
+            inputRef.current?.focus();
+          }}
+        />
+      ) : null}
     </form>
   );
 }

@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
-import type { AssistantBackgroundTask, EventEnvelope, Task } from "../core/client";
+import type { ScheduleRuleDraft } from "../chat/scheduleRules";
+import type { ChatTimelineTarget } from "../chat/timelineTarget";
+import type { AssistantBackgroundTask, AssistantSchedule, EventEnvelope, Task } from "../core/client";
 import { runResilientEventDelivery } from "../core/eventStream";
 import {
   selectedProfileId as profileIdForSelection,
@@ -78,6 +80,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const [eventStreamErrorCode, setEventStreamErrorCode] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
   const [chatTaskId, setChatTaskId] = useState<string | null>(null);
+  const [chatTimelineTarget, setChatTimelineTarget] = useState<ChatTimelineTarget | null>(null);
   const chatTaskIdRef = useRef<string | null>(null);
   chatTaskIdRef.current = chatTaskId;
   const [projectTurnTaskId, setProjectTurnTaskId] = useState<string | null>(null);
@@ -239,6 +242,17 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     ],
     queryFn: () => client.assistant.backgroundTasks.list(selectedChatConversation?.id),
     enabled: healthQuery.isSuccess && mode === "chat",
+    retry: false,
+    refetchInterval: 2_500,
+  });
+  const chatSchedulesQuery = useQuery({
+    queryKey: [
+      ...workspaceKey,
+      "assistant-schedules",
+      selectedChatConversation?.id ?? null,
+    ],
+    queryFn: () => client.assistant.schedules.list(requireId(selectedChatConversation?.id)),
+    enabled: healthQuery.isSuccess && mode === "chat" && selectedChatConversation !== null,
     retry: false,
     refetchInterval: 2_500,
   });
@@ -518,12 +532,98 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       await queryClient.invalidateQueries({
         queryKey: [...workspaceKey, "background-tasks"],
       });
+      await queryClient.invalidateQueries({
+        queryKey: [...workspaceKey, "assistant-schedules"],
+      });
     },
     [client.assistant, queryClient, runAction],
+  );
+  const refreshAssistantSchedules = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: [...workspaceKey, "assistant-schedules"],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: [...workspaceKey, "background-tasks"],
+      }),
+    ]);
+  }, [queryClient]);
+  const createChatSchedule = useCallback(
+    async (instruction: string, rule: ScheduleRuleDraft): Promise<void> => {
+      const conversationId = requireId(selectedChatConversation?.id);
+      const selection = modelController.selection;
+      await runAction(() => client.assistant.schedules.create({
+        conversation_id: conversationId,
+        instruction,
+        operation_mode: "answer",
+        ...rule,
+        ...(selection === null
+          ? { profile_id: requireId(selectedProfileId) }
+          : {
+              model_selection: {
+                mode: selection.mode,
+                model_id: selection.model_id,
+                revision: selection.revision,
+              },
+            }),
+        idempotency_key: `chat-schedule:${conversationId}:${crypto.randomUUID()}`,
+      }));
+      await refreshAssistantSchedules();
+    },
+    [
+      client.assistant.schedules,
+      modelController.selection,
+      refreshAssistantSchedules,
+      runAction,
+      selectedChatConversation?.id,
+      selectedProfileId,
+    ],
+  );
+  const updateChatSchedule = useCallback(
+    async (schedule: AssistantSchedule, rule: ScheduleRuleDraft): Promise<void> => {
+      await runAction(() => client.assistant.schedules.update({
+        schedule_id: schedule.id,
+        expected_revision: schedule.active_revision,
+        instruction: schedule.instruction,
+        operation_mode: schedule.operation_mode,
+        ...rule,
+      }));
+      await refreshAssistantSchedules();
+    },
+    [client.assistant.schedules, refreshAssistantSchedules, runAction],
+  );
+  const mutateChatSchedule = useCallback(
+    async (
+      schedule: AssistantSchedule,
+      action: "pause" | "resume" | "cancel" | "run_now",
+    ): Promise<void> => {
+      await runAction(async () => {
+        if (action === "pause") {
+          await client.assistant.schedules.pause(schedule.id, schedule.active_revision);
+        } else if (action === "resume") {
+          await client.assistant.schedules.resume(schedule.id, schedule.active_revision);
+        } else if (action === "cancel") {
+          await client.assistant.schedules.cancel(schedule.id, schedule.active_revision);
+        } else {
+          await client.assistant.schedules.runNow(
+            schedule.id,
+            schedule.active_revision,
+            `chat-schedule-run-now:${schedule.id}:${crypto.randomUUID()}`,
+          );
+        }
+      });
+      await refreshAssistantSchedules();
+    },
+    [client.assistant.schedules, refreshAssistantSchedules, runAction],
   );
   const openBackgroundTask = useCallback(
     (task: AssistantBackgroundTask) => {
       if (task.project_id === null) {
+        setChatTimelineTarget({
+          key: crypto.randomUUID(),
+          scheduleId: task.schedule_id,
+          turnId: task.turn_id,
+        });
         setMode("chat");
         setChatConversationSelection(task.conversation_id);
         setChatTaskId(task.task_id);
@@ -1098,6 +1198,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       nonterminal_count: 0,
     },
     backgroundTasksLoading: backgroundTasksQuery.isPending && backgroundTasksQuery.isEnabled,
+    chatTimelineTarget,
+    chatSchedules: chatSchedulesQuery.data?.items ?? [],
+    chatSchedulesLoading: chatSchedulesQuery.isPending && chatSchedulesQuery.isEnabled,
     projectTurn: projectAssistant.turn,
     projectTrace,
     projectTraceState,
@@ -1216,6 +1319,15 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retryChatTurn: chatAssistant.retry,
     manageBackgroundTask,
     openBackgroundTask,
+    clearChatTimelineTarget: (key) => {
+      setChatTimelineTarget((current) => current?.key === key ? null : current);
+    },
+    createChatSchedule,
+    updateChatSchedule,
+    pauseChatSchedule: (schedule) => mutateChatSchedule(schedule, "pause"),
+    resumeChatSchedule: (schedule) => mutateChatSchedule(schedule, "resume"),
+    runNowChatSchedule: (schedule) => mutateChatSchedule(schedule, "run_now"),
+    cancelChatSchedule: (schedule) => mutateChatSchedule(schedule, "cancel"),
     retryPendingChatMessage: chatAssistant.retryPending,
     deletePendingChatMessage: chatAssistant.deletePending,
     takePendingChatMessageForEdit: chatAssistant.takePendingForEdit,

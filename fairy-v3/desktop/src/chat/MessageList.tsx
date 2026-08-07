@@ -20,6 +20,7 @@ import { m } from "motion/react";
 
 import type {
   AssistantTurn,
+  AssistantSchedule,
   EventEnvelope,
   Message,
   RealtimeTranscriptEntry,
@@ -38,9 +39,18 @@ import { RealtimeTranscript } from "./RealtimeTranscript";
 import type { OptimisticUserMessage } from "./useAssistantTurn";
 import type { TurnTraceQueryState } from "./useTurnTraces";
 import { MessageContent } from "./MessageContent";
+import { ScheduleCard, type ScheduleCardActions } from "./ScheduleCard";
+import type { ChatTimelineTarget } from "./timelineTarget";
 
 interface MessageListProps {
   messages: Message[];
+  schedules?: AssistantSchedule[];
+  schedulesLoading?: boolean;
+  scheduleBusy?: boolean;
+  scheduleActions?: ScheduleCardActions;
+  scheduleCanRunNow?(schedule: AssistantSchedule): boolean;
+  timelineTarget?: ChatTimelineTarget | null;
+  onTimelineTargetLocated?(key: string): void;
   realtimeTranscript: RealtimeTranscriptEntry[];
   streamedText: string;
   turn: AssistantTurn | null;
@@ -61,6 +71,13 @@ interface MessageListProps {
 
 export function MessageList({
   messages,
+  schedules = [],
+  schedulesLoading = false,
+  scheduleBusy = false,
+  scheduleActions = UNAVAILABLE_SCHEDULE_ACTIONS,
+  scheduleCanRunNow,
+  timelineTarget = null,
+  onTimelineTargetLocated,
   realtimeTranscript,
   streamedText,
   turn,
@@ -88,6 +105,14 @@ export function MessageList({
     () => messages.filter((message) => message.role !== "tool"),
     [messages],
   );
+  const timelineItems = useMemo(() => [
+    ...visibleMessages.map((message) => ({ kind: "message" as const, sequence: message.sequence, message })),
+    ...schedules.map((schedule) => ({
+      kind: "schedule" as const,
+      sequence: schedule.timeline_sequence,
+      schedule,
+    })),
+  ].sort((left, right) => left.sequence - right.sequence), [schedules, visibleMessages]);
   const durableAssistantForTurn =
     turn !== null &&
     visibleMessages.some(
@@ -114,7 +139,7 @@ export function MessageList({
   );
   const firstLineItemKey = lineItemKeys[0] ?? null;
   const conversationScopeKey =
-    visibleMessages[0]?.conversation_id ?? turn?.conversation_id ?? "empty";
+    visibleMessages[0]?.conversation_id ?? schedules[0]?.conversation_id ?? turn?.conversation_id ?? "empty";
 
   const updateActiveLine = useCallback(
     (list: HTMLDivElement | null) => {
@@ -145,7 +170,7 @@ export function MessageList({
     scrollToLatest(listRef.current, endRef.current, false);
     const frame = requestAnimationFrame(() => updateActiveLine(listRef.current));
     return () => cancelAnimationFrame(frame);
-  }, [messages, pendingUserMessage, streamedText, updateActiveLine]);
+  }, [messages, pendingUserMessage, schedules, streamedText, updateActiveLine]);
 
   useEffect(() => {
     followingRef.current = true;
@@ -164,8 +189,34 @@ export function MessageList({
     );
   }, [firstLineItemKey, lineItemAnchorKeys, lineItemKeySet]);
 
+  useEffect(() => {
+    if (timelineTarget === null) return;
+    const frame = requestAnimationFrame(() => {
+      const list = listRef.current;
+      if (list === null) return;
+      const candidates = Array.from(
+        list.querySelectorAll<HTMLElement>("[data-schedule-id], [data-turn-id]"),
+      );
+      const target = candidates.find((candidate) => (
+        timelineTarget.scheduleId !== null &&
+          candidate.dataset.scheduleId === timelineTarget.scheduleId
+      ) || (
+        timelineTarget.turnId !== null &&
+          candidate.dataset.turnId === timelineTarget.turnId
+      ));
+      if (target === undefined) return;
+      followingRef.current = false;
+      setShowJump(true);
+      scrollToAnchor(list, target, true);
+      target.focus({ preventScroll: true });
+      onTimelineTargetLocated?.(timelineTarget.key);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [onTimelineTargetLocated, schedules, timelineItems, timelineTarget]);
+
   if (
     visibleMessages.length === 0 &&
+    schedules.length === 0 &&
     realtimeTranscript.length === 0 &&
     !visibleStreamedText &&
     pendingUserMessage === null
@@ -214,13 +265,21 @@ export function MessageList({
         }}
       >
         <RealtimeTranscript entries={realtimeTranscript} />
-        {visibleMessages.map((message) => (
-          <Fragment key={message.id}>
+        {timelineItems.map((item) => item.kind === "schedule" ? (
+          <ScheduleCard
+            key={item.schedule.id}
+            schedule={item.schedule}
+            busy={scheduleBusy}
+            canRunNow={scheduleCanRunNow?.(item.schedule)}
+            actions={scheduleActions}
+          />
+        ) : (
+          <Fragment key={item.message.id}>
             <MessageRow
-              message={message}
+              message={item.message}
               anchorKey={
-                message.role === "user" || message.role === "assistant"
-                  ? messageLineKey(message.id)
+                item.message.role === "user" || item.message.role === "assistant"
+                  ? messageLineKey(item.message.id)
                   : null
               }
               registerAnchor={registerAnchor}
@@ -228,29 +287,32 @@ export function MessageList({
               onCopy={onCopy}
               onOpenLink={onOpenLink}
               evidenceSources={
-                message.role === "assistant" && message.turn_id !== null
-                  ? turnTraces[message.turn_id]?.evidence_sources ?? []
+                item.message.role === "assistant" && item.message.turn_id !== null
+                  ? turnTraces[item.message.turn_id]?.evidence_sources ?? []
                   : []
               }
             />
-            {message.role === "user" && message.turn_id !== null &&
-            (turnTraceStates[message.turn_id] !== undefined ||
-              turnTraces[message.turn_id] !== undefined ||
-              turn?.id === message.turn_id) ? (
+            {item.message.role === "user" && item.message.turn_id !== null &&
+            (turnTraceStates[item.message.turn_id] !== undefined ||
+              turnTraces[item.message.turn_id] !== undefined ||
+              turn?.id === item.message.turn_id) ? (
               <ActivityRail
-                turn={turn?.id === message.turn_id ? turn : null}
-                turnId={message.turn_id}
-                trace={turnTraces[message.turn_id] ?? null}
-                traceState={turnTraceStates[message.turn_id] ?? null}
+                turn={turn?.id === item.message.turn_id ? turn : null}
+                turnId={item.message.turn_id}
+                trace={turnTraces[item.message.turn_id] ?? null}
+                traceState={turnTraceStates[item.message.turn_id] ?? null}
                 events={events}
                 developerMode={developerMode}
-                onPause={turn?.id === message.turn_id ? onPauseWorkflow : undefined}
-                onResume={turn?.id === message.turn_id ? onResumeWorkflow : undefined}
-                onCancel={turn?.id === message.turn_id ? onCancelWorkflow : undefined}
+                onPause={turn?.id === item.message.turn_id ? onPauseWorkflow : undefined}
+                onResume={turn?.id === item.message.turn_id ? onResumeWorkflow : undefined}
+                onCancel={turn?.id === item.message.turn_id ? onCancelWorkflow : undefined}
               />
               ) : null}
           </Fragment>
         ))}
+        {schedulesLoading && schedules.length === 0 ? (
+          <div className="schedule-card-loading" role="status">Loading scheduled tasks</div>
+        ) : null}
         {pendingUserMessage !== null ? (
           <>
             <PendingMessageRow
@@ -347,6 +409,7 @@ function MessageRow({
       animate={{ opacity: 1, y: 0 }}
       className={`message-row message-${message.role}`}
       data-message-sequence={message.sequence}
+      data-turn-id={message.turn_id ?? undefined}
       data-message-line-key={anchorKey ?? undefined}
     >
       <div className="message-avatar" aria-hidden="true">
@@ -480,3 +543,15 @@ function formatTime(value: string): string {
     minute: "2-digit",
   }).format(parsed);
 }
+
+const unavailableScheduleAction = async () => {
+  throw new Error("Schedule controls are unavailable");
+};
+
+const UNAVAILABLE_SCHEDULE_ACTIONS: ScheduleCardActions = {
+  update: unavailableScheduleAction,
+  pause: unavailableScheduleAction,
+  resume: unavailableScheduleAction,
+  runNow: unavailableScheduleAction,
+  cancel: unavailableScheduleAction,
+};
