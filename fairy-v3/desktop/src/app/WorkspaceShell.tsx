@@ -18,6 +18,7 @@ import { TaskTimeline } from "./TaskTimeline";
 import type { WorkspaceModel } from "./workspaceModel";
 import "./workspace.css";
 import "./workspace-chat.css";
+import "./workspace-chat-responsive.css";
 import "./project-manager.css";
 
 interface WorkspaceShellProps {

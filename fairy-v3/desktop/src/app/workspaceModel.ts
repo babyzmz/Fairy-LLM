@@ -3,9 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
-import type { ScheduleRuleDraft } from "../chat/scheduleRules";
-import type { ChatTimelineTarget } from "../chat/timelineTarget";
-import type { AssistantBackgroundTask, AssistantSchedule, EventEnvelope, Task } from "../core/client";
+import type { EventEnvelope, Task } from "../core/client";
 import { runResilientEventDelivery } from "../core/eventStream";
 import {
   selectedProfileId as profileIdForSelection,
@@ -14,13 +12,7 @@ import {
 } from "../models/modelSelection";
 import { useModelSelection } from "../models/useModelSelection";
 import { useTaskMediaJobs } from "../media/useTaskMediaJobs";
-import type {
-  BackgroundTaskAction,
-  PermissionProfile,
-  WorkspaceClient,
-  WorkspaceMode,
-  WorkspaceModel,
-} from "./workspaceTypes";
+import type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 export type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 import {
   readEventCheckpoint,
@@ -29,10 +21,11 @@ import {
   usePersistedSelection,
   writeEventCheckpoint,
 } from "./workspacePreferences";
-import { equalOverrides, permissionUpdateKey } from "./workspaceCommandKeys";
 import { createWorkspaceFileActions } from "./workspaceFileActions";
 import { previewStartIdempotencyKey } from "./workspacePreviewActions";
 import { usePreviewActivation } from "./usePreviewActivation";
+import { useAssistantScheduling } from "./useAssistantScheduling";
+import { useWorkspacePermissions } from "./useWorkspacePermissions";
 import { useWorkspaceKnowledge } from "./workspaceKnowledgeModel";
 import { useWorkspaceBrowser } from "./workspaceBrowserModel";
 import {
@@ -47,7 +40,6 @@ import {
   coreErrorCode,
   errorMessage,
   firstError,
-  permissionQueryKey,
   requireId,
   selectedItem,
   selectWorkspaceTask,
@@ -80,11 +72,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const [eventStreamErrorCode, setEventStreamErrorCode] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
   const [chatTaskId, setChatTaskId] = useState<string | null>(null);
-  const [chatTimelineTarget, setChatTimelineTarget] = useState<ChatTimelineTarget | null>(null);
-  const [pendingBackgroundLocation, setPendingBackgroundLocation] = useState<{
-    conversationId: string;
-    turnId: string | null;
-  } | null>(null);
   const chatTaskIdRef = useRef<string | null>(null);
   chatTaskIdRef.current = chatTaskId;
   const [projectTurnTaskId, setProjectTurnTaskId] = useState<string | null>(null);
@@ -238,28 +225,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const chatApprovals = chatApprovalsQuery.data?.items ?? [];
-  const backgroundTasksQuery = useQuery({
-    queryKey: [
-      ...workspaceKey,
-      "background-tasks",
-      selectedChatConversation?.id ?? null,
-    ],
-    queryFn: () => client.assistant.backgroundTasks.list(selectedChatConversation?.id),
-    enabled: healthQuery.isSuccess && mode === "chat",
-    retry: false,
-    refetchInterval: 2_500,
-  });
-  const chatSchedulesQuery = useQuery({
-    queryKey: [
-      ...workspaceKey,
-      "assistant-schedules",
-      selectedChatConversation?.id ?? null,
-    ],
-    queryFn: () => client.assistant.schedules.list(requireId(selectedChatConversation?.id)),
-    enabled: healthQuery.isSuccess && mode === "chat" && selectedChatConversation !== null,
-    retry: false,
-    refetchInterval: 2_500,
-  });
   const selectedWorkspaceQuery = useQuery({
     queryKey: [
       ...workspaceKey,
@@ -497,199 +462,23 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     },
     [],
   );
-  const manageBackgroundTask = useCallback(
-    async (task: AssistantBackgroundTask, action: BackgroundTaskAction): Promise<void> => {
-      await runAction(async () => {
-        if (task.turn_id !== null) {
-          if (action === "pause") await client.assistant.turns.pause(task.turn_id);
-          else if (action === "resume") await client.assistant.turns.resume(task.turn_id);
-          else if (action === "cancel") {
-            if (task.turn_cancellation_revision === null) {
-              throw new Error("Background task cancellation revision is unavailable");
-            }
-            await client.assistant.turns.cancel({
-              turn_id: task.turn_id,
-              expected_cancellation_revision: task.turn_cancellation_revision,
-            });
-          } else {
-            throw new Error("A running task cannot be started again");
-          }
-        } else {
-          if (task.schedule_id === null || task.schedule_revision === null) {
-            throw new Error("Background schedule binding is unavailable");
-          }
-          if (action === "pause") {
-            await client.assistant.schedules.pause(task.schedule_id, task.schedule_revision);
-          } else if (action === "resume") {
-            await client.assistant.schedules.resume(task.schedule_id, task.schedule_revision);
-          } else if (action === "cancel") {
-            await client.assistant.schedules.cancel(task.schedule_id, task.schedule_revision);
-          } else {
-            await client.assistant.schedules.runNow(
-              task.schedule_id,
-              task.schedule_revision,
-              `background-run-now:${task.schedule_id}:${crypto.randomUUID()}`,
-            );
-          }
-        }
-      });
-      await queryClient.invalidateQueries({
-        queryKey: [...workspaceKey, "background-tasks"],
-      });
-      await queryClient.invalidateQueries({
-        queryKey: [...workspaceKey, "assistant-schedules"],
-      });
-    },
-    [client.assistant, queryClient, runAction],
-  );
-  const refreshAssistantSchedules = useCallback(async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({
-        queryKey: [...workspaceKey, "assistant-schedules"],
-      }),
-      queryClient.invalidateQueries({
-        queryKey: [...workspaceKey, "background-tasks"],
-      }),
-    ]);
-  }, [queryClient]);
-  const createChatSchedule = useCallback(
-    async (instruction: string, rule: ScheduleRuleDraft): Promise<void> => {
-      const conversationId = requireId(selectedChatConversation?.id);
-      const selection = modelController.selection;
-      await runAction(() => client.assistant.schedules.create({
-        conversation_id: conversationId,
-        instruction,
-        operation_mode: "answer",
-        ...rule,
-        ...(selection === null
-          ? { profile_id: requireId(selectedProfileId) }
-          : {
-              model_selection: {
-                mode: selection.mode,
-                model_id: selection.model_id,
-                revision: selection.revision,
-              },
-            }),
-        idempotency_key: `chat-schedule:${conversationId}:${crypto.randomUUID()}`,
-      }));
-      await refreshAssistantSchedules();
-    },
-    [
-      client.assistant.schedules,
-      modelController.selection,
-      refreshAssistantSchedules,
-      runAction,
-      selectedChatConversation?.id,
-      selectedProfileId,
-    ],
-  );
-  const updateChatSchedule = useCallback(
-    async (schedule: AssistantSchedule, rule: ScheduleRuleDraft): Promise<void> => {
-      await runAction(() => client.assistant.schedules.update({
-        schedule_id: schedule.id,
-        expected_revision: schedule.active_revision,
-        instruction: schedule.instruction,
-        operation_mode: schedule.operation_mode,
-        ...rule,
-      }));
-      await refreshAssistantSchedules();
-    },
-    [client.assistant.schedules, refreshAssistantSchedules, runAction],
-  );
-  const mutateChatSchedule = useCallback(
-    async (
-      schedule: AssistantSchedule,
-      action: "pause" | "resume" | "cancel" | "run_now",
-    ): Promise<void> => {
-      await runAction(async () => {
-        if (action === "pause") {
-          await client.assistant.schedules.pause(schedule.id, schedule.active_revision);
-        } else if (action === "resume") {
-          await client.assistant.schedules.resume(schedule.id, schedule.active_revision);
-        } else if (action === "cancel") {
-          await client.assistant.schedules.cancel(schedule.id, schedule.active_revision);
-        } else {
-          await client.assistant.schedules.runNow(
-            schedule.id,
-            schedule.active_revision,
-            `chat-schedule-run-now:${schedule.id}:${crypto.randomUUID()}`,
-          );
-        }
-      });
-      await refreshAssistantSchedules();
-    },
-    [client.assistant.schedules, refreshAssistantSchedules, runAction],
-  );
-  const openBackgroundTask = useCallback(
-    (task: AssistantBackgroundTask) => {
-      if (task.project_id === null) {
-        setChatTimelineTarget({
-          key: crypto.randomUUID(),
-          scheduleId: task.schedule_id,
-          turnId: task.turn_id,
-        });
-        setMode("chat");
-        setChatConversationSelection(task.conversation_id);
-        setChatTaskId(task.task_id);
-        return;
-      }
-      setMode("project");
-      setProjectSelection(task.project_id);
-      setConversationSelection(task.conversation_id);
-      setTaskSelection(task.task_id);
-    },
-    [
-      setChatConversationSelection,
-      setConversationSelection,
-      setMode,
-      setProjectSelection,
-      setTaskSelection,
-    ],
-  );
-  const openBackgroundTaskLocation = useCallback(
-    (conversationId: string, turnId: string | null) => {
-      setPendingBackgroundLocation({ conversationId, turnId });
-      void invalidateHistory();
-    },
-    [invalidateHistory],
-  );
-  useEffect(() => {
-    if (pendingBackgroundLocation === null) return;
-    const { conversationId, turnId } = pendingBackgroundLocation;
-    const conversation = allConversations.find((item) => item.id === conversationId);
-    if (conversation === undefined) return;
-    const conversationTasks = allTasks.filter((task) => task.conversation_id === conversationId);
-      const targetTask = conversationTasks.find(
-        (task) => task.id === conversation.active_task_id,
-      ) ?? [...conversationTasks]
-        .sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0] ?? null;
-      if (conversation.project_id !== null) {
-        setMode("project");
-        setProjectSelection(conversation.project_id);
-        setConversationSelection(conversation.id);
-        setTaskSelection(targetTask?.id ?? null);
-        setPendingBackgroundLocation(null);
-        return;
-      }
-      setChatTimelineTarget({
-        key: crypto.randomUUID(),
-        scheduleId: null,
-        turnId,
-      });
-      setMode("chat");
-      setChatConversationSelection(conversation.id);
-      setChatTaskId(targetTask?.id ?? null);
-      setPendingBackgroundLocation(null);
-  }, [
+  const assistantScheduling = useAssistantScheduling({
+    client,
+    enabled: healthQuery.isSuccess && mode === "chat",
+    currentConversationId: selectedChatConversation?.id ?? null,
+    selectedProfileId,
+    modelSelection: modelController.selection,
     allConversations,
     allTasks,
-    pendingBackgroundLocation,
-    setChatConversationSelection,
-    setConversationSelection,
+    runAction,
+    invalidateHistory,
     setMode,
     setProjectSelection,
+    setConversationSelection,
+    setChatConversationSelection,
     setTaskSelection,
-  ]);
+    setChatTaskId,
+  });
   const workspaceBrowser = useWorkspaceBrowser({
     client,
     enabled: healthQuery.isSuccess,
@@ -699,63 +488,16 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     runAction,
   });
 
-  const persistPermissions = useCallback(
-    async (profile: PermissionProfile, capabilityOverrides: Record<string, boolean>): Promise<void> => {
-      const current = permissionsQuery.data;
-      if (current === undefined) throw new Error("Core permission settings are unavailable");
-      if (current.profile === profile && equalOverrides(current.capability_overrides, capabilityOverrides)) {
-        return;
-      }
-      try {
-        const updated = await runAction(() =>
-          client.permissions.update({
-            profile,
-            capability_overrides: capabilityOverrides,
-            expected_revision: current.revision,
-            idempotency_key: permissionUpdateKey(current.revision, profile, capabilityOverrides),
-          }),
-        );
-        queryClient.setQueryData(permissionQueryKey, updated);
-      } catch (error) {
-        if (coreErrorCode(error) !== "VERSION_CONFLICT") throw error;
-        await Promise.allSettled([
-          queryClient.refetchQueries({ queryKey: permissionQueryKey, exact: true }),
-          queryClient.invalidateQueries({ queryKey: capabilityQueryKey }),
-        ]);
-        const conflict = new Error("Permissions changed on another device. Latest settings loaded; review and retry.");
-        setActionError(conflict.message);
-        setActionErrorCode("PERMISSION_CONFLICT");
-        throw conflict;
-      }
+  const { setPermissionProfile, setCapabilityEnabled } = useWorkspacePermissions({
+    client,
+    current: permissionsQuery.data,
+    capabilities: capabilitiesQuery.data,
+    runAction,
+    onConflict: (message, code) => {
+      setActionError(message);
+      setActionErrorCode(code);
     },
-    [client.permissions, permissionsQuery.data, queryClient, runAction],
-  );
-
-  const setPermissionProfile = useCallback(
-    async (profile: PermissionProfile): Promise<void> => {
-      const current = permissionsQuery.data;
-      if (current === undefined) throw new Error("Core permission settings are unavailable");
-      await persistPermissions(profile, current.capability_overrides);
-    },
-    [permissionsQuery.data, persistPermissions],
-  );
-
-  const setCapabilityEnabled = useCallback(
-    async (name: string, enabled: boolean): Promise<void> => {
-      const current = permissionsQuery.data;
-      const known = capabilitiesQuery.data?.command_metadata.some(
-        (definition) => definition.name === name && definition.model_visible,
-      );
-      if (current === undefined || !known) {
-        throw new Error("Core capability metadata is unavailable");
-      }
-      const overrides = { ...current.capability_overrides };
-      if (enabled) delete overrides[name];
-      else overrides[name] = false;
-      await persistPermissions(current.profile, overrides);
-    },
-    [capabilitiesQuery.data?.command_metadata, permissionsQuery.data, persistPermissions],
-  );
+  });
 
   const selectProjectFolder = useCallback(
     () => runAction(() => client.projects.selectFolder()),
@@ -1239,17 +981,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     chatPendingUserMessage: chatAssistant.pendingUserMessage,
     chatBusy: chatAssistant.isBusy,
     chatError: chatAssistant.error,
-    backgroundTasks: backgroundTasksQuery.data ?? {
-      current: [],
-      other: [],
-      recent: [],
-      nonterminal_count: 0,
-    },
-    backgroundTasksLoading: backgroundTasksQuery.isPending && backgroundTasksQuery.isEnabled,
-    backgroundTasksReady: backgroundTasksQuery.isSuccess,
-    chatTimelineTarget,
-    chatSchedules: chatSchedulesQuery.data?.items ?? [],
-    chatSchedulesLoading: chatSchedulesQuery.isPending && chatSchedulesQuery.isEnabled,
+    backgroundTasks: assistantScheduling.backgroundTasks,
+    backgroundTasksLoading: assistantScheduling.backgroundTasksLoading,
+    backgroundTasksReady: assistantScheduling.backgroundTasksReady,
+    chatTimelineTarget: assistantScheduling.chatTimelineTarget,
+    chatSchedules: assistantScheduling.chatSchedules,
+    chatSchedulesLoading: assistantScheduling.chatSchedulesLoading,
     projectTurn: projectAssistant.turn,
     projectTrace,
     projectTraceState,
@@ -1366,18 +1103,16 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     resumeChatTurn: chatAssistant.resumeWorkflow,
     steerChatTurn: chatAssistant.steer,
     retryChatTurn: chatAssistant.retry,
-    manageBackgroundTask,
-    openBackgroundTask,
-    openBackgroundTaskLocation,
-    clearChatTimelineTarget: (key) => {
-      setChatTimelineTarget((current) => current?.key === key ? null : current);
-    },
-    createChatSchedule,
-    updateChatSchedule,
-    pauseChatSchedule: (schedule) => mutateChatSchedule(schedule, "pause"),
-    resumeChatSchedule: (schedule) => mutateChatSchedule(schedule, "resume"),
-    runNowChatSchedule: (schedule) => mutateChatSchedule(schedule, "run_now"),
-    cancelChatSchedule: (schedule) => mutateChatSchedule(schedule, "cancel"),
+    manageBackgroundTask: assistantScheduling.manageBackgroundTask,
+    openBackgroundTask: assistantScheduling.openBackgroundTask,
+    openBackgroundTaskLocation: assistantScheduling.openBackgroundTaskLocation,
+    clearChatTimelineTarget: assistantScheduling.clearChatTimelineTarget,
+    createChatSchedule: assistantScheduling.createChatSchedule,
+    updateChatSchedule: assistantScheduling.updateChatSchedule,
+    pauseChatSchedule: assistantScheduling.pauseChatSchedule,
+    resumeChatSchedule: assistantScheduling.resumeChatSchedule,
+    runNowChatSchedule: assistantScheduling.runNowChatSchedule,
+    cancelChatSchedule: assistantScheduling.cancelChatSchedule,
     retryPendingChatMessage: chatAssistant.retryPending,
     deletePendingChatMessage: chatAssistant.deletePending,
     takePendingChatMessageForEdit: chatAssistant.takePendingForEdit,

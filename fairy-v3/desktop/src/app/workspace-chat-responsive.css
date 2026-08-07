@@ -1,0 +1,51 @@
+@media (max-width: 560px) {
+  .context-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .context-identity,
+  .telemetry-strip {
+    width: 100%;
+  }
+
+  .telemetry-strip {
+    justify-content: flex-start;
+  }
+
+  .telemetry-item {
+    border-left: 0;
+    border-right: 1px solid #444846;
+  }
+
+  .approval-block,
+  .version-decision-bar {
+    align-items: stretch;
+    flex-direction: column;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .create-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .message-line-preview-card {
+    transition: none;
+  }
+
+  .message-line-sidebar-item[data-streaming="true"] .message-line-sidebar-mark {
+    animation: none;
+  }
+}
