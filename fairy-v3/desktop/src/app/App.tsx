@@ -29,6 +29,10 @@ import type {
   MainViewRequest,
 } from "./mainViewBridge";
 import { WorkspaceShell } from "./WorkspaceShell";
+import {
+  type BackgroundTaskNotificationHost,
+  useBackgroundTaskNotifications,
+} from "./backgroundNotifications";
 import { type WorkspaceClient, useWorkspaceModel } from "./workspaceModel";
 
 interface AppProps {
@@ -37,6 +41,7 @@ interface AppProps {
   };
   settingsClient?: SettingsClient;
   mainViewHost?: MainViewHost;
+  backgroundNotificationHost?: BackgroundTaskNotificationHost;
 }
 
 const LazySettingsApp = lazy(async () => {
@@ -49,11 +54,19 @@ function Workspace({
   preferences,
   onOpenSettings,
   navigationRequest,
+  backgroundNotificationHost,
+  workspaceVisible,
 }: {
   client: AppProps["client"];
   preferences: DesktopPreferences | null;
   onOpenSettings(category?: SettingsCategoryId): Promise<void>;
-  navigationRequest: { sequence: number; conversationId: string | null };
+  navigationRequest: {
+    sequence: number;
+    conversationId: string | null;
+    turnId: string | null;
+  };
+  backgroundNotificationHost?: BackgroundTaskNotificationHost;
+  workspaceVisible: boolean;
 }) {
   const model = useWorkspaceModel(client);
   const lastNavigationSequence = useRef(-1);
@@ -63,8 +76,20 @@ function Workspace({
       || navigationRequest.sequence <= lastNavigationSequence.current
     ) return;
     lastNavigationSequence.current = navigationRequest.sequence;
-    model.selectChatConversation(navigationRequest.conversationId);
+    model.openBackgroundTaskLocation(
+      navigationRequest.conversationId,
+      navigationRequest.turnId,
+    );
   }, [model, navigationRequest]);
+  useBackgroundTaskNotifications({
+    page: model.backgroundTasks,
+    ready: model.backgroundTasksReady,
+    host: backgroundNotificationHost,
+    workspaceVisible,
+    selectedConversationId: model.mode === "chat"
+      ? model.selectedChatConversation?.id ?? null
+      : model.selectedConversation?.id ?? null,
+  });
   const [realtimePresence, setRealtimePresence] = useState<RealtimePresenceState>("idle");
   useEffect(
     () => subscribeRealtimePresence(
@@ -183,7 +208,12 @@ function WorkspacePresence({
   );
 }
 
-export function App({ client, settingsClient, mainViewHost }: AppProps) {
+export function App({
+  client,
+  settingsClient,
+  mainViewHost,
+  backgroundNotificationHost,
+}: AppProps) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -206,6 +236,7 @@ export function App({ client, settingsClient, mainViewHost }: AppProps) {
   const [workspaceNavigation, setWorkspaceNavigation] = useState({
     sequence: 0,
     conversationId: null as string | null,
+    turnId: null as string | null,
   });
   const focusReturnRef = useRef<HTMLElement | null>(null);
   const mainViewRef = useRef<MainView>("workspace");
@@ -251,6 +282,7 @@ export function App({ client, settingsClient, mainViewHost }: AppProps) {
         setWorkspaceNavigation({
           sequence: request.sequence,
           conversationId: request.conversation_id,
+          turnId: request.turn_id ?? null,
         });
       }
     }
@@ -372,6 +404,8 @@ export function App({ client, settingsClient, mainViewHost }: AppProps) {
           preferences={preferences}
           onOpenSettings={openSettings}
           navigationRequest={workspaceNavigation}
+          backgroundNotificationHost={backgroundNotificationHost}
+          workspaceVisible={mainView === "workspace"}
         />
       </div>
       {settingsMounted && settingsClient !== undefined ? (

@@ -68,6 +68,7 @@ use voice_worker::{
 
 pub mod ambient_context;
 pub mod ambient_dialogue_state;
+pub mod background_notification;
 pub mod capture;
 pub mod desktop_preferences;
 pub mod hardware_capabilities;
@@ -156,6 +157,7 @@ struct MainViewRequest {
     view: MainView,
     settings_category: Option<SettingsCategoryId>,
     conversation_id: Option<String>,
+    turn_id: Option<String>,
 }
 
 impl Default for MainViewRequest {
@@ -166,6 +168,7 @@ impl Default for MainViewRequest {
             view: MainView::Workspace,
             settings_category: None,
             conversation_id: None,
+            turn_id: None,
         }
     }
 }
@@ -176,6 +179,8 @@ struct MainViewNavigateInput {
     settings_category: Option<SettingsCategoryId>,
     #[serde(default)]
     conversation_id: Option<String>,
+    #[serde(default)]
+    turn_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2983,7 +2988,40 @@ fn update_main_view_request(
     } else {
         None
     };
+    request.turn_id = if input.view == MainView::Workspace {
+        input.turn_id
+    } else {
+        None
+    };
     Ok(request.clone())
+}
+
+#[tauri::command]
+fn background_task_notify(
+    window: WebviewWindow,
+    input: background_notification::BackgroundTaskNotificationInput,
+) -> Result<(), String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let notification = input.validate()?;
+    let app = window.app_handle().clone();
+    let application_id = app.config().identifier.clone();
+    let conversation_id = notification.conversation_id.clone();
+    let turn_id = notification.turn_id.clone();
+    background_notification::show(&application_id, &notification, move || {
+        let Some(state) = app.try_state::<DesktopState>() else {
+            return;
+        };
+        let _ = request_main_view(
+            &app,
+            state.inner(),
+            MainViewNavigateInput {
+                view: MainView::Workspace,
+                settings_category: None,
+                conversation_id: Some(conversation_id.clone()),
+                turn_id: turn_id.clone(),
+            },
+        );
+    })
 }
 
 fn request_main_view(
@@ -3076,6 +3114,7 @@ async fn open_realtime_main_chat(
             view: MainView::Workspace,
             settings_category: None,
             conversation_id: Some(conversation_id.to_owned()),
+            turn_id: None,
         },
     )
     .map(|_| ())
@@ -4352,6 +4391,7 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent)
                         view: MainView::Settings,
                         settings_category: None,
                         conversation_id: None,
+                        turn_id: None,
                     },
                 );
             }
@@ -4435,6 +4475,7 @@ async fn open_settings_window(
             view: MainView::Settings,
             settings_category: category,
             conversation_id: None,
+            turn_id: None,
         },
     )
     .map(|_| ())
@@ -5642,6 +5683,7 @@ pub fn run() {
             open_settings_window,
             main_view_request_get,
             main_view_navigate,
+            background_task_notify,
             voice_worker_health,
             voice_worker_prepare,
             voice_worker_stop,

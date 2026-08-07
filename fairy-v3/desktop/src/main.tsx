@@ -74,6 +74,7 @@ async function mountSurface() {
     { listen },
     { App },
     { TauriMainViewHost },
+    { TauriBackgroundTaskNotificationHost },
     { CoreClient },
     { TauriCoreTransport },
     { SettingsClient },
@@ -82,6 +83,7 @@ async function mountSurface() {
     import("@tauri-apps/api/event"),
     import("./app/App"),
     import("./app/mainViewBridge"),
+    import("./app/backgroundNotifications"),
     import("./core/client"),
     import("./core/tauriTransport"),
     import("./settings/client"),
@@ -99,6 +101,7 @@ async function mountSurface() {
       client={client}
       mainViewHost={mainViewHost}
       settingsClient={new SettingsClient(invoke)}
+      backgroundNotificationHost={new TauriBackgroundTaskNotificationHost(invoke)}
     />,
   );
 }

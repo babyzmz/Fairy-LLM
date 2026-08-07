@@ -9,6 +9,7 @@ export interface MainViewRequest {
   view: MainView;
   settings_category: SettingsCategoryId | null;
   conversation_id: string | null;
+  turn_id?: string | null;
 }
 
 export interface MainViewHost {

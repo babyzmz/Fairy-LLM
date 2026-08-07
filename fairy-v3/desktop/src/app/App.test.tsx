@@ -455,6 +455,7 @@ describe("App", () => {
       view: "workspace" as const,
       settings_category: null,
       conversation_id: ID.scratchConversation,
+      turn_id: ID.turn,
     };
     const mainViewHost: MainViewHost = {
       get: vi.fn(async () => request),
@@ -474,6 +475,9 @@ describe("App", () => {
     render(<App client={client} mainViewHost={mainViewHost} />);
 
     expect(await screen.findByText("Scratch chat is durable")).toBeVisible();
+    await waitFor(() => expect(
+      document.querySelector(`[data-turn-id="${ID.turn}"]`),
+    ).toHaveFocus());
     expect(screen.getByTestId("workspace-view")).not.toHaveAttribute("hidden");
   });
 

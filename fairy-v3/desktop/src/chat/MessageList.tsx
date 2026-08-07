@@ -411,6 +411,7 @@ function MessageRow({
       data-message-sequence={message.sequence}
       data-turn-id={message.turn_id ?? undefined}
       data-message-line-key={anchorKey ?? undefined}
+      tabIndex={message.turn_id === null ? undefined : -1}
     >
       <div className="message-avatar" aria-hidden="true">
         <MessageIcon role={message.role} />

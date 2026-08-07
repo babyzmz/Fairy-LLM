@@ -81,6 +81,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const [isActing, setIsActing] = useState(false);
   const [chatTaskId, setChatTaskId] = useState<string | null>(null);
   const [chatTimelineTarget, setChatTimelineTarget] = useState<ChatTimelineTarget | null>(null);
+  const [pendingBackgroundLocation, setPendingBackgroundLocation] = useState<{
+    conversationId: string;
+    turnId: string | null;
+  } | null>(null);
   const chatTaskIdRef = useRef<string | null>(null);
   chatTaskIdRef.current = chatTaskId;
   const [projectTurnTaskId, setProjectTurnTaskId] = useState<string | null>(null);
@@ -642,6 +646,50 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       setTaskSelection,
     ],
   );
+  const openBackgroundTaskLocation = useCallback(
+    (conversationId: string, turnId: string | null) => {
+      setPendingBackgroundLocation({ conversationId, turnId });
+      void invalidateHistory();
+    },
+    [invalidateHistory],
+  );
+  useEffect(() => {
+    if (pendingBackgroundLocation === null) return;
+    const { conversationId, turnId } = pendingBackgroundLocation;
+    const conversation = allConversations.find((item) => item.id === conversationId);
+    if (conversation === undefined) return;
+    const conversationTasks = allTasks.filter((task) => task.conversation_id === conversationId);
+      const targetTask = conversationTasks.find(
+        (task) => task.id === conversation.active_task_id,
+      ) ?? [...conversationTasks]
+        .sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0] ?? null;
+      if (conversation.project_id !== null) {
+        setMode("project");
+        setProjectSelection(conversation.project_id);
+        setConversationSelection(conversation.id);
+        setTaskSelection(targetTask?.id ?? null);
+        setPendingBackgroundLocation(null);
+        return;
+      }
+      setChatTimelineTarget({
+        key: crypto.randomUUID(),
+        scheduleId: null,
+        turnId,
+      });
+      setMode("chat");
+      setChatConversationSelection(conversation.id);
+      setChatTaskId(targetTask?.id ?? null);
+      setPendingBackgroundLocation(null);
+  }, [
+    allConversations,
+    allTasks,
+    pendingBackgroundLocation,
+    setChatConversationSelection,
+    setConversationSelection,
+    setMode,
+    setProjectSelection,
+    setTaskSelection,
+  ]);
   const workspaceBrowser = useWorkspaceBrowser({
     client,
     enabled: healthQuery.isSuccess,
@@ -1198,6 +1246,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       nonterminal_count: 0,
     },
     backgroundTasksLoading: backgroundTasksQuery.isPending && backgroundTasksQuery.isEnabled,
+    backgroundTasksReady: backgroundTasksQuery.isSuccess,
     chatTimelineTarget,
     chatSchedules: chatSchedulesQuery.data?.items ?? [],
     chatSchedulesLoading: chatSchedulesQuery.isPending && chatSchedulesQuery.isEnabled,
@@ -1319,6 +1368,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retryChatTurn: chatAssistant.retry,
     manageBackgroundTask,
     openBackgroundTask,
+    openBackgroundTaskLocation,
     clearChatTimelineTarget: (key) => {
       setChatTimelineTarget((current) => current?.key === key ? null : current);
     },

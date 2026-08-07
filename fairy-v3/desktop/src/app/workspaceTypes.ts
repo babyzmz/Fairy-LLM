@@ -210,6 +210,7 @@ export interface WorkspaceModel {
   chatError: string | null;
   backgroundTasks: AssistantBackgroundTaskPage;
   backgroundTasksLoading: boolean;
+  backgroundTasksReady: boolean;
   chatTimelineTarget: ChatTimelineTarget | null;
   chatSchedules: AssistantSchedule[];
   chatSchedulesLoading: boolean;
@@ -279,6 +280,7 @@ export interface WorkspaceModel {
     action: BackgroundTaskAction,
   ): Promise<void>;
   openBackgroundTask(task: AssistantBackgroundTask): void;
+  openBackgroundTaskLocation(conversationId: string, turnId: string | null): void;
   clearChatTimelineTarget(key: string): void;
   createChatSchedule(instruction: string, rule: ScheduleRuleDraft): Promise<void>;
   updateChatSchedule(schedule: AssistantSchedule, rule: ScheduleRuleDraft): Promise<void>;
