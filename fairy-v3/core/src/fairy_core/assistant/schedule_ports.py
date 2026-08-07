@@ -54,6 +54,15 @@ class AssistantScheduleRepository(Protocol):
 
     def get_occurrence(self, occurrence_id: UUID) -> AssistantScheduleOccurrence | None: ...
 
+    def get_occurrence_for_turn(self, turn_id: UUID) -> AssistantScheduleOccurrence | None: ...
+
+    def get_occurrence_by_idempotency_key(
+        self,
+        *,
+        schedule_id: UUID,
+        idempotency_key: str,
+    ) -> AssistantScheduleOccurrence | None: ...
+
     def get_occurrence_at(
         self,
         *,
@@ -92,6 +101,13 @@ class AssistantScheduleRepository(Protocol):
         self,
         *,
         schedule_id: UUID,
+        limit: int = 100,
+    ) -> tuple[AssistantScheduleOccurrence, ...]: ...
+
+    def list_occurrences_by_status(
+        self,
+        *,
+        statuses: frozenset[AssistantOccurrenceStatus],
         limit: int = 100,
     ) -> tuple[AssistantScheduleOccurrence, ...]: ...
 

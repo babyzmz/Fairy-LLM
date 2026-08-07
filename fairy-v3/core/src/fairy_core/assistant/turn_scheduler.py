@@ -95,12 +95,15 @@ class AssistantTurnScheduler:
         *,
         restart_if_running: bool = False,
     ) -> AssistantTurn:
-        del restart_if_running
         turn = self._ledger.get_turn(turn_id)
         if turn.status in _TERMINAL_TURN_STATUSES:
             return turn
         turn = self._require_workflow_turn(turn_id)
-        self._start_workflow(turn)
+        if restart_if_running:
+            assert turn.workflow_run_id is not None
+            self._workflow_scheduler.resume_after_boundary(turn.workflow_run_id)
+        else:
+            self._start_workflow(turn)
         return self._ledger.get_turn(turn_id)
 
     def _require_workflow_turn(self, turn_id: UUID) -> AssistantTurn:

@@ -282,6 +282,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "sqlalchemy" },
+    { name = "tzdata" },
 ]
 
 [package.metadata]
@@ -293,6 +294,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.13,<3" },
     { name = "pyyaml", specifier = ">=6.0.3,<7" },
     { name = "sqlalchemy", specifier = ">=2.0.51,<2.1" },
+    { name = "tzdata", specifier = ">=2025.3" },
 ]
 
 [package.metadata.requires-dev]

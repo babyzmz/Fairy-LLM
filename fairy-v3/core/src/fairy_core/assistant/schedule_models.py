@@ -11,6 +11,7 @@ from uuid import UUID
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.contracts.common import ExecutionTarget
 from fairy_core.domain.ids import new_id
+from fairy_core.domain.models import OperationMode
 from fairy_core.model_catalog.models import ModelSelectionSnapshot
 
 
@@ -73,6 +74,7 @@ class AssistantSchedule:
     workspace_id: UUID
     version_id: UUID | None
     instruction: str
+    operation_mode: OperationMode
     trigger_kind: AssistantScheduleTriggerKind
     trigger_rule: Mapping[str, Any]
     timezone: str
@@ -159,6 +161,7 @@ class AssistantSchedule:
         permission_profile: PermissionProfile,
         timeline_sequence: int,
         idempotency_key: str,
+        operation_mode: OperationMode = OperationMode.ANSWER,
         profile_id: str | None = None,
         model_selection: ModelSelectionSnapshot | None = None,
         task_id: UUID | None = None,
@@ -175,6 +178,7 @@ class AssistantSchedule:
             workspace_id=workspace_id,
             version_id=version_id,
             instruction=instruction,
+            operation_mode=OperationMode(operation_mode),
             trigger_kind=trigger_kind,
             trigger_rule=trigger_rule,
             timezone=timezone,
@@ -251,6 +255,7 @@ class AssistantScheduleOccurrence:
     workflow_run_id: UUID | None
     public_error: str | None
     created_at: datetime
+    idempotency_key: str | None = None
     dispatched_at: datetime | None = None
     completed_at: datetime | None = None
 
@@ -265,6 +270,11 @@ class AssistantScheduleOccurrence:
             raise ValueError("Terminal Assistant occurrence requires completed_at")
         if self.public_error is not None and len(self.public_error) > 500:
             raise ValueError("Assistant occurrence public error is too large")
+        if self.idempotency_key is not None:
+            normalized_key = self.idempotency_key.strip()
+            if not normalized_key or len(normalized_key) > 512:
+                raise ValueError("Assistant occurrence idempotency key is invalid")
+            object.__setattr__(self, "idempotency_key", normalized_key)
         for name in ("scheduled_for", "created_at", "dispatched_at", "completed_at"):
             value = getattr(self, name)
             if value is not None:
@@ -278,6 +288,7 @@ class AssistantScheduleOccurrence:
         schedule_revision: int,
         scheduled_for: datetime,
         coalesced_count: int = 0,
+        idempotency_key: str | None = None,
         now: datetime | None = None,
     ) -> AssistantScheduleOccurrence:
         return cls(
@@ -291,6 +302,7 @@ class AssistantScheduleOccurrence:
             workflow_run_id=None,
             public_error=None,
             created_at=now or datetime.now(UTC),
+            idempotency_key=idempotency_key,
         )
 
     def coalesce(

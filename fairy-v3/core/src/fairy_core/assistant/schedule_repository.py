@@ -18,6 +18,7 @@ from fairy_core.assistant.schedule_models import (
 )
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.contracts.common import ExecutionTarget
+from fairy_core.domain.models import OperationMode
 from fairy_core.model_catalog.models import ModelSelectionMode, ModelSelectionSnapshot
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.storage.schema import assistant_schedule_occurrences, assistant_schedules
@@ -256,6 +257,13 @@ class SqlAlchemyAssistantScheduleRepository:
         self,
         occurrence: AssistantScheduleOccurrence,
     ) -> AssistantScheduleOccurrence:
+        if occurrence.idempotency_key is not None:
+            replay = self.get_occurrence_by_idempotency_key(
+                schedule_id=occurrence.schedule_id,
+                idempotency_key=occurrence.idempotency_key,
+            )
+            if replay is not None:
+                return replay
         existing = self.get_occurrence_at(
             schedule_id=occurrence.schedule_id,
             scheduled_for=occurrence.scheduled_for,
@@ -277,6 +285,38 @@ class SqlAlchemyAssistantScheduleRepository:
                 select(assistant_schedule_occurrences).where(
                     assistant_schedule_occurrences.c.tenant_id == self._tenant_id,
                     assistant_schedule_occurrences.c.id == str(occurrence_id),
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _occurrence_from_row(row) if row is not None else None
+
+    def get_occurrence_for_turn(self, turn_id: UUID) -> AssistantScheduleOccurrence | None:
+        row = (
+            self._connection.execute(
+                select(assistant_schedule_occurrences).where(
+                    assistant_schedule_occurrences.c.tenant_id == self._tenant_id,
+                    assistant_schedule_occurrences.c.turn_id == str(turn_id),
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _occurrence_from_row(row) if row is not None else None
+
+    def get_occurrence_by_idempotency_key(
+        self,
+        *,
+        schedule_id: UUID,
+        idempotency_key: str,
+    ) -> AssistantScheduleOccurrence | None:
+        row = (
+            self._connection.execute(
+                select(assistant_schedule_occurrences).where(
+                    assistant_schedule_occurrences.c.tenant_id == self._tenant_id,
+                    assistant_schedule_occurrences.c.schedule_id == str(schedule_id),
+                    assistant_schedule_occurrences.c.idempotency_key == idempotency_key,
                 )
             )
             .mappings()
@@ -460,6 +500,36 @@ class SqlAlchemyAssistantScheduleRepository:
         )
         return tuple(_occurrence_from_row(row) for row in rows)
 
+    def list_occurrences_by_status(
+        self,
+        *,
+        statuses: frozenset[AssistantOccurrenceStatus],
+        limit: int = 100,
+    ) -> tuple[AssistantScheduleOccurrence, ...]:
+        if not statuses:
+            return ()
+        if not 1 <= limit <= 500:
+            raise ValueError("Assistant occurrence list limit is invalid")
+        rows = (
+            self._connection.execute(
+                select(assistant_schedule_occurrences)
+                .where(
+                    assistant_schedule_occurrences.c.tenant_id == self._tenant_id,
+                    assistant_schedule_occurrences.c.status.in_(
+                        tuple(status.value for status in statuses)
+                    ),
+                )
+                .order_by(
+                    assistant_schedule_occurrences.c.scheduled_for,
+                    assistant_schedule_occurrences.c.id,
+                )
+                .limit(limit)
+            )
+            .mappings()
+            .all()
+        )
+        return tuple(_occurrence_from_row(row) for row in rows)
+
 
 def _schedule_record(tenant_id: str, schedule: AssistantSchedule) -> dict[str, object]:
     return {
@@ -471,6 +541,7 @@ def _schedule_record(tenant_id: str, schedule: AssistantSchedule) -> dict[str, o
         "workspace_id": str(schedule.workspace_id),
         "version_id": str(schedule.version_id) if schedule.version_id else None,
         "instruction": schedule.instruction,
+        "operation_mode": schedule.operation_mode.value,
         "trigger_kind": schedule.trigger_kind.value,
         "trigger_rule": dict(schedule.trigger_rule),
         "timezone": schedule.timezone,
@@ -506,6 +577,7 @@ def _schedule_from_row(row: Mapping[str, Any]) -> AssistantSchedule:
         workspace_id=UUID(str(row["workspace_id"])),
         version_id=_uuid(row["version_id"]),
         instruction=str(row["instruction"]),
+        operation_mode=OperationMode(str(row["operation_mode"])),
         trigger_kind=AssistantScheduleTriggerKind(str(row["trigger_kind"])),
         trigger_rule=dict(row["trigger_rule"]),
         timezone=str(row["timezone"]),
@@ -549,6 +621,7 @@ def _occurrence_record(
             str(occurrence.workflow_run_id) if occurrence.workflow_run_id else None
         ),
         "public_error": occurrence.public_error,
+        "idempotency_key": occurrence.idempotency_key,
         "created_at": occurrence.created_at,
         "dispatched_at": occurrence.dispatched_at,
         "completed_at": occurrence.completed_at,
@@ -567,6 +640,9 @@ def _occurrence_from_row(row: Mapping[str, Any]) -> AssistantScheduleOccurrence:
         workflow_run_id=_uuid(row["workflow_run_id"]),
         public_error=str(row["public_error"]) if row["public_error"] is not None else None,
         created_at=_datetime(row["created_at"]),
+        idempotency_key=(
+            str(row["idempotency_key"]) if row["idempotency_key"] is not None else None
+        ),
         dispatched_at=_optional_datetime(row["dispatched_at"]),
         completed_at=_optional_datetime(row["completed_at"]),
     )

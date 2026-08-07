@@ -8,7 +8,12 @@ from threading import Event, Lock
 from fairy_core.contracts.common import ExecutionTarget
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
-from fairy_core.workflow.models import WorkflowNode, WorkflowRun, WorkflowTriggerKind
+from fairy_core.workflow.models import (
+    WorkflowNode,
+    WorkflowRun,
+    WorkflowRunStatus,
+    WorkflowTriggerKind,
+)
 from fairy_core.workflow.scheduler import (
     WorkflowAdapterRegistry,
     WorkflowNodeResult,
@@ -234,6 +239,20 @@ class ApprovalAdapter:
         return WorkflowNodeResult(output={"approved": True})
 
 
+class RacingApprovalAdapter:
+    def __init__(self) -> None:
+        self.started = Event()
+        self.release = Event()
+
+    def execute(self, node, cancellation):
+        cancellation.raise_if_cancelled()
+        if node.attempt_count == 1:
+            self.started.set()
+            assert self.release.wait(2)
+            raise WorkflowWaitingForApproval({"approval_id": "approval-race"})
+        return WorkflowNodeResult(output={"approved": True})
+
+
 def test_waiting_for_approval_releases_the_lease_and_resumes(tmp_path: Path) -> None:
     engine = create_sqlite_core_engine(tmp_path / "core.db")
     factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
@@ -272,5 +291,59 @@ def test_waiting_for_approval_releases_the_lease_and_resumes(tmp_path: Path) -> 
         scheduler.close()
 
     assert completed.run.status.value == "completed"
+    assert completed.nodes[0].attempt_count == 2
+    engine.dispose()
+
+
+def test_approval_resume_requested_before_waiting_is_applied_at_boundary(
+    tmp_path: Path,
+) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "core.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+    run = WorkflowRun.create(
+        owner_kind="test",
+        owner_id="approval-race",
+        execution_target=ExecutionTarget.LOCAL,
+        trigger_kind=WorkflowTriggerKind.MANUAL,
+        idempotency_key="approval-race",
+    )
+    node = WorkflowNode.create(
+        run_id=run.id,
+        plan_revision=1,
+        node_key="approval-race",
+        kind="test.approval-race",
+        payload={},
+        public_summary="Approval race",
+        max_attempts=2,
+    )
+    with factory() as unit_of_work:
+        unit_of_work.workflows.create(run, nodes=(node,), edges=())
+        unit_of_work.commit()
+    adapter = RacingApprovalAdapter()
+    scheduler = WorkflowScheduler(
+        unit_of_work_factory=factory,
+        adapters=WorkflowAdapterRegistry({"test.approval-race": adapter}),
+        poll_interval=0.01,
+    )
+    try:
+        scheduler.wake()
+        assert adapter.started.wait(2)
+        scheduler.resume_after_boundary(run.id)
+        adapter.release.set()
+        deadline = time.monotonic() + 5
+        while True:
+            with factory() as unit_of_work:
+                completed = unit_of_work.workflows.get(run.id)
+            assert completed is not None
+            if completed.run.status is WorkflowRunStatus.COMPLETED:
+                break
+            if time.monotonic() >= deadline:
+                raise AssertionError("Approval race Workflow did not resume")
+            time.sleep(0.01)
+    finally:
+        adapter.release.set()
+        scheduler.close()
+
+    assert completed.run.status is WorkflowRunStatus.COMPLETED
     assert completed.nodes[0].attempt_count == 2
     engine.dispose()

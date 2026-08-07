@@ -4,6 +4,17 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
+from fairy_core.contracts.assistant_schedules import (
+    AssistantScheduleCreateInput,
+    AssistantScheduleIdInput,
+    AssistantScheduleListInput,
+    AssistantScheduleModel,
+    AssistantScheduleOccurrenceModel,
+    AssistantSchedulePageModel,
+    AssistantScheduleRevisionInput,
+    AssistantScheduleRunNowInput,
+    AssistantScheduleUpdateInput,
+)
 from fairy_core.contracts.browser import (
     BrowserActionInput,
     BrowserActionResultModel,
@@ -392,6 +403,54 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "assistant.turns.cancel",
             AssistantTurnCancelInput,
             AssistantTurnModel,
+        ),
+        "assistant.schedules.cancel": CoreMethod(
+            "assistant.schedules.cancel",
+            AssistantScheduleRevisionInput,
+            AssistantScheduleModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "assistant.schedules.create": CoreMethod(
+            "assistant.schedules.create",
+            AssistantScheduleCreateInput,
+            AssistantScheduleModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "assistant.schedules.get": CoreMethod(
+            "assistant.schedules.get",
+            AssistantScheduleIdInput,
+            AssistantScheduleModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "assistant.schedules.list": CoreMethod(
+            "assistant.schedules.list",
+            AssistantScheduleListInput,
+            AssistantSchedulePageModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "assistant.schedules.pause": CoreMethod(
+            "assistant.schedules.pause",
+            AssistantScheduleRevisionInput,
+            AssistantScheduleModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "assistant.schedules.resume": CoreMethod(
+            "assistant.schedules.resume",
+            AssistantScheduleRevisionInput,
+            AssistantScheduleModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "assistant.schedules.run_now": CoreMethod(
+            "assistant.schedules.run_now",
+            AssistantScheduleRunNowInput,
+            AssistantScheduleOccurrenceModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "assistant.schedules.update": CoreMethod(
+            "assistant.schedules.update",
+            AssistantScheduleUpdateInput,
+            AssistantScheduleModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "assistant.turns.create": CoreMethod(
             "assistant.turns.create",

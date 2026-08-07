@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260807_0049"]
+    assert scripts.get_heads() == ["20260807_0050"]
+    assert scripts.get_revision("20260807_0050").down_revision == "20260807_0049"
     assert scripts.get_revision("20260807_0049").down_revision == "20260807_0048"
     assert scripts.get_revision("20260807_0048").down_revision == "20260807_0047"
     assert scripts.get_revision("20260807_0047").down_revision == "20260807_0046"
@@ -281,6 +282,23 @@ def test_assistant_schedule_claim_migration_is_reversible() -> None:
 
     downgrade_ddl = " ".join(output.getvalue().upper().split())
     assert "DROP INDEX UQ_CORE_ASSISTANT_OCCURRENCES_PENDING" in downgrade_ddl
+
+
+def test_assistant_schedule_operation_mode_migration_is_reversible() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260807_0049:20260807_0050", sql=True)
+
+    upgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert "ADD COLUMN OPERATION_MODE VARCHAR(32) DEFAULT 'ANSWER' NOT NULL" in upgrade_ddl
+    assert "CK_CORE_ASSISTANT_SCHEDULES_OPERATION_MODE" in upgrade_ddl
+
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260807_0050:20260807_0049", sql=True)
+
+    downgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert "DROP COLUMN OPERATION_MODE" in downgrade_ddl
 
 
 def test_media_generation_work_migration_has_reversible_fenced_tenant_ddl() -> None:

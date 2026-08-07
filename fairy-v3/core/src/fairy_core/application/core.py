@@ -351,11 +351,17 @@ class CoreApplication(CoreContextMixin, CoreSupportMixin):
             raise ValueError("only a scratch conversation workspace can be purged")
         self._workspaces.purge_workspace(conversation.workspace_id)
 
-    def create_task(self, request: TaskCreate) -> TaskContext:
+    def create_task(
+        self,
+        request: TaskCreate,
+        *,
+        base_version_id_override: UUID | None = None,
+    ) -> TaskContext:
         idempotency_key = normalize_idempotency_key(request.idempotency_key)
         prepared = self._prepare_task_intent(
             request,
             idempotency_key=idempotency_key,
+            base_version_id_override=base_version_id_override,
         )
         if isinstance(prepared, TaskContext):
             return prepared
@@ -481,19 +487,27 @@ class CoreApplication(CoreContextMixin, CoreSupportMixin):
         request: TaskCreate,
         *,
         idempotency_key: str,
+        base_version_id_override: UUID | None = None,
     ) -> TaskIntent | TaskContext:
         try:
             with self._transaction() as (unit_of_work, commands):
                 existing = unit_of_work.state.find_task_by_idempotency_key(idempotency_key)
                 if existing is not None:
                     validate_task_replay(existing, request)
+                    if (
+                        base_version_id_override is not None
+                        and existing.base_version_id != base_version_id_override
+                    ):
+                        raise VersionConflictError(
+                            "scheduled Task idempotency key is bound to another base Version"
+                        )
                     return self._context_for(unit_of_work.state, existing)
 
                 conversation = self._require_conversation(
                     unit_of_work.state,
                     request.conversation_id,
                 )
-                base_version_id = (
+                base_version_id = base_version_id_override or (
                     conversation.active_draft_version_id or conversation.base_version_id
                 )
                 task = Task.create(
@@ -511,6 +525,13 @@ class CoreApplication(CoreContextMixin, CoreSupportMixin):
                 parent: Version | None = None
                 if base_version_id is not None:
                     parent = self._require_version(unit_of_work.state, base_version_id)
+                    if (
+                        parent.workspace_id != conversation.workspace_id
+                        or parent.project_id != conversation.project_id
+                    ):
+                        raise VersionConflictError(
+                            "scheduled base Version does not belong to the conversation Workspace"
+                        )
                 version_id = new_id()
                 root_hint = self._workspaces.version_path(
                     conversation.workspace_id,

@@ -44,6 +44,7 @@ def build_assistant_schedule_schema(
         Column("workspace_id", String(ID_LENGTH), nullable=False),
         Column("version_id", String(ID_LENGTH)),
         Column("instruction", Text, nullable=False),
+        Column("operation_mode", String(32), nullable=False),
         Column("trigger_kind", String(32), nullable=False),
         Column("trigger_rule", JSON, nullable=False),
         Column("timezone", String(255), nullable=False),
@@ -82,6 +83,10 @@ def build_assistant_schedule_schema(
         CheckConstraint(
             "trigger_kind IN ('once','daily','weekdays','weekly','interval')",
             name="ck_core_assistant_schedules_trigger",
+        ),
+        CheckConstraint(
+            "operation_mode IN ('answer','continue_current_chat_draft','create_new_version')",
+            name="ck_core_assistant_schedules_operation_mode",
         ),
         CheckConstraint(
             "status IN ('active','paused','completed','cancelled')",
@@ -160,6 +165,7 @@ def build_assistant_schedule_schema(
         Column("turn_id", String(ID_LENGTH)),
         Column("workflow_run_id", String(ID_LENGTH)),
         Column("public_error", String(500)),
+        Column("idempotency_key", String(512)),
         Column("created_at", UTCDateTime(), nullable=False),
         Column("dispatched_at", UTCDateTime()),
         Column("completed_at", UTCDateTime()),
@@ -234,6 +240,15 @@ def build_assistant_schedule_schema(
         unique=True,
         sqlite_where=occurrences.c.status == "pending",
         postgresql_where=occurrences.c.status == "pending",
+    )
+    Index(
+        "uq_core_assistant_occurrences_idempotency",
+        occurrences.c.tenant_id,
+        occurrences.c.schedule_id,
+        occurrences.c.idempotency_key,
+        unique=True,
+        sqlite_where=occurrences.c.idempotency_key.is_not(None),
+        postgresql_where=occurrences.c.idempotency_key.is_not(None),
     )
     return schedules, occurrences
 

@@ -115,6 +115,93 @@ export type AssistantTurnRetryInput = Schemas["AssistantTurnRetryInput"];
 export type AssistantTurnRunInput = Schemas["AssistantTurnRunInput"];
 export type AssistantTurnStartInput = Schemas["AssistantTurnStartInput"];
 export type AssistantWorkflowSummary = Schemas["AssistantWorkflowSummaryModel"];
+export type AssistantScheduleStatus = "active" | "paused" | "completed" | "cancelled";
+export type AssistantScheduleTriggerKind =
+  | "once"
+  | "daily"
+  | "weekdays"
+  | "weekly"
+  | "interval";
+export type AssistantOccurrenceStatus =
+  | "pending"
+  | "dispatched"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "attention_required"
+  | "coalesced";
+export type AssistantScheduleOperationMode =
+  | "answer"
+  | "continue_current_chat_draft"
+  | "create_new_version";
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type ModelSelectionSnapshotInput = Schemas["ModelSelectionSnapshotInput"];
+export type ModelSelectionSnapshot = Schemas["ModelSelectionSnapshotModel"];
+export interface AssistantScheduleCreateInput {
+  conversation_id: string;
+  instruction: string;
+  operation_mode: AssistantScheduleOperationMode;
+  trigger_kind: AssistantScheduleTriggerKind;
+  trigger_rule: Record<string, JsonValue>;
+  timezone: string;
+  next_fire_at: string;
+  profile_id?: string | null;
+  model_selection?: ModelSelectionSnapshotInput | null;
+  idempotency_key: string;
+}
+export interface AssistantScheduleUpdateInput {
+  schedule_id: string;
+  expected_revision: number;
+  instruction: string;
+  operation_mode: AssistantScheduleOperationMode;
+  trigger_kind: AssistantScheduleTriggerKind;
+  trigger_rule: Record<string, JsonValue>;
+  timezone: string;
+  next_fire_at: string;
+}
+export interface AssistantSchedule {
+  id: string;
+  conversation_id: string;
+  task_id: string | null;
+  project_id: string | null;
+  workspace_id: string;
+  version_id: string | null;
+  instruction: string;
+  operation_mode: AssistantScheduleOperationMode;
+  trigger_kind: AssistantScheduleTriggerKind;
+  trigger_rule: Record<string, JsonValue>;
+  timezone: string;
+  next_fire_at: string;
+  execution_target: "local";
+  profile_id: string | null;
+  model_selection: ModelSelectionSnapshot | null;
+  permission_profile: "observe" | "standard" | "autonomous";
+  timeline_sequence: number;
+  status: AssistantScheduleStatus;
+  active_revision: number;
+  consecutive_failures: number;
+  attention_code: string | null;
+  created_at: string;
+  updated_at: string;
+  last_fire_at: string | null;
+  paused_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+}
+export interface AssistantScheduleOccurrence {
+  id: string;
+  schedule_id: string;
+  schedule_revision: number;
+  scheduled_for: string;
+  status: AssistantOccurrenceStatus;
+  coalesced_count: number;
+  turn_id: string | null;
+  workflow_run_id: string | null;
+  public_error: string | null;
+  created_at: string;
+  dispatched_at: string | null;
+  completed_at: string | null;
+}
 export type CapabilityManifest = Schemas["CapabilityManifestModel"];
 export type SlashCommandMetadata = Schemas["SlashCommandMetadataModel"];
 export type ToolDefinitionMetadata = Schemas["ToolDefinitionMetadataModel"];
@@ -692,6 +779,42 @@ export interface CoreMethodMap {
   "assistant.turns.create": {
     params: AssistantTurnCreateInput;
     result: AssistantTurn;
+  };
+  "assistant.schedules.cancel": {
+    params: { schedule_id: string; expected_revision: number };
+    result: AssistantSchedule;
+  };
+  "assistant.schedules.create": {
+    params: AssistantScheduleCreateInput;
+    result: AssistantSchedule;
+  };
+  "assistant.schedules.get": {
+    params: { schedule_id: string };
+    result: AssistantSchedule;
+  };
+  "assistant.schedules.list": {
+    params: {
+      conversation_id?: string | null;
+      statuses?: AssistantScheduleStatus[] | null;
+      limit?: number;
+    };
+    result: { items: AssistantSchedule[] };
+  };
+  "assistant.schedules.pause": {
+    params: { schedule_id: string; expected_revision: number };
+    result: AssistantSchedule;
+  };
+  "assistant.schedules.resume": {
+    params: { schedule_id: string; expected_revision: number };
+    result: AssistantSchedule;
+  };
+  "assistant.schedules.run_now": {
+    params: { schedule_id: string; expected_revision: number; idempotency_key: string };
+    result: AssistantScheduleOccurrence;
+  };
+  "assistant.schedules.update": {
+    params: AssistantScheduleUpdateInput;
+    result: AssistantSchedule;
   };
   "assistant.turns.get": { params: { turn_id: string }; result: AssistantTurn };
   "assistant.turns.pause": { params: { turn_id: string }; result: AssistantTurn };

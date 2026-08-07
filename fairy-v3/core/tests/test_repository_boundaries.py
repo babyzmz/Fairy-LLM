@@ -22,6 +22,7 @@ def test_core_runtime_dependencies_stay_transport_independent() -> None:
         "pydantic>=2.13,<3",
         "pyyaml>=6.0.3,<7",
         "sqlalchemy>=2.0.51,<2.1",
+        "tzdata>=2025.3",
     ]
 
 

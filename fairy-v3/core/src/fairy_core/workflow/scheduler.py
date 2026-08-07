@@ -121,6 +121,7 @@ class WorkflowScheduler:
         self._poll_interval = poll_interval
         self._owner_id = f"workflow-worker:{new_id()}"
         self._active: dict[UUID, _ActiveNode] = {}
+        self._resume_after_boundary: set[UUID] = set()
         self._lock = RLock()
         self._wake = Event()
         self._changed = Event()
@@ -174,6 +175,7 @@ class WorkflowScheduler:
         with self._lock:
             remaining = tuple(self._active.values())
             self._active.clear()
+            self._resume_after_boundary.clear()
         for item in remaining:
             try:
                 with self._unit_of_work_factory() as unit_of_work:
@@ -224,6 +226,23 @@ class WorkflowScheduler:
             unit_of_work.commit()
         self._wake.set()
         return snapshot
+
+    def resume_after_boundary(self, run_id: UUID) -> None:
+        """Resume a Run once an in-flight node publishes its waiting state.
+
+        Approval decisions can race the node that is persisting
+        ``waiting_for_approval``. Keeping this short-lived coordinator intent
+        prevents the approved Run from being stranded at that boundary. Crash
+        recovery remains authoritative because the approval decision itself is
+        durable.
+        """
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Workflow Scheduler is closing")
+            self._resume_after_boundary.add(run_id)
+        self._resume_after_boundary_if_ready(run_id)
+        self._wake.set()
 
     def cancel(self, run_id: UUID) -> WorkflowSnapshot:
         with self._lock:
@@ -439,8 +458,43 @@ class WorkflowScheduler:
                 if current is active:
                     self._active.pop(claim.node_id, None)
         finally:
+            self._resume_after_boundary_if_ready(claim.run_id)
             self._changed.set()
             self._wake.set()
+
+    def _resume_after_boundary_if_ready(self, run_id: UUID) -> None:
+        with self._lock:
+            if run_id not in self._resume_after_boundary:
+                return
+            has_active = any(item.claim.run_id == run_id for item in self._active.values())
+        try:
+            with self._unit_of_work_factory() as unit_of_work:
+                snapshot = unit_of_work.workflows.get(run_id)
+                if snapshot is None:
+                    resolved = True
+                elif snapshot.run.status in {
+                    WorkflowRunStatus.WAITING_FOR_APPROVAL,
+                    WorkflowRunStatus.PAUSED,
+                }:
+                    unit_of_work.workflows.resume(run_id)
+                    unit_of_work.commit()
+                    resolved = True
+                else:
+                    resolved = (
+                        snapshot.run.status
+                        in {
+                            WorkflowRunStatus.COMPLETED,
+                            WorkflowRunStatus.CANCELLED,
+                            WorkflowRunStatus.FAILED,
+                        }
+                        or not has_active
+                    )
+        except Exception:
+            logger.exception("Workflow Run %s could not resume after its boundary", run_id)
+            resolved = False
+        if resolved:
+            with self._lock:
+                self._resume_after_boundary.discard(run_id)
 
     def _abandon(self, claim: WorkflowAttemptClaim) -> bool:
         try:

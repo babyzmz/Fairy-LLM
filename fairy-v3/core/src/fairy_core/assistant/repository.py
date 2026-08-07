@@ -222,6 +222,28 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
             )
         return tuple(self._with_workflow_summary(self._turn_from_row(row)) for row in rows)
 
+    def nonterminal_turn_for_conversation(
+        self,
+        conversation_id: UUID,
+    ) -> AssistantTurn | None:
+        row = self._first(
+            select(assistant_turns)
+            .where(
+                assistant_turns.c.tenant_id == self._tenant_id,
+                assistant_turns.c.conversation_id == str(conversation_id),
+                assistant_turns.c.status.in_(
+                    (
+                        AssistantTurnStatus.CREATED.value,
+                        AssistantTurnStatus.RUNNING.value,
+                        AssistantTurnStatus.WAITING_FOR_TOOL.value,
+                    )
+                ),
+            )
+            .order_by(assistant_turns.c.created_at, assistant_turns.c.id)
+            .limit(1)
+        )
+        return self._with_workflow_summary(self._turn_from_row(row)) if row is not None else None
+
     def save_provider_attempt(self, attempt: ProviderAttempt) -> None:
         with self._session.write() as connection:
             connection.execute(

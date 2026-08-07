@@ -55,6 +55,54 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "assistant.schedules.cancel",
+      "request_model": "AssistantScheduleRevisionInput",
+      "response_model": "AssistantScheduleModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "assistant.schedules.create",
+      "request_model": "AssistantScheduleCreateInput",
+      "response_model": "AssistantScheduleModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "assistant.schedules.get",
+      "request_model": "AssistantScheduleIdInput",
+      "response_model": "AssistantScheduleModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "assistant.schedules.list",
+      "request_model": "AssistantScheduleListInput",
+      "response_model": "AssistantSchedulePageModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "assistant.schedules.pause",
+      "request_model": "AssistantScheduleRevisionInput",
+      "response_model": "AssistantScheduleModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "assistant.schedules.resume",
+      "request_model": "AssistantScheduleRevisionInput",
+      "response_model": "AssistantScheduleModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "assistant.schedules.run_now",
+      "request_model": "AssistantScheduleRunNowInput",
+      "response_model": "AssistantScheduleOccurrenceModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "assistant.schedules.update",
+      "request_model": "AssistantScheduleUpdateInput",
+      "response_model": "AssistantScheduleModel",
+      "transport": "local_only"
+    },
+    {
       "name": "assistant.turns.cancel",
       "request_model": "AssistantTurnCancelInput",
       "response_model": "AssistantTurnModel",

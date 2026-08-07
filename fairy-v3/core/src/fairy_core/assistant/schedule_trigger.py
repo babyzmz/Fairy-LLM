@@ -7,6 +7,7 @@ from threading import Event, RLock, Thread
 from typing import Protocol
 from uuid import UUID
 
+from fairy_core.assistant.models import AssistantTurnStatus
 from fairy_core.assistant.schedule_models import (
     AssistantOccurrenceStatus,
     AssistantSchedule,
@@ -32,6 +33,10 @@ class AssistantScheduleOccurrenceDispatcher(Protocol):
         occurrence: AssistantScheduleOccurrence,
         now: datetime,
     ) -> AssistantScheduleOccurrence: ...
+
+
+class AssistantScheduleOccurrenceRunner(Protocol):
+    def dispatch(self, *, occurrence_id: UUID, now: datetime) -> bool: ...
 
 
 class PendingAssistantScheduleDispatcher:
@@ -66,6 +71,7 @@ class AssistantScheduleTriggerService:
         *,
         unit_of_work_factory: CoreUnitOfWorkFactory,
         dispatcher: AssistantScheduleOccurrenceDispatcher | None = None,
+        runner: AssistantScheduleOccurrenceRunner | None = None,
         lease_duration: timedelta = SCHEDULE_LEASE_DURATION,
         poll_interval: float = 1.0,
         claim_limit: int = 8,
@@ -79,6 +85,7 @@ class AssistantScheduleTriggerService:
             raise ValueError("Assistant schedule claim limit is invalid")
         self._unit_of_work_factory = unit_of_work_factory
         self._dispatcher = dispatcher or PendingAssistantScheduleDispatcher()
+        self._runner = runner
         self._lease_duration = lease_duration
         self._poll_interval = poll_interval
         self._claim_limit = claim_limit
@@ -122,6 +129,7 @@ class AssistantScheduleTriggerService:
 
     def run_once(self, *, now: datetime | None = None) -> int:
         current = _aware_utc(now or datetime.now(UTC))
+        self._reconcile_dispatched(now=current)
         with self._unit_of_work_factory() as unit_of_work:
             claims = unit_of_work.assistant_schedules.claim_ready(
                 worker_id=self._owner_id,
@@ -134,8 +142,18 @@ class AssistantScheduleTriggerService:
         processed = 0
         for claim in claims:
             try:
-                if self._process_claim(claim, now=current):
+                settled, pending_id = self._process_claim(claim, now=current)
+                if settled:
                     processed += 1
+                if pending_id is not None and self._runner is not None:
+                    try:
+                        self._runner.dispatch(occurrence_id=pending_id, now=current)
+                    except AssistantScheduleAttentionRequired as attention:
+                        self._record_pending_attention(
+                            pending_id,
+                            attention=attention,
+                            now=current,
+                        )
             except Exception:
                 logger.exception("Assistant schedule %s trigger failed", claim.schedule_id)
                 self._abandon(claim)
@@ -186,7 +204,12 @@ class AssistantScheduleTriggerService:
             except Exception:
                 logger.exception("Assistant schedule coordinator iteration failed")
 
-    def _process_claim(self, claim: AssistantScheduleClaim, *, now: datetime) -> bool:
+    def _process_claim(
+        self,
+        claim: AssistantScheduleClaim,
+        *,
+        now: datetime,
+    ) -> tuple[bool, UUID | None]:
         with self._unit_of_work_factory() as unit_of_work:
             repository = unit_of_work.assistant_schedules
             schedule = repository.get(claim.schedule_id)
@@ -196,7 +219,7 @@ class AssistantScheduleTriggerService:
                 or schedule.lease_fence != claim.lease_fence
                 or schedule.active_revision != claim.active_revision
             ):
-                return False
+                return False, None
             pending = repository.get_pending_occurrence(schedule_id=schedule.id)
             advance = (
                 advance_due_schedule(schedule, now=now)
@@ -265,16 +288,96 @@ class AssistantScheduleTriggerService:
                     if dispatched.id != pending.id or dispatched.schedule_id != schedule.id:
                         raise ValueError("Assistant schedule dispatcher returned different work")
                     if dispatched != pending:
-                        repository.save_occurrence(
+                        pending = repository.save_occurrence(
                             dispatched,
                             expected_status=AssistantOccurrenceStatus.PENDING,
                         )
             schedule = replace(schedule, lease_owner=None, lease_until=None)
             settled = repository.settle_claim(claim, schedule)
             if settled is None:
-                return False
+                return False, None
             unit_of_work.commit()
-            return True
+            return (
+                True,
+                pending.id
+                if pending is not None and pending.status is AssistantOccurrenceStatus.PENDING
+                else None,
+            )
+
+    def _reconcile_dispatched(self, *, now: datetime) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            occurrences = unit_of_work.assistant_schedules.list_occurrences_by_status(
+                statuses=frozenset({AssistantOccurrenceStatus.DISPATCHED}),
+                limit=100,
+            )
+            changed = False
+            for occurrence in occurrences:
+                assert occurrence.turn_id is not None
+                turn = unit_of_work.assistant.get_turn(occurrence.turn_id)
+                if turn is None or turn.status not in {
+                    AssistantTurnStatus.COMPLETED,
+                    AssistantTurnStatus.FAILED,
+                    AssistantTurnStatus.CANCELLED,
+                }:
+                    continue
+                status = {
+                    AssistantTurnStatus.COMPLETED: AssistantOccurrenceStatus.SUCCEEDED,
+                    AssistantTurnStatus.FAILED: AssistantOccurrenceStatus.FAILED,
+                    AssistantTurnStatus.CANCELLED: AssistantOccurrenceStatus.CANCELLED,
+                }[turn.status]
+                public_error = (
+                    "The scheduled run failed."
+                    if status is AssistantOccurrenceStatus.FAILED
+                    else None
+                )
+                unit_of_work.assistant_schedules.record_occurrence_outcome(
+                    occurrence.settle(
+                        status=status,
+                        now=now,
+                        public_error=public_error,
+                    ),
+                    expected_status=AssistantOccurrenceStatus.DISPATCHED,
+                )
+                changed = True
+            if changed:
+                unit_of_work.commit()
+
+    def _record_pending_attention(
+        self,
+        occurrence_id: UUID,
+        *,
+        attention: AssistantScheduleAttentionRequired,
+        now: datetime,
+    ) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            occurrence = unit_of_work.assistant_schedules.get_occurrence(occurrence_id)
+            if occurrence is None or occurrence.status is not AssistantOccurrenceStatus.PENDING:
+                return
+            unit_of_work.assistant_schedules.save_occurrence(
+                replace(
+                    occurrence,
+                    status=AssistantOccurrenceStatus.ATTENTION_REQUIRED,
+                    public_error=attention.public_error,
+                    completed_at=now,
+                ),
+                expected_status=AssistantOccurrenceStatus.PENDING,
+            )
+            schedule = unit_of_work.assistant_schedules.get(occurrence.schedule_id)
+            if schedule is not None and schedule.status is AssistantScheduleStatus.ACTIVE:
+                unit_of_work.assistant_schedules.save(
+                    schedule.pause(now=now, attention_code=attention.code),
+                    expected_revision=schedule.active_revision,
+                )
+            elif schedule is not None and schedule.attention_code != attention.code:
+                # A due one-shot schedule is terminal as soon as its single
+                # occurrence is materialized. Preserve the attention reason on
+                # that terminal definition so the UI cannot misreport it as a
+                # normally completed task.
+                unit_of_work.assistant_schedules.save(
+                    replace(schedule, attention_code=attention.code, updated_at=now),
+                    expected_revision=schedule.active_revision,
+                )
+            unit_of_work.commit()
 
     def _abandon(self, claim: AssistantScheduleClaim) -> None:
         try:
@@ -295,6 +398,7 @@ __all__ = [
     "SCHEDULE_LEASE_DURATION",
     "AssistantScheduleAttentionRequired",
     "AssistantScheduleOccurrenceDispatcher",
+    "AssistantScheduleOccurrenceRunner",
     "AssistantScheduleTriggerService",
     "PendingAssistantScheduleDispatcher",
 ]

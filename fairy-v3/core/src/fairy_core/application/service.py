@@ -34,6 +34,7 @@ from fairy_core.assistant.application import AssistantApplication
 from fairy_core.assistant.image_inputs import build_image_attachments
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import ToolInvocationStatus
+from fairy_core.assistant.schedule_service import AssistantScheduleService
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
@@ -452,6 +453,13 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             ledger=self._assistant_ledger,
             workflow_scheduler=self._workflow_scheduler,
         )
+        self._assistant_schedule_service = AssistantScheduleService(
+            application=application,
+            ledger=self._assistant_ledger,
+            scheduler=self._assistant_scheduler,
+            unit_of_work_factory=unit_of_work_factory,
+            providers=self._provider_registry,
+        )
         self._realtime_service = RealtimeService(
             unit_of_work_factory,
             persona_authority=persona_authority,
@@ -476,6 +484,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             "approvals.list": self._list_approvals,
             "artifacts.list": self._list_artifacts,
             "artifacts.read": self._read_artifact,
+            **self._assistant_schedule_service.handlers,
             "assistant.turns.cancel": self._cancel_assistant_turn,
             "assistant.turns.create": self._create_assistant_turn,
             "assistant.turns.get": self._get_assistant_turn,
@@ -592,8 +601,10 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         }
         if self._handlers.keys() != CORE_METHODS.keys():
             raise RuntimeError("Core service handlers do not match the public method catalog")
+        self._assistant_schedule_service.start()
 
     def close(self) -> None:
+        self._assistant_schedule_service.close()
         if self._preview_idle_scheduler is not None:
             self._preview_idle_scheduler.close()
         self._knowledge_sync_scheduler.close()
