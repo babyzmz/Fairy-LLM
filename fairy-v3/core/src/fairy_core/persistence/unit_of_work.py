@@ -8,6 +8,8 @@ from sqlalchemy.engine import Connection, Engine, Transaction
 
 from fairy_core.assistant.ports import AssistantRepository
 from fairy_core.assistant.repository import SqlAlchemyAssistantRepository
+from fairy_core.assistant.schedule_ports import AssistantScheduleRepository
+from fairy_core.assistant.schedule_repository import SqlAlchemyAssistantScheduleRepository
 from fairy_core.commanding.ports import CommandLedger
 from fairy_core.commanding.settings import ExecutionSettingsRepository
 from fairy_core.commanding.settings_sqlalchemy import SqlAlchemyExecutionSettingsRepository
@@ -55,6 +57,7 @@ from fairy_core.workspace.repository import (
 class CoreUnitOfWork(Protocol):
     state: StateStore
     assistant: AssistantRepository
+    assistant_schedules: AssistantScheduleRepository
     commands: CommandLedger
     execution_settings: ExecutionSettingsRepository
     mcp_servers: McpServerRepository
@@ -113,6 +116,10 @@ class SqlAlchemyUnitOfWork:
                 )
             self.state = SqlAlchemyStateStore(connection, tenant_id=self._tenant_id)
             self.assistant = SqlAlchemyAssistantRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.assistant_schedules = SqlAlchemyAssistantScheduleRepository(
                 connection,
                 tenant_id=self._tenant_id,
             )

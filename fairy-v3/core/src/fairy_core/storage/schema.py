@@ -18,6 +18,7 @@ from sqlalchemy import (
 
 from fairy_core.persistence.tenant import TENANT_ID_LENGTH
 from fairy_core.storage.assistant_attempt_schema import build_assistant_attempt_tables
+from fairy_core.storage.assistant_schedule_schema import build_assistant_schedule_schema
 from fairy_core.storage.execution_settings_schema import build_execution_settings_tables
 from fairy_core.storage.history_schema import (
     build_history_indexes,
@@ -505,6 +506,17 @@ assistant_messages = Table(
         ],
         name="fk_core_assistant_messages_turn_scope",
     ),
+)
+
+assistant_schedules, assistant_schedule_occurrences = build_assistant_schedule_schema(
+    state_metadata,
+    conversations=conversations,
+    tasks=tasks,
+    projects=projects,
+    workspaces=workspaces,
+    versions=versions,
+    assistant_turns=assistant_turns,
+    workflow_runs=workflow_runs,
 )
 
 assistant_imported_messages, conversation_moves = build_history_tables(
