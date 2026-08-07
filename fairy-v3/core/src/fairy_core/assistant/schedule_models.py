@@ -39,6 +39,20 @@ class AssistantOccurrenceStatus(StrEnum):
     COALESCED = "coalesced"
 
 
+@dataclass(frozen=True, slots=True)
+class AssistantScheduleClaim:
+    schedule_id: UUID
+    lease_owner: str
+    lease_fence: int
+    active_revision: int
+
+    def __post_init__(self) -> None:
+        if not self.lease_owner.strip() or len(self.lease_owner) > 128:
+            raise ValueError("Assistant schedule claim owner is invalid")
+        if self.lease_fence < 1 or self.active_revision < 1:
+            raise ValueError("Assistant schedule claim counters must be positive")
+
+
 _TERMINAL_OCCURRENCE_STATUSES = frozenset(
     {
         AssistantOccurrenceStatus.SUCCEEDED,
@@ -279,6 +293,62 @@ class AssistantScheduleOccurrence:
             created_at=now or datetime.now(UTC),
         )
 
+    def coalesce(
+        self,
+        *,
+        scheduled_for: datetime,
+        merged_count: int,
+    ) -> AssistantScheduleOccurrence:
+        if self.status is not AssistantOccurrenceStatus.PENDING:
+            raise ValueError("Only a pending Assistant occurrence can be coalesced")
+        if merged_count < 1 or scheduled_for <= self.scheduled_for:
+            raise ValueError("Assistant occurrence coalescing input is invalid")
+        return replace(
+            self,
+            scheduled_for=scheduled_for,
+            coalesced_count=self.coalesced_count + merged_count,
+        )
+
+    def dispatch(
+        self,
+        *,
+        turn_id: UUID,
+        workflow_run_id: UUID,
+        now: datetime,
+    ) -> AssistantScheduleOccurrence:
+        if self.status is not AssistantOccurrenceStatus.PENDING:
+            raise ValueError("Only a pending Assistant occurrence can be dispatched")
+        return replace(
+            self,
+            status=AssistantOccurrenceStatus.DISPATCHED,
+            turn_id=turn_id,
+            workflow_run_id=workflow_run_id,
+            dispatched_at=now,
+        )
+
+    def settle(
+        self,
+        *,
+        status: AssistantOccurrenceStatus,
+        now: datetime,
+        public_error: str | None = None,
+    ) -> AssistantScheduleOccurrence:
+        if self.status is not AssistantOccurrenceStatus.DISPATCHED:
+            raise ValueError("Only a dispatched Assistant occurrence can be settled")
+        if status not in {
+            AssistantOccurrenceStatus.SUCCEEDED,
+            AssistantOccurrenceStatus.FAILED,
+            AssistantOccurrenceStatus.CANCELLED,
+            AssistantOccurrenceStatus.ATTENTION_REQUIRED,
+        }:
+            raise ValueError("Assistant occurrence outcome is invalid")
+        return replace(
+            self,
+            status=status,
+            public_error=public_error,
+            completed_at=now,
+        )
+
 
 def _aware(value: datetime, name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
@@ -288,6 +358,7 @@ def _aware(value: datetime, name: str) -> None:
 __all__ = [
     "AssistantOccurrenceStatus",
     "AssistantSchedule",
+    "AssistantScheduleClaim",
     "AssistantScheduleOccurrence",
     "AssistantScheduleStatus",
     "AssistantScheduleTriggerKind",

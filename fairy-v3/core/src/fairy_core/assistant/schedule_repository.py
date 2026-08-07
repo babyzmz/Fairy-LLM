@@ -5,12 +5,13 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import and_, exists, insert, or_, select, update
 from sqlalchemy.engine import Connection
 
 from fairy_core.assistant.schedule_models import (
     AssistantOccurrenceStatus,
     AssistantSchedule,
+    AssistantScheduleClaim,
     AssistantScheduleOccurrence,
     AssistantScheduleStatus,
     AssistantScheduleTriggerKind,
@@ -88,6 +89,134 @@ class SqlAlchemyAssistantScheduleRepository:
         persisted = self.get(schedule.id)
         assert persisted is not None
         return persisted
+
+    def claim_ready(
+        self,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_until: datetime,
+        limit: int = 1,
+    ) -> tuple[AssistantScheduleClaim, ...]:
+        normalized_worker = worker_id.strip()
+        if not normalized_worker or len(normalized_worker) > 128:
+            raise ValueError("Assistant schedule worker id is invalid")
+        if now.tzinfo is None or lease_until.tzinfo is None or lease_until <= now:
+            raise ValueError("Assistant schedule claim lease is invalid")
+        if not 1 <= limit <= 32:
+            raise ValueError("Assistant schedule claim limit is invalid")
+        pending = exists(
+            select(1).where(
+                assistant_schedule_occurrences.c.tenant_id == assistant_schedules.c.tenant_id,
+                assistant_schedule_occurrences.c.schedule_id == assistant_schedules.c.id,
+                assistant_schedule_occurrences.c.status == AssistantOccurrenceStatus.PENDING.value,
+            )
+        )
+        ready = or_(
+            and_(
+                assistant_schedules.c.status == AssistantScheduleStatus.ACTIVE.value,
+                assistant_schedules.c.next_fire_at <= now,
+            ),
+            pending,
+        )
+        lease_available = or_(
+            assistant_schedules.c.lease_until.is_(None),
+            assistant_schedules.c.lease_until <= now,
+        )
+        statement = (
+            select(assistant_schedules)
+            .where(
+                assistant_schedules.c.tenant_id == self._tenant_id,
+                ready,
+                lease_available,
+            )
+            .order_by(
+                assistant_schedules.c.next_fire_at,
+                assistant_schedules.c.created_at,
+                assistant_schedules.c.id,
+            )
+            .limit(limit)
+        )
+        if self._connection.dialect.name == "postgresql":
+            statement = statement.with_for_update(of=assistant_schedules, skip_locked=True)
+        rows = self._connection.execute(statement).mappings().all()
+        claims: list[AssistantScheduleClaim] = []
+        for row in rows:
+            previous_fence = int(row["lease_fence"])
+            result = self._connection.execute(
+                update(assistant_schedules)
+                .where(
+                    assistant_schedules.c.tenant_id == self._tenant_id,
+                    assistant_schedules.c.id == row["id"],
+                    assistant_schedules.c.lease_fence == previous_fence,
+                    or_(
+                        assistant_schedules.c.lease_until.is_(None),
+                        assistant_schedules.c.lease_until <= now,
+                    ),
+                    ready,
+                )
+                .values(
+                    lease_owner=normalized_worker,
+                    lease_until=lease_until,
+                    lease_fence=previous_fence + 1,
+                    updated_at=now,
+                )
+            )
+            if result.rowcount != 1:
+                continue
+            claims.append(
+                AssistantScheduleClaim(
+                    schedule_id=UUID(str(row["id"])),
+                    lease_owner=normalized_worker,
+                    lease_fence=previous_fence + 1,
+                    active_revision=int(row["active_revision"]),
+                )
+            )
+        return tuple(claims)
+
+    def settle_claim(
+        self,
+        claim: AssistantScheduleClaim,
+        schedule: AssistantSchedule,
+    ) -> AssistantSchedule | None:
+        if schedule.id != claim.schedule_id:
+            raise ValueError("Assistant schedule result does not match its claim")
+        if schedule.lease_owner is not None or schedule.lease_until is not None:
+            raise ValueError("Settled Assistant schedule must release its lease")
+        values = _schedule_record(self._tenant_id, schedule)
+        values.pop("tenant_id")
+        values.pop("id")
+        result = self._connection.execute(
+            update(assistant_schedules)
+            .where(
+                assistant_schedules.c.tenant_id == self._tenant_id,
+                assistant_schedules.c.id == str(claim.schedule_id),
+                assistant_schedules.c.lease_owner == claim.lease_owner,
+                assistant_schedules.c.lease_fence == claim.lease_fence,
+                assistant_schedules.c.active_revision == claim.active_revision,
+            )
+            .values(**values)
+        )
+        if result.rowcount != 1:
+            return None
+        return self.get(claim.schedule_id)
+
+    def abandon_claim(self, claim: AssistantScheduleClaim) -> bool:
+        result = self._connection.execute(
+            update(assistant_schedules)
+            .where(
+                assistant_schedules.c.tenant_id == self._tenant_id,
+                assistant_schedules.c.id == str(claim.schedule_id),
+                assistant_schedules.c.lease_owner == claim.lease_owner,
+                assistant_schedules.c.lease_fence == claim.lease_fence,
+            )
+            .values(
+                lease_owner=None,
+                lease_until=None,
+                lease_fence=claim.lease_fence + 1,
+            )
+        )
+        return result.rowcount == 1
 
     def list(
         self,
@@ -173,6 +302,137 @@ class SqlAlchemyAssistantScheduleRepository:
             .one_or_none()
         )
         return _occurrence_from_row(row) if row is not None else None
+
+    def get_pending_occurrence(
+        self,
+        *,
+        schedule_id: UUID,
+    ) -> AssistantScheduleOccurrence | None:
+        return self._get_occurrence_with_status(
+            schedule_id=schedule_id,
+            statuses=(AssistantOccurrenceStatus.PENDING,),
+        )
+
+    def get_active_occurrence(
+        self,
+        *,
+        schedule_id: UUID,
+    ) -> AssistantScheduleOccurrence | None:
+        return self._get_occurrence_with_status(
+            schedule_id=schedule_id,
+            statuses=(
+                AssistantOccurrenceStatus.PENDING,
+                AssistantOccurrenceStatus.DISPATCHED,
+            ),
+        )
+
+    def _get_occurrence_with_status(
+        self,
+        *,
+        schedule_id: UUID,
+        statuses: tuple[AssistantOccurrenceStatus, ...],
+    ) -> AssistantScheduleOccurrence | None:
+        row = (
+            self._connection.execute(
+                select(assistant_schedule_occurrences)
+                .where(
+                    assistant_schedule_occurrences.c.tenant_id == self._tenant_id,
+                    assistant_schedule_occurrences.c.schedule_id == str(schedule_id),
+                    assistant_schedule_occurrences.c.status.in_(
+                        tuple(status.value for status in statuses)
+                    ),
+                )
+                .order_by(
+                    assistant_schedule_occurrences.c.scheduled_for.desc(),
+                    assistant_schedule_occurrences.c.id.desc(),
+                )
+                .limit(1)
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _occurrence_from_row(row) if row is not None else None
+
+    def save_occurrence(
+        self,
+        occurrence: AssistantScheduleOccurrence,
+        *,
+        expected_status: AssistantOccurrenceStatus,
+    ) -> AssistantScheduleOccurrence:
+        values = _occurrence_record(self._tenant_id, occurrence)
+        values.pop("tenant_id")
+        values.pop("id")
+        values.pop("schedule_id")
+        result = self._connection.execute(
+            update(assistant_schedule_occurrences)
+            .where(
+                assistant_schedule_occurrences.c.tenant_id == self._tenant_id,
+                assistant_schedule_occurrences.c.id == str(occurrence.id),
+                assistant_schedule_occurrences.c.schedule_id == str(occurrence.schedule_id),
+                assistant_schedule_occurrences.c.status == expected_status.value,
+            )
+            .values(**values)
+        )
+        if result.rowcount != 1:
+            raise ValueError("Assistant occurrence status changed concurrently")
+        persisted = self.get_occurrence(occurrence.id)
+        assert persisted is not None
+        return persisted
+
+    def record_occurrence_outcome(
+        self,
+        occurrence: AssistantScheduleOccurrence,
+        *,
+        expected_status: AssistantOccurrenceStatus,
+        attention_code: str | None = None,
+    ) -> tuple[AssistantScheduleOccurrence, AssistantSchedule]:
+        if occurrence.status not in {
+            AssistantOccurrenceStatus.SUCCEEDED,
+            AssistantOccurrenceStatus.FAILED,
+            AssistantOccurrenceStatus.CANCELLED,
+            AssistantOccurrenceStatus.ATTENTION_REQUIRED,
+        }:
+            raise ValueError("Assistant occurrence outcome is not terminal")
+        persisted = self.save_occurrence(occurrence, expected_status=expected_status)
+        schedule = self.get(occurrence.schedule_id)
+        if schedule is None:
+            raise KeyError(f"Assistant schedule not found: {occurrence.schedule_id}")
+        now = occurrence.completed_at
+        assert now is not None
+        failures = schedule.consecutive_failures
+        values: dict[str, object] = {"updated_at": now}
+        if occurrence.status is AssistantOccurrenceStatus.SUCCEEDED:
+            values["consecutive_failures"] = 0
+        elif occurrence.status is AssistantOccurrenceStatus.FAILED:
+            failures += 1
+            values["consecutive_failures"] = failures
+            if failures >= 3 and schedule.status is AssistantScheduleStatus.ACTIVE:
+                values.update(
+                    status=AssistantScheduleStatus.PAUSED.value,
+                    paused_at=now,
+                    attention_code="CONSECUTIVE_FAILURES",
+                )
+        elif occurrence.status is AssistantOccurrenceStatus.ATTENTION_REQUIRED:
+            code = (attention_code or "CONTEXT_INVALID").strip()
+            if not code or len(code) > 128:
+                raise ValueError("Assistant schedule attention code is invalid")
+            values["attention_code"] = code
+            if schedule.status is AssistantScheduleStatus.ACTIVE:
+                values.update(
+                    status=AssistantScheduleStatus.PAUSED.value,
+                    paused_at=now,
+                )
+        self._connection.execute(
+            update(assistant_schedules)
+            .where(
+                assistant_schedules.c.tenant_id == self._tenant_id,
+                assistant_schedules.c.id == str(schedule.id),
+            )
+            .values(**values)
+        )
+        updated = self.get(schedule.id)
+        assert updated is not None
+        return persisted, updated
 
     def list_occurrences(
         self,

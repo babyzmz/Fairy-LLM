@@ -227,6 +227,14 @@ def build_assistant_schedule_schema(
         occurrences.c.status,
         occurrences.c.scheduled_for,
     )
+    Index(
+        "uq_core_assistant_occurrences_pending",
+        occurrences.c.tenant_id,
+        occurrences.c.schedule_id,
+        unique=True,
+        sqlite_where=occurrences.c.status == "pending",
+        postgresql_where=occurrences.c.status == "pending",
+    )
     return schedules, occurrences
 
 

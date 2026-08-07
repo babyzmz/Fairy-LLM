@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260807_0048"]
+    assert scripts.get_heads() == ["20260807_0049"]
+    assert scripts.get_revision("20260807_0049").down_revision == "20260807_0048"
     assert scripts.get_revision("20260807_0048").down_revision == "20260807_0047"
     assert scripts.get_revision("20260807_0047").down_revision == "20260807_0046"
     assert scripts.get_revision("20260807_0046").down_revision == "20260807_0045"
@@ -263,6 +264,23 @@ def test_assistant_schedule_migration_has_reversible_tenant_ddl() -> None:
     assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_ASSISTANT_SCHEDULES"' in downgrade_ddl
     assert "DROP TABLE CORE_ASSISTANT_SCHEDULE_OCCURRENCES" in downgrade_ddl
     assert "DROP TABLE CORE_ASSISTANT_SCHEDULES" in downgrade_ddl
+
+
+def test_assistant_schedule_claim_migration_is_reversible() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260807_0048:20260807_0049", sql=True)
+
+    upgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert "CREATE UNIQUE INDEX UQ_CORE_ASSISTANT_OCCURRENCES_PENDING" in upgrade_ddl
+    assert "WHERE STATUS = 'PENDING'" in upgrade_ddl
+
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260807_0049:20260807_0048", sql=True)
+
+    downgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert "DROP INDEX UQ_CORE_ASSISTANT_OCCURRENCES_PENDING" in downgrade_ddl
 
 
 def test_media_generation_work_migration_has_reversible_fenced_tenant_ddl() -> None:
