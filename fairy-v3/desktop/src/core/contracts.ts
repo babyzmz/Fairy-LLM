@@ -115,6 +115,41 @@ export type AssistantTurnRetryInput = Schemas["AssistantTurnRetryInput"];
 export type AssistantTurnRunInput = Schemas["AssistantTurnRunInput"];
 export type AssistantTurnStartInput = Schemas["AssistantTurnStartInput"];
 export type AssistantWorkflowSummary = Schemas["AssistantWorkflowSummaryModel"];
+export interface AssistantBackgroundTask {
+  id: string;
+  kind: "turn" | "scheduled_turn" | "schedule" | "occurrence";
+  conversation_id: string;
+  conversation_title: string;
+  project_id: string | null;
+  task_id: string | null;
+  turn_id: string | null;
+  workflow_run_id: string | null;
+  schedule_id: string | null;
+  occurrence_id: string | null;
+  title: string;
+  status: string;
+  public_error: string | null;
+  attention_code: string | null;
+  current_conversation: boolean;
+  scheduled_for: string | null;
+  next_fire_at: string | null;
+  schedule_revision: number | null;
+  turn_status: "created" | "running" | "waiting_for_tool" | "completed" | "cancelled" | "failed" | null;
+  turn_cancellation_revision: number | null;
+  workflow_budget_tier: "normal" | "deep" | null;
+  created_at: string;
+  updated_at: string;
+  can_pause: boolean;
+  can_resume: boolean;
+  can_cancel: boolean;
+  can_run_now: boolean;
+}
+export interface AssistantBackgroundTaskPage {
+  current: AssistantBackgroundTask[];
+  other: AssistantBackgroundTask[];
+  recent: AssistantBackgroundTask[];
+  nonterminal_count: number;
+}
 export type AssistantScheduleStatus = "active" | "paused" | "completed" | "cancelled";
 export type AssistantScheduleTriggerKind =
   | "once"
@@ -779,6 +814,10 @@ export interface CoreMethodMap {
   "assistant.turns.create": {
     params: AssistantTurnCreateInput;
     result: AssistantTurn;
+  };
+  "assistant.background_tasks.list": {
+    params: { current_conversation_id?: string | null; recent_limit?: number };
+    result: AssistantBackgroundTaskPage;
   };
   "assistant.schedules.cancel": {
     params: { schedule_id: string; expected_revision: number };

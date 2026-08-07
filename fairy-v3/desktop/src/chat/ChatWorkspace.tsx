@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   Check,
+  ListTodo,
   MessageSquarePlus,
   PanelRightOpen,
   RotateCcw,
@@ -10,6 +11,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   Approval,
+  AssistantBackgroundTask,
+  AssistantBackgroundTaskPage,
   AssistantTurn,
   EventEnvelope,
   Message,
@@ -22,6 +25,8 @@ import type {
   TurnTrace,
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
+import type { BackgroundTaskAction } from "../app/workspaceTypes";
+import { BackgroundTasksPopover } from "./BackgroundTasksPopover";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 import type { AssistantDraft, OptimisticUserMessage } from "./useAssistantTurn";
@@ -80,13 +85,24 @@ export interface ChatWorkspaceProps {
   onOpenModelSettings(): Promise<void>;
   inspectorCollapsed?: boolean;
   onRestoreInspector?(): void;
+  conversationId?: string | null;
+  backgroundTasks?: AssistantBackgroundTaskPage;
+  backgroundTasksLoading?: boolean;
+  onOpenBackgroundTask?(task: AssistantBackgroundTask): void;
+  onManageBackgroundTask?(
+    task: AssistantBackgroundTask,
+    action: BackgroundTaskAction,
+  ): Promise<void>;
 }
 
 export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [composerDraft, setComposerDraft] = useState<AssistantDraft | null>(null);
   const restoreInspectorRef = useRef<HTMLButtonElement | null>(null);
+  const backgroundTasksButtonRef = useRef<HTMLButtonElement | null>(null);
+  const backgroundTasksPanelRef = useRef<HTMLDivElement | null>(null);
   const inspectorWasCollapsed = useRef(props.inspectorCollapsed ?? false);
+  const [backgroundTasksOpen, setBackgroundTasksOpen] = useState(false);
   const providerAvailable = props.modelSelectionBlockReason === null;
   const contentState = props.contentState ?? "ready";
   const retryAvailable = ["failed", "cancelled"].includes(props.turn?.status ?? "");
@@ -116,6 +132,42 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     }
     inspectorWasCollapsed.current = collapsed;
   }, [props.inspectorCollapsed]);
+
+  useEffect(() => {
+    setBackgroundTasksOpen(false);
+  }, [props.conversationId]);
+
+  useEffect(() => {
+    if (!props.inspectorCollapsed) setBackgroundTasksOpen(false);
+  }, [props.inspectorCollapsed]);
+
+  useEffect(() => {
+    if (!backgroundTasksOpen) return;
+    backgroundTasksPanelRef.current
+      ?.querySelector<HTMLButtonElement>("[data-autofocus='true']")
+      ?.focus();
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (
+        backgroundTasksPanelRef.current?.contains(target) ||
+        backgroundTasksButtonRef.current?.contains(target)
+      ) return;
+      setBackgroundTasksOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setBackgroundTasksOpen(false);
+      backgroundTasksButtonRef.current?.focus();
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [backgroundTasksOpen]);
 
   const submit = async (
     value: string,
@@ -198,6 +250,25 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           </span>
           {props.inspectorCollapsed ? (
             <button
+              ref={backgroundTasksButtonRef}
+              className="icon-button background-tasks-trigger"
+              type="button"
+              aria-label="Background tasks"
+              aria-controls="chat-background-tasks"
+              aria-expanded={backgroundTasksOpen}
+              title="Background tasks"
+              onClick={() => setBackgroundTasksOpen((open) => !open)}
+            >
+              <ListTodo size={17} />
+              {(props.backgroundTasks?.nonterminal_count ?? 0) > 0 ? (
+                <span className="background-tasks-badge">
+                  {Math.min(props.backgroundTasks?.nonterminal_count ?? 0, 99)}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
+          {props.inspectorCollapsed ? (
+            <button
               ref={restoreInspectorRef}
               className="icon-button"
               type="button"
@@ -205,7 +276,10 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
               aria-controls="workspace-inspector"
               aria-expanded="false"
               title="Restore inspector"
-              onClick={props.onRestoreInspector}
+              onClick={() => {
+                setBackgroundTasksOpen(false);
+                props.onRestoreInspector?.();
+              }}
             >
               <PanelRightOpen size={17} />
             </button>
@@ -222,6 +296,28 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           </button>
         </div>
       </header>
+      {backgroundTasksOpen ? (
+        <BackgroundTasksPopover
+          page={props.backgroundTasks ?? EMPTY_BACKGROUND_TASKS}
+          loading={props.backgroundTasksLoading ?? false}
+          busy={props.isActing}
+          panelRef={backgroundTasksPanelRef}
+          onOpen={(task) => {
+            setBackgroundTasksOpen(false);
+            props.onOpenBackgroundTask?.(task);
+          }}
+          onAction={async (task, action) => {
+            if (props.onManageBackgroundTask === undefined) {
+              throw new Error("Background task controls are unavailable");
+            }
+            await props.onManageBackgroundTask(task, action);
+          }}
+          onClose={() => {
+            setBackgroundTasksOpen(false);
+            backgroundTasksButtonRef.current?.focus();
+          }}
+        />
+      ) : null}
       {props.error || notice ? (
         <div className="chat-notice" role={props.error ? "alert" : "status"}>
           {props.error ?? notice}
@@ -343,6 +439,13 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     </section>
   );
 }
+
+const EMPTY_BACKGROUND_TASKS: AssistantBackgroundTaskPage = {
+  current: [],
+  other: [],
+  recent: [],
+  nonterminal_count: 0,
+};
 
 function settle(operation: Promise<void>): void {
   void operation.catch(() => undefined);

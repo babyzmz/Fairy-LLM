@@ -6,6 +6,7 @@ from typing import Any, cast
 from pydantic import BaseModel
 
 from fairy_core.application.core import CoreApplication
+from fairy_core.assistant.background_tasks import AssistantBackgroundTaskProjection
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.schedule_application import AssistantScheduleApplication
 from fairy_core.assistant.schedule_models import AssistantSchedule
@@ -17,6 +18,7 @@ from fairy_core.assistant.schedule_turn_dispatcher import AssistantScheduledTurn
 from fairy_core.assistant.turn_scheduler import AssistantTurnScheduler
 from fairy_core.assistant.turn_selection import resolve_turn_model_source
 from fairy_core.contracts.assistant_schedules import (
+    AssistantBackgroundTaskListInput,
     AssistantScheduleCreateInput,
     AssistantScheduleIdInput,
     AssistantScheduleListInput,
@@ -61,10 +63,14 @@ class AssistantScheduleService:
             unit_of_work_factory=unit_of_work_factory,
             trigger=self._trigger,
         )
+        self._background_tasks = AssistantBackgroundTaskProjection(unit_of_work_factory)
 
     @property
     def handlers(self) -> Mapping[str, Callable[[BaseModel], Any]]:
         return {
+            "assistant.background_tasks.list": lambda request: self._background_tasks.list(
+                cast(AssistantBackgroundTaskListInput, request)
+            ),
             "assistant.schedules.cancel": lambda request: self._application.cancel(
                 cast(AssistantScheduleRevisionInput, request).schedule_id,
                 expected_revision=cast(AssistantScheduleRevisionInput, request).expected_revision,

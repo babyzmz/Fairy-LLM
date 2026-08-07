@@ -55,6 +55,12 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "assistant.background_tasks.list",
+      "request_model": "AssistantBackgroundTaskListInput",
+      "response_model": "AssistantBackgroundTaskPageModel",
+      "transport": "local_only"
+    },
+    {
       "name": "assistant.schedules.cancel",
       "request_model": "AssistantScheduleRevisionInput",
       "response_model": "AssistantScheduleModel",

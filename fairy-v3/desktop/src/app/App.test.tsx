@@ -1191,6 +1191,19 @@ function createClient(
       sync: async () => ({}) as never,
     },
     assistant: {
+      backgroundTasks: {
+        list: async () => ({ current: [], other: [], recent: [], nonterminal_count: 0 }),
+      },
+      schedules: {
+        create: async () => ({}) as never,
+        get: async () => ({}) as never,
+        list: async () => ({ items: [] }),
+        update: async () => ({}) as never,
+        pause: async () => ({}) as never,
+        resume: async () => ({}) as never,
+        cancel: async () => ({}) as never,
+        runNow: async () => ({}) as never,
+      },
       turns: {
         create:
           options.createTurn ??

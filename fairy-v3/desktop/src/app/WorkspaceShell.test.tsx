@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceShell } from "./WorkspaceShell";
-import type { Conversation, ObsidianSource, ObsidianVaultItemContent, Project, Task, Version, WorkspaceFile } from "../core/client";
+import type { AssistantBackgroundTask, Conversation, ObsidianSource, ObsidianVaultItemContent, Project, Task, Version, WorkspaceFile } from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
 
 afterEach(() => {
@@ -190,6 +190,84 @@ describe("WorkspaceShell", () => {
     expect(screen.getByRole("button", { name: "Collapse workspace inspector" })).toHaveFocus();
     expect(activePanel.scrollTop).toBe(47);
     expect(window.localStorage.getItem("fairy.workspace.chat-inspector-collapsed")).toBe("false");
+  });
+
+  it("shows grouped background tasks only while the chat Inspector is collapsed", async () => {
+    window.localStorage.setItem("fairy.workspace.chat-inspector-collapsed", "true");
+    const project = projectFixture();
+    const chat = {
+      ...projectConversationFixture(project),
+      project_id: null,
+      workspace_type: "chat_scratch" as const,
+      title: "Current background chat",
+    };
+    const other = { ...chat, id: "019f566f-f8b4-7000-8000-000000000199", title: "Other chat" };
+    const model = workspaceModel();
+    model.mode = "chat";
+    model.selectedChatConversation = chat;
+    model.chatConversations = [chat, other];
+    model.workspaceTask = { ...workspaceTask(), conversation_id: chat.id, project_id: null };
+    model.backgroundTasks = {
+      current: [backgroundTaskFixture({
+        id: "turn:current",
+        conversationId: chat.id,
+        conversationTitle: chat.title,
+        title: "Current research task",
+        status: "running",
+        canPause: true,
+      })],
+      other: [backgroundTaskFixture({
+        id: "schedule:other",
+        conversationId: other.id,
+        conversationTitle: other.title,
+        title: "Scheduled instruction",
+        status: "scheduled",
+        scheduleId: "019f566f-f8b4-7000-8000-000000000188",
+        canPause: true,
+        canRunNow: true,
+      })],
+      recent: [backgroundTaskFixture({
+        id: "turn:recent",
+        conversationId: chat.id,
+        conversationTitle: chat.title,
+        title: "Completed task",
+        status: "completed",
+      })],
+      nonterminal_count: 2,
+    };
+    const { rerender } = render(<WorkspaceShell model={model} />);
+
+    const trigger = screen.getByRole("button", { name: "Background tasks" });
+    expect(trigger).toHaveTextContent("2");
+    fireEvent.click(trigger);
+
+    expect(screen.getByRole("dialog", { name: "Background tasks" })).toBeVisible();
+    const current = screen.getByRole("region", { name: "This chat" });
+    const otherGroup = screen.getByRole("region", { name: "Other chats" });
+    const recent = screen.getByRole("region", { name: "Recent · 24 hours" });
+    expect(current).toHaveTextContent("Current research task");
+    expect(otherGroup).toHaveTextContent("Scheduled instruction");
+    expect(recent).toHaveTextContent("Completed task");
+
+    fireEvent.click(within(current).getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(model.manageBackgroundTask).toHaveBeenCalledWith(
+      model.backgroundTasks.current[0],
+      "pause",
+    ));
+    fireEvent.click(within(otherGroup).getByRole("button", { name: /Scheduled instruction/ }));
+    expect(model.openBackgroundTask).toHaveBeenCalledWith(model.backgroundTasks.other[0]);
+    expect(screen.queryByRole("dialog", { name: "Background tasks" })).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Background tasks" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    fireEvent.click(trigger);
+    rerender(<WorkspaceShell model={{ ...model, selectedChatConversation: other }} />);
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Background tasks" })).not.toBeInTheDocument();
+    });
   });
 
   it("keeps an empty workspace inspector collapsed", () => {
@@ -1009,6 +1087,8 @@ function workspaceModel(): WorkspaceModel {
     chatPendingUserMessage: null,
     chatBusy: false,
     chatError: null,
+    backgroundTasks: { current: [], other: [], recent: [], nonterminal_count: 0 },
+    backgroundTasksLoading: false,
     projectTurn: null,
     projectTrace: null,
     projectTraceState: null,
@@ -1069,6 +1149,8 @@ function workspaceModel(): WorkspaceModel {
     resumeChatTurn: vi.fn(async () => undefined),
     steerChatTurn: vi.fn(async () => undefined),
     retryChatTurn: vi.fn(async () => undefined),
+    manageBackgroundTask: vi.fn(async () => undefined),
+    openBackgroundTask: vi.fn(),
     retryPendingChatMessage: vi.fn(async () => undefined),
     deletePendingChatMessage: vi.fn(),
     takePendingChatMessageForEdit: vi.fn(() => null),
@@ -1217,5 +1299,56 @@ function workspaceTask(): Task {
     metadata_revision: 0,
     created_at: "2026-07-13T00:00:00Z",
     updated_at: "2026-07-13T00:00:00Z",
+  };
+}
+
+function backgroundTaskFixture({
+  id,
+  conversationId,
+  conversationTitle,
+  title,
+  status,
+  scheduleId = null,
+  canPause = false,
+  canRunNow = false,
+}: {
+  id: string;
+  conversationId: string;
+  conversationTitle: string;
+  title: string;
+  status: string;
+  scheduleId?: string | null;
+  canPause?: boolean;
+  canRunNow?: boolean;
+}): AssistantBackgroundTask {
+  const turn = id.startsWith("turn:");
+  return {
+    id,
+    kind: scheduleId === null ? "turn" : "schedule",
+    conversation_id: conversationId,
+    conversation_title: conversationTitle,
+    project_id: null,
+    task_id: turn ? workspaceTask().id : null,
+    turn_id: turn ? id.slice("turn:".length) : null,
+    workflow_run_id: turn ? "019f566f-f8b4-7000-8000-000000000187" : null,
+    schedule_id: scheduleId,
+    occurrence_id: null,
+    title,
+    status,
+    public_error: null,
+    attention_code: null,
+    current_conversation: false,
+    scheduled_for: null,
+    next_fire_at: scheduleId === null ? null : "2026-08-08T09:00:00Z",
+    schedule_revision: scheduleId === null ? null : 1,
+    turn_status: turn ? (status === "completed" ? "completed" : "running") : null,
+    turn_cancellation_revision: turn ? 0 : null,
+    workflow_budget_tier: turn ? "normal" : null,
+    created_at: "2026-08-07T08:00:00Z",
+    updated_at: "2026-08-07T08:30:00Z",
+    can_pause: canPause,
+    can_resume: false,
+    can_cancel: status !== "completed",
+    can_run_now: canRunNow,
   };
 }

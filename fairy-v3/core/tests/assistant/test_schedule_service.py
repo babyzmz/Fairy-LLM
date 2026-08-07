@@ -306,6 +306,47 @@ def test_schedule_management_only_changes_future_definition(tmp_path: Path) -> N
         service.close()
 
 
+def test_background_task_projection_groups_schedules_by_current_chat(tmp_path: Path) -> None:
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((ScriptedProvider([]),)),
+    )
+    try:
+        current_task = _scratch_task(service, "Current scheduled chat")
+        other_task = _scratch_task(service, "Other scheduled chat")
+        next_fire = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+        for index, task in enumerate((current_task, other_task), start=1):
+            service.invoke(
+                "assistant.schedules.create",
+                {
+                    "conversation_id": task["conversation_id"],
+                    "instruction": f"Scheduled instruction {index}",
+                    "operation_mode": "answer",
+                    "trigger_kind": "daily",
+                    "trigger_rule": {"local_time": "09:00"},
+                    "timezone": "Australia/Sydney",
+                    "next_fire_at": next_fire,
+                    "profile_id": "scripted",
+                    "idempotency_key": f"schedule:background:{index}",
+                },
+            )
+
+        page = service.invoke(
+            "assistant.background_tasks.list",
+            {"current_conversation_id": current_task["conversation_id"]},
+        )
+
+        assert page["nonterminal_count"] == 2
+        assert [item["title"] for item in page["current"]] == ["Scheduled instruction 1"]
+        assert [item["title"] for item in page["other"]] == ["Scheduled instruction 2"]
+        assert page["current"][0]["status"] == "scheduled"
+        assert page["current"][0]["can_pause"] is True
+        assert page["current"][0]["can_run_now"] is True
+        assert page["recent"] == []
+    finally:
+        service.close()
+
+
 def _wait_for_occurrence_turn(service, occurrence_id: UUID) -> UUID:
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:

@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import Field, model_validator
 
+from fairy_core.assistant.models import AssistantTurnStatus
 from fairy_core.assistant.schedule_models import (
     AssistantOccurrenceStatus,
     AssistantScheduleStatus,
@@ -17,6 +18,49 @@ from fairy_core.contracts.models import (
     ModelSelectionSnapshotModel,
 )
 from fairy_core.domain.models import OperationMode
+from fairy_core.workflow.models import WorkflowBudgetTier
+
+
+class AssistantBackgroundTaskListInput(ContractModel):
+    current_conversation_id: UUID | None = None
+    recent_limit: int = Field(default=20, ge=1, le=20)
+
+
+class AssistantBackgroundTaskModel(ContractModel):
+    id: str
+    kind: str
+    conversation_id: UUID
+    conversation_title: str
+    project_id: UUID | None
+    task_id: UUID | None
+    turn_id: UUID | None
+    workflow_run_id: UUID | None
+    schedule_id: UUID | None
+    occurrence_id: UUID | None
+    title: str
+    status: str
+    public_error: str | None
+    attention_code: str | None
+    current_conversation: bool
+    scheduled_for: datetime | None
+    next_fire_at: datetime | None
+    schedule_revision: int | None = Field(default=None, ge=1)
+    turn_status: AssistantTurnStatus | None
+    turn_cancellation_revision: int | None = Field(default=None, ge=0)
+    workflow_budget_tier: WorkflowBudgetTier | None
+    created_at: datetime
+    updated_at: datetime
+    can_pause: bool
+    can_resume: bool
+    can_cancel: bool
+    can_run_now: bool
+
+
+class AssistantBackgroundTaskPageModel(ContractModel):
+    current: tuple[AssistantBackgroundTaskModel, ...]
+    other: tuple[AssistantBackgroundTaskModel, ...]
+    recent: tuple[AssistantBackgroundTaskModel, ...]
+    nonterminal_count: int = Field(ge=0)
 
 
 class AssistantScheduleIdInput(ContractModel):
@@ -115,6 +159,9 @@ class AssistantScheduleOccurrenceModel(ContractModel):
 
 
 __all__ = [
+    "AssistantBackgroundTaskListInput",
+    "AssistantBackgroundTaskModel",
+    "AssistantBackgroundTaskPageModel",
     "AssistantScheduleCreateInput",
     "AssistantScheduleIdInput",
     "AssistantScheduleListInput",

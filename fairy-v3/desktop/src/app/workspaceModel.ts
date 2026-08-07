@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
-import type { EventEnvelope, Task } from "../core/client";
+import type { AssistantBackgroundTask, EventEnvelope, Task } from "../core/client";
 import { runResilientEventDelivery } from "../core/eventStream";
 import {
   selectedProfileId as profileIdForSelection,
@@ -12,7 +12,13 @@ import {
 } from "../models/modelSelection";
 import { useModelSelection } from "../models/useModelSelection";
 import { useTaskMediaJobs } from "../media/useTaskMediaJobs";
-import type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
+import type {
+  BackgroundTaskAction,
+  PermissionProfile,
+  WorkspaceClient,
+  WorkspaceMode,
+  WorkspaceModel,
+} from "./workspaceTypes";
 export type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 import {
   readEventCheckpoint,
@@ -225,6 +231,17 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const chatApprovals = chatApprovalsQuery.data?.items ?? [];
+  const backgroundTasksQuery = useQuery({
+    queryKey: [
+      ...workspaceKey,
+      "background-tasks",
+      selectedChatConversation?.id ?? null,
+    ],
+    queryFn: () => client.assistant.backgroundTasks.list(selectedChatConversation?.id),
+    enabled: healthQuery.isSuccess && mode === "chat",
+    retry: false,
+    refetchInterval: 2_500,
+  });
   const selectedWorkspaceQuery = useQuery({
     queryKey: [
       ...workspaceKey,
@@ -461,6 +478,69 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       }
     },
     [],
+  );
+  const manageBackgroundTask = useCallback(
+    async (task: AssistantBackgroundTask, action: BackgroundTaskAction): Promise<void> => {
+      await runAction(async () => {
+        if (task.turn_id !== null) {
+          if (action === "pause") await client.assistant.turns.pause(task.turn_id);
+          else if (action === "resume") await client.assistant.turns.resume(task.turn_id);
+          else if (action === "cancel") {
+            if (task.turn_cancellation_revision === null) {
+              throw new Error("Background task cancellation revision is unavailable");
+            }
+            await client.assistant.turns.cancel({
+              turn_id: task.turn_id,
+              expected_cancellation_revision: task.turn_cancellation_revision,
+            });
+          } else {
+            throw new Error("A running task cannot be started again");
+          }
+        } else {
+          if (task.schedule_id === null || task.schedule_revision === null) {
+            throw new Error("Background schedule binding is unavailable");
+          }
+          if (action === "pause") {
+            await client.assistant.schedules.pause(task.schedule_id, task.schedule_revision);
+          } else if (action === "resume") {
+            await client.assistant.schedules.resume(task.schedule_id, task.schedule_revision);
+          } else if (action === "cancel") {
+            await client.assistant.schedules.cancel(task.schedule_id, task.schedule_revision);
+          } else {
+            await client.assistant.schedules.runNow(
+              task.schedule_id,
+              task.schedule_revision,
+              `background-run-now:${task.schedule_id}:${crypto.randomUUID()}`,
+            );
+          }
+        }
+      });
+      await queryClient.invalidateQueries({
+        queryKey: [...workspaceKey, "background-tasks"],
+      });
+    },
+    [client.assistant, queryClient, runAction],
+  );
+  const openBackgroundTask = useCallback(
+    (task: AssistantBackgroundTask) => {
+      if (task.project_id === null) {
+        setMode("chat");
+        setChatConversationSelection(task.conversation_id);
+        setChatTaskId(task.task_id);
+        return;
+      }
+      setMode("project");
+      setProjectSelection(task.project_id);
+      setConversationSelection(task.conversation_id);
+      setTaskSelection(task.task_id);
+    },
+    [
+      setChatConversationSelection,
+      setConversationSelection,
+      setMode,
+      setProjectSelection,
+      setTaskSelection,
+    ],
   );
   const workspaceBrowser = useWorkspaceBrowser({
     client,
@@ -1011,6 +1091,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     chatPendingUserMessage: chatAssistant.pendingUserMessage,
     chatBusy: chatAssistant.isBusy,
     chatError: chatAssistant.error,
+    backgroundTasks: backgroundTasksQuery.data ?? {
+      current: [],
+      other: [],
+      recent: [],
+      nonterminal_count: 0,
+    },
+    backgroundTasksLoading: backgroundTasksQuery.isPending && backgroundTasksQuery.isEnabled,
     projectTurn: projectAssistant.turn,
     projectTrace,
     projectTraceState,
@@ -1127,6 +1214,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     resumeChatTurn: chatAssistant.resumeWorkflow,
     steerChatTurn: chatAssistant.steer,
     retryChatTurn: chatAssistant.retry,
+    manageBackgroundTask,
+    openBackgroundTask,
     retryPendingChatMessage: chatAssistant.retryPending,
     deletePendingChatMessage: chatAssistant.deletePending,
     takePendingChatMessageForEdit: chatAssistant.takePendingForEdit,

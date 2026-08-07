@@ -2,6 +2,8 @@ import type { AssistantDraft, AssistantTurnClient, OptimisticUserMessage } from 
 import type { TurnTraceQueryState } from "../chat/useTurnTraces";
 import type {
   Approval,
+  AssistantBackgroundTask,
+  AssistantBackgroundTaskPage,
   BrowserActionInput,
   BrowserSession,
   BrowserSnapshot,
@@ -54,6 +56,7 @@ import type { PendingImageAttachment } from "../perception/CaptureControl";
 
 export type WorkspaceMode = "project" | "chat";
 export type PermissionProfile = "observe" | "standard" | "autonomous";
+export type BackgroundTaskAction = "pause" | "resume" | "cancel" | "run_now";
 
 export interface ObsidianSourceProjection {
   sourceId: string;
@@ -65,6 +68,8 @@ export interface ObsidianSourceProjection {
 
 export interface WorkspaceClient extends AssistantTurnClient {
   assistant: {
+    backgroundTasks: CoreClient["assistant"]["backgroundTasks"];
+    schedules: CoreClient["assistant"]["schedules"];
     turns: AssistantTurnClient["assistant"]["turns"] &
       Pick<CoreClient["assistant"]["turns"], "trace">;
   };
@@ -200,6 +205,8 @@ export interface WorkspaceModel {
   chatPendingUserMessage: OptimisticUserMessage | null;
   chatBusy: boolean;
   chatError: string | null;
+  backgroundTasks: AssistantBackgroundTaskPage;
+  backgroundTasksLoading: boolean;
   projectTurn: AssistantTurn | null;
   projectTrace: TurnTrace | null;
   projectTraceState: TurnTraceQueryState | null;
@@ -261,6 +268,11 @@ export interface WorkspaceModel {
   resumeChatTurn(): Promise<void>;
   steerChatTurn(instruction: string): Promise<void>;
   retryChatTurn(): Promise<void>;
+  manageBackgroundTask(
+    task: AssistantBackgroundTask,
+    action: BackgroundTaskAction,
+  ): Promise<void>;
+  openBackgroundTask(task: AssistantBackgroundTask): void;
   retryPendingChatMessage(): Promise<void>;
   deletePendingChatMessage(): void;
   takePendingChatMessageForEdit(): AssistantDraft | null;

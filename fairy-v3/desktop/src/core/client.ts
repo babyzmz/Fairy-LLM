@@ -7,6 +7,8 @@ import type {
   CompanionDigestListInput,
   AssetSetCreateInput,
   ApprovalListInput,
+  AssistantScheduleCreateInput,
+  AssistantScheduleUpdateInput,
   AssistantTurnCancelInput,
   AssistantTurnCreateInput,
   AssistantTurnRetryInput,
@@ -725,6 +727,47 @@ export class CoreClient {
   };
 
   readonly assistant = {
+    backgroundTasks: {
+      list: (currentConversationId?: string | null) =>
+        this.transport.call("assistant.background_tasks.list", {
+          current_conversation_id: currentConversationId,
+          recent_limit: 20,
+        }),
+    },
+    schedules: {
+      create: (input: AssistantScheduleCreateInput) =>
+        this.transport.call("assistant.schedules.create", input),
+      get: (scheduleId: string) =>
+        this.transport.call("assistant.schedules.get", { schedule_id: scheduleId }),
+      list: (conversationId?: string | null) =>
+        this.transport.call("assistant.schedules.list", {
+          conversation_id: conversationId,
+          limit: 100,
+        }),
+      update: (input: AssistantScheduleUpdateInput) =>
+        this.transport.call("assistant.schedules.update", input),
+      pause: (scheduleId: string, expectedRevision: number) =>
+        this.transport.call("assistant.schedules.pause", {
+          schedule_id: scheduleId,
+          expected_revision: expectedRevision,
+        }),
+      resume: (scheduleId: string, expectedRevision: number) =>
+        this.transport.call("assistant.schedules.resume", {
+          schedule_id: scheduleId,
+          expected_revision: expectedRevision,
+        }),
+      cancel: (scheduleId: string, expectedRevision: number) =>
+        this.transport.call("assistant.schedules.cancel", {
+          schedule_id: scheduleId,
+          expected_revision: expectedRevision,
+        }),
+      runNow: (scheduleId: string, expectedRevision: number, idempotencyKey: string) =>
+        this.transport.call("assistant.schedules.run_now", {
+          schedule_id: scheduleId,
+          expected_revision: expectedRevision,
+          idempotency_key: idempotencyKey,
+        }),
+    },
     turns: {
       create: (input: AssistantTurnCreateInput) => this.transport.call("assistant.turns.create", input),
       get: (turnId: string) => this.transport.call("assistant.turns.get", { turn_id: turnId }),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -43,6 +44,14 @@ class AssistantRepository(Protocol):
     def get_turn(self, turn_id: UUID) -> AssistantTurn | None: ...
 
     def find_turn_by_idempotency_key(self, idempotency_key: str) -> AssistantTurn | None: ...
+
+    def list_turns(
+        self,
+        *,
+        statuses: frozenset[AssistantTurnStatus] | None = None,
+        updated_since: datetime | None = None,
+        limit: int = 200,
+    ) -> tuple[AssistantTurn, ...]: ...
 
     def nonterminal_turns_for_tasks(
         self,

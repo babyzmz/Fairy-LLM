@@ -130,6 +130,11 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               onDecision={model.decideApproval}
               onSelectModel={model.selectModel}
               onOpenModelSettings={() => model.openSettings("models")}
+              conversationId={model.selectedChatConversation?.id ?? null}
+              backgroundTasks={model.backgroundTasks}
+              backgroundTasksLoading={model.backgroundTasksLoading}
+              onOpenBackgroundTask={model.openBackgroundTask}
+              onManageBackgroundTask={model.manageBackgroundTask}
               inspectorCollapsed={chatInspectorCollapsed}
               onRestoreInspector={() => setChatInspectorCollapsed(false)}
             />

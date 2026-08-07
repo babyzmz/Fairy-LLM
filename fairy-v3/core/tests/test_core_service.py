@@ -872,6 +872,7 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "asset_sets.list",
         "artifacts.list",
         "artifacts.read",
+        "assistant.background_tasks.list",
         "assistant.schedules.cancel",
         "assistant.schedules.create",
         "assistant.schedules.get",

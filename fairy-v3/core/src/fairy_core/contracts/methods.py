@@ -5,6 +5,8 @@ from types import MappingProxyType
 
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
 from fairy_core.contracts.assistant_schedules import (
+    AssistantBackgroundTaskListInput,
+    AssistantBackgroundTaskPageModel,
     AssistantScheduleCreateInput,
     AssistantScheduleIdInput,
     AssistantScheduleListInput,
@@ -403,6 +405,12 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "assistant.turns.cancel",
             AssistantTurnCancelInput,
             AssistantTurnModel,
+        ),
+        "assistant.background_tasks.list": CoreMethod(
+            "assistant.background_tasks.list",
+            AssistantBackgroundTaskListInput,
+            AssistantBackgroundTaskPageModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "assistant.schedules.cancel": CoreMethod(
             "assistant.schedules.cancel",

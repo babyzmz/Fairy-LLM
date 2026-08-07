@@ -194,6 +194,37 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
         )
         return self._with_workflow_summary(self._turn_from_row(row)) if row is not None else None
 
+    def list_turns(
+        self,
+        *,
+        statuses: frozenset[AssistantTurnStatus] | None = None,
+        updated_since: datetime | None = None,
+        limit: int = 200,
+    ) -> tuple[AssistantTurn, ...]:
+        if limit < 1 or limit > 500:
+            raise ValueError("Assistant Turn list limit is invalid")
+        predicates = [assistant_turns.c.tenant_id == self._tenant_id]
+        if statuses is not None:
+            if not statuses:
+                return ()
+            predicates.append(
+                assistant_turns.c.status.in_(tuple(status.value for status in statuses))
+            )
+        if updated_since is not None:
+            predicates.append(assistant_turns.c.updated_at >= updated_since)
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(assistant_turns)
+                    .where(*predicates)
+                    .order_by(assistant_turns.c.updated_at.desc(), assistant_turns.c.id.desc())
+                    .limit(limit)
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(self._with_workflow_summary(self._turn_from_row(row)) for row in rows)
+
     def nonterminal_turns_for_tasks(
         self,
         task_ids: tuple[UUID, ...],
