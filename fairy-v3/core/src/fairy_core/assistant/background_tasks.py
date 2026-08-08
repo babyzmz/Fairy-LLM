@@ -18,6 +18,7 @@ _ACTIVE_TURN_STATUSES = frozenset(
         AssistantTurnStatus.CREATED,
         AssistantTurnStatus.RUNNING,
         AssistantTurnStatus.WAITING_FOR_TOOL,
+        AssistantTurnStatus.WAITING_FOR_INPUT,
     }
 )
 _TERMINAL_TURN_STATUSES = frozenset(
@@ -108,6 +109,7 @@ def _turn_item(unit_of_work, turn: AssistantTurn, current_conversation_id):
     task = unit_of_work.state.get_task(turn.task_id)
     occurrence = unit_of_work.assistant_schedules.get_occurrence_for_turn(turn.id)
     workflow = turn.workflow_summary
+    interpretation = turn.interpretation_summary
     workflow_status = workflow.status if workflow is not None else None
     status = _turn_status(turn, workflow_status)
     return {
@@ -128,11 +130,18 @@ def _turn_item(unit_of_work, turn: AssistantTurn, current_conversation_id):
         "public_error": (
             occurrence.public_error
             if occurrence is not None
+            else interpretation.clarification_question
+            if turn.status is AssistantTurnStatus.WAITING_FOR_INPUT
+            and interpretation is not None
             else "The task failed."
             if turn.status is AssistantTurnStatus.FAILED
             else None
         ),
-        "attention_code": None,
+        "attention_code": (
+            "clarification_required"
+            if turn.status is AssistantTurnStatus.WAITING_FOR_INPUT
+            else None
+        ),
         "current_conversation": turn.conversation_id == current_conversation_id,
         "scheduled_for": occurrence.scheduled_for if occurrence is not None else None,
         "next_fire_at": None,
@@ -232,11 +241,12 @@ def _title(value: str) -> str:
 def _active_sort_key(item: dict[str, object]) -> tuple[int, datetime, str]:
     rank = {
         "waiting_for_approval": 0,
-        "attention_required": 1,
-        "running": 2,
-        "queued": 3,
-        "paused": 4,
-        "scheduled": 5,
+        "waiting_for_input": 1,
+        "attention_required": 2,
+        "running": 3,
+        "queued": 4,
+        "paused": 5,
+        "scheduled": 6,
     }.get(str(item["status"]), 6)
     return rank, item["updated_at"], str(item["id"])
 

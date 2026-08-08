@@ -94,6 +94,9 @@ class ClassifierInterpretationPayload(BaseModel):
             raise ValueError("clarification disposition and question must agree")
         if required and not self.missing_information:
             raise ValueError("clarification must identify missing information")
+        for index, objective in enumerate(self.objectives):
+            if any(dependency >= index for dependency in objective.depends_on):
+                raise ValueError("objective dependencies must reference earlier objectives")
         return self
 
 
@@ -144,6 +147,9 @@ class AssistantRequestInterpretationRevision:
         _bounded_text(self.public_summary, "public summary", maximum=240)
         if not self.objectives:
             raise ValueError("interpretation must contain at least one objective")
+        for index, objective in enumerate(self.objectives):
+            if any(dependency >= index for dependency in objective.depends_on):
+                raise ValueError("objective dependencies must reference earlier objectives")
         _unique_texts(self.targets, "targets", maximum=64, item_maximum=1_000)
         _unique_texts(self.constraints, "constraints", maximum=64, item_maximum=2_000)
         _unique_texts(self.assumptions, "assumptions", maximum=32, item_maximum=1_000)

@@ -117,6 +117,41 @@ def test_interpretation_requires_missing_information_for_clarification() -> None
         )
 
 
+def test_objective_dependencies_must_form_an_ordered_dag() -> None:
+    with pytest.raises(ValueError, match="invalid structured output"):
+        parse_router_output(
+            json.dumps(
+                {
+                    "task_kind": "general",
+                    "complexity": "medium",
+                    "needs_review": False,
+                    "requires_workspace_changes": False,
+                    "estimated_output_tokens": 512,
+                    "public_summary": "Handle two related objectives.",
+                    "interpretation": {
+                        "normalized_goal": "Research and summarize",
+                        "action": "review",
+                        "objectives": [
+                            {
+                                "goal": "Research the subject",
+                                "action": "review",
+                                "depends_on": [1],
+                            },
+                            {
+                                "goal": "Summarize the research",
+                                "action": "answer",
+                                "depends_on": [0],
+                            },
+                        ],
+                        "confidence": "high",
+                        "disposition": "ready",
+                        "public_summary": "Research then summarize.",
+                    },
+                }
+            )
+        )
+
+
 def test_router_receives_canonical_untrusted_envelope() -> None:
     source_message_id = UUID(int=9)
     selection = ModelSelectionSnapshot(

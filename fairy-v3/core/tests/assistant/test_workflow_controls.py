@@ -271,6 +271,10 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
             {"turn_id": turn["id"]},
         )
         waiting_events = service.invoke("events.list", {"cursor": 0, "limit": 100})["items"]
+        background = service.invoke(
+            "assistant.background_tasks.list",
+            {"current_conversation_id": task["conversation_id"], "recent_limit": 20},
+        )
         response = {
             "turn_id": turn["id"],
             "content": "Update src/app.ts.",
@@ -304,6 +308,11 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
         assert waiting["workflow_summary"]["status"] == "waiting_for_input"
         assert interpretation["clarification_question"] == "Which file should Fairy update?"
         assert interpretation["revision"] == 1
+        assert background["current"][0]["status"] == "waiting_for_input"
+        assert background["current"][0]["attention_code"] == "clarification_required"
+        assert background["current"][0]["public_error"] == (
+            "Which file should Fairy update?"
+        )
         assert any(
             event["event_type"] == "assistant.turn.clarification_requested"
             and event["payload"].get("turn_id") == turn["id"]

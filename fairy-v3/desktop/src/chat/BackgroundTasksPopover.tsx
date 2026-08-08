@@ -236,9 +236,18 @@ function statusPresentation(status: string): {
   if (status === "completed") {
     return { label: "Completed", tone: "success", icon: <CheckCircle2 size={14} /> };
   }
-  if (["failed", "attention_required", "waiting_for_approval"].includes(status)) {
+  if (
+    ["failed", "attention_required", "waiting_for_approval", "waiting_for_input"].includes(
+      status,
+    )
+  ) {
     return {
-      label: status === "waiting_for_approval" ? "Approval required" : "Needs attention",
+      label:
+        status === "waiting_for_approval"
+          ? "Approval required"
+          : status === "waiting_for_input"
+            ? "Clarification needed"
+            : "Needs attention",
       tone: "attention",
       icon: <AlertCircle size={14} />,
     };

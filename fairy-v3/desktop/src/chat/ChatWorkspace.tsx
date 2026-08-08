@@ -484,14 +484,20 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         </div>
       ) : null}
       {interpretation !== null &&
-      (waitingForClarification || interpretation.disposition === "assumed") ? (
+      (waitingForClarification ||
+        interpretation.disposition === "assumed" ||
+        interpretation.objectives.length > 1) ? (
         <section
           className={`request-interpretation-card ${waitingForClarification ? "needs-input" : "assumed"}`}
           aria-label={waitingForClarification ? "Clarification required" : "Request interpretation"}
           role={waitingForClarification ? "status" : undefined}
         >
           <span className="eyebrow">
-            {waitingForClarification ? "ONE DETAIL NEEDED" : "INTERPRETATION"}
+            {waitingForClarification
+              ? "ONE DETAIL NEEDED"
+              : interpretation.objectives.length > 1
+                ? "PLAN UNDERSTOOD"
+                : "INTERPRETATION"}
           </span>
           <strong>
             {waitingForClarification
