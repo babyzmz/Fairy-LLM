@@ -50,7 +50,7 @@ from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.turn_lifecycle import AssistantTurnLifecycleMixin
 from fairy_core.assistant.turn_reader import AssistantTurnReader, require_task, require_turn
 from fairy_core.assistant.workflow_runtime import AssistantWorkflowRuntimeMixin
-from fairy_core.commanding import CommandRun
+from fairy_core.commanding import CommandRun, EventVisibility
 from fairy_core.commanding.bus import CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolDefinition, ToolRegistry
@@ -775,6 +775,19 @@ class AssistantApplication(
                     prepared,
                     expected_status=expected_status,
                     expected_cancellation_revision=expected_revision,
+                )
+                unit_of_work.commands.append_domain_event(
+                    event_type="assistant.turn.clarification_requested",
+                    visibility=EventVisibility.USER,
+                    message="Fairy needs clarification",
+                    payload={
+                        "turn_id": str(prepared.id),
+                        "interpretation_revision": interpretation.revision,
+                        "public_summary": interpretation.public_summary,
+                    },
+                    actor="assistant",
+                    conversation_id=prepared.conversation_id,
+                    task_id=prepared.task_id,
                 )
                 unit_of_work.commit()
         return self._turns.get(turn_id)

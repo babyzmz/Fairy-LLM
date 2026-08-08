@@ -14,10 +14,13 @@ from fairy_core.contracts.models import (
     ArtifactListInput,
     ArtifactModel,
     ArtifactPageModel,
+    AssistantRequestInterpretationModel,
     AssistantTurnCancelInput,
     AssistantTurnCreateInput,
     AssistantTurnIdInput,
+    AssistantTurnInterpretationInput,
     AssistantTurnModel,
+    AssistantTurnRespondInput,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
     AssistantTurnStartInput,
@@ -445,6 +448,21 @@ def create_cloud_app(
         return invoke("assistant.turns.workflow.get", {"turn_id": str(turn_id)})
 
     @protected.get(
+        "/assistant/turns/{turn_id}/interpretation",
+        operation_id="assistant.turns.interpretation.get",
+        response_model=AssistantRequestInterpretationModel,
+    )
+    def get_assistant_turn_interpretation(
+        turn_id: UUID,
+        revision: int | None = None,
+    ) -> dict[str, Any]:
+        request = AssistantTurnInterpretationInput(turn_id=turn_id, revision=revision)
+        return invoke(
+            "assistant.turns.interpretation.get",
+            request.model_dump(mode="json", exclude_none=True),
+        )
+
+    @protected.get(
         "/assistant/turns/{turn_id}/trace",
         operation_id="assistant.turns.trace.list",
         response_model=TurnTraceModel,
@@ -516,6 +534,23 @@ def create_cloud_app(
         require_turn_match(turn_id, request.turn_id)
         require_idempotency_match(request.idempotency_key, idempotency_key)
         return invoke("assistant.turns.steer", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/assistant/turns/{turn_id}/respond",
+        operation_id="assistant.turns.respond",
+        response_model=AssistantTurnModel,
+    )
+    def respond_to_assistant_turn(
+        turn_id: UUID,
+        request: AssistantTurnRespondInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=512),
+        ],
+    ) -> dict[str, Any]:
+        require_turn_match(turn_id, request.turn_id)
+        require_idempotency_match(request.idempotency_key, idempotency_key)
+        return invoke("assistant.turns.respond", request.model_dump(mode="json"))
 
     @protected.post(
         "/assistant/turns/{turn_id}/run",

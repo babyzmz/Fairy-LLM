@@ -1102,6 +1102,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     pauseChatTurn: chatAssistant.pauseWorkflow,
     resumeChatTurn: chatAssistant.resumeWorkflow,
     steerChatTurn: chatAssistant.steer,
+    respondToChatClarification: chatAssistant.respondToClarification,
     retryChatTurn: chatAssistant.retry,
     manageBackgroundTask: assistantScheduling.manageBackgroundTask,
     openBackgroundTask: assistantScheduling.openBackgroundTask,

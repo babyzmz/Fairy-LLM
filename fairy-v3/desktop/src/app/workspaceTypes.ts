@@ -274,6 +274,7 @@ export interface WorkspaceModel {
   pauseChatTurn(): Promise<void>;
   resumeChatTurn(): Promise<void>;
   steerChatTurn(instruction: string): Promise<void>;
+  respondToChatClarification?(content: string): Promise<void>;
   retryChatTurn(): Promise<void>;
   manageBackgroundTask(
     task: AssistantBackgroundTask,

@@ -730,6 +730,163 @@
         "title": "AssetVariantModel",
         "type": "object"
       },
+      "AssistantRequestInterpretationModel": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RequestAction"
+          },
+          "assumptions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "clarification_question": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarification Question"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/InterpretationConfidence"
+          },
+          "constraints": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Constraints",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deliverable": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deliverable"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/InterpretationDisposition"
+          },
+          "evidence_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRequirementKind"
+            },
+            "title": "Evidence Requirements",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "missing_information": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Missing Information",
+            "type": "array"
+          },
+          "normalized_goal": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Normalized Goal",
+            "type": "string"
+          },
+          "objectives": {
+            "items": {
+              "$ref": "#/components/schemas/InterpretedObjectiveModel"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Objectives",
+            "type": "array"
+          },
+          "public_summary": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Public Summary",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source_message_id": {
+            "format": "uuid",
+            "title": "Source Message Id",
+            "type": "string"
+          },
+          "source_message_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Source Message Sha256",
+            "type": "string"
+          },
+          "targets": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Targets",
+            "type": "array"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "turn_id",
+          "revision",
+          "source_message_id",
+          "source_message_sha256",
+          "schema_version",
+          "normalized_goal",
+          "action",
+          "objectives",
+          "evidence_requirements",
+          "confidence",
+          "disposition",
+          "public_summary",
+          "created_at"
+        ],
+        "title": "AssistantRequestInterpretationModel",
+        "type": "object"
+      },
       "AssistantTurnCancelInput": {
         "additionalProperties": false,
         "properties": {
@@ -822,6 +979,18 @@
       "AssistantTurnModel": {
         "additionalProperties": false,
         "properties": {
+          "active_interpretation_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Interpretation Revision"
+          },
           "budget_approval_run_id": {
             "anyOf": [
               {
@@ -922,6 +1091,16 @@
             "minLength": 1,
             "title": "Idempotency Key",
             "type": "string"
+          },
+          "interpretation_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssistantRequestInterpretationModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "knowledge_snapshot_hash": {
             "anyOf": [
@@ -1067,6 +1246,41 @@
         "title": "AssistantTurnModel",
         "type": "object"
       },
+      "AssistantTurnRespondInput": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "expected_interpretation_revision": {
+            "minimum": 1.0,
+            "title": "Expected Interpretation Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "content",
+          "expected_interpretation_revision",
+          "idempotency_key"
+        ],
+        "title": "AssistantTurnRespondInput",
+        "type": "object"
+      },
       "AssistantTurnRetryInput": {
         "additionalProperties": false,
         "properties": {
@@ -1124,6 +1338,7 @@
           "created",
           "running",
           "waiting_for_tool",
+          "waiting_for_input",
           "completed",
           "cancelled",
           "failed"
@@ -4722,6 +4937,53 @@
           "imported_at"
         ],
         "title": "ImportedMessageModel",
+        "type": "object"
+      },
+      "InterpretationConfidence": {
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "title": "InterpretationConfidence",
+        "type": "string"
+      },
+      "InterpretationDisposition": {
+        "enum": [
+          "ready",
+          "assumed",
+          "clarification_required"
+        ],
+        "title": "InterpretationDisposition",
+        "type": "string"
+      },
+      "InterpretedObjectiveModel": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RequestAction"
+          },
+          "depends_on": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 32,
+            "title": "Depends On",
+            "type": "array"
+          },
+          "goal": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Goal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "goal",
+          "action"
+        ],
+        "title": "InterpretedObjectiveModel",
         "type": "object"
       },
       "KnowledgeCollectionModel": {
@@ -10857,6 +11119,22 @@
         "title": "RendererPackRemoveResultModel",
         "type": "object"
       },
+      "RequestAction": {
+        "enum": [
+          "answer",
+          "explain",
+          "review",
+          "change",
+          "create",
+          "run",
+          "browse",
+          "generate",
+          "schedule",
+          "manage"
+        ],
+        "title": "RequestAction",
+        "type": "string"
+      },
       "RevealPathAction": {
         "additionalProperties": false,
         "properties": {
@@ -14351,6 +14629,7 @@
           "queued",
           "running",
           "waiting_for_approval",
+          "waiting_for_input",
           "paused",
           "completed",
           "cancelled",
@@ -15606,6 +15885,83 @@
         "summary": "Cancel Assistant Turn"
       }
     },
+    "/v1/assistant/turns/{turn_id}/interpretation": {
+      "get": {
+        "operationId": "assistant.turns.interpretation.get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Revision"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantRequestInterpretationModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Assistant Turn Interpretation"
+      }
+    },
     "/v1/assistant/turns/{turn_id}/pause": {
       "post": {
         "operationId": "assistant.turns.pause",
@@ -15675,6 +16031,88 @@
           }
         ],
         "summary": "Pause Assistant Turn"
+      }
+    },
+    "/v1/assistant/turns/{turn_id}/respond": {
+      "post": {
+        "operationId": "assistant.turns.respond",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantTurnRespondInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantTurnModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Respond To Assistant Turn"
       }
     },
     "/v1/assistant/turns/{turn_id}/resume": {

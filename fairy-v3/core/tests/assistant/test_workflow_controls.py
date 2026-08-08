@@ -215,11 +215,14 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
         )
 
         service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
-        waiting = wait_for_turn(service, turn["id"], status="waiting_for_input")
+        wait_for_turn(service, turn["id"], status="waiting_for_input")
+        _wait_for_workflow(service, turn["id"], "waiting_for_input")
+        waiting = service.invoke("assistant.turns.get", {"turn_id": turn["id"]})
         interpretation = service.invoke(
             "assistant.turns.interpretation.get",
             {"turn_id": turn["id"]},
         )
+        waiting_events = service.invoke("events.list", {"cursor": 0, "limit": 100})["items"]
         response = {
             "turn_id": turn["id"],
             "content": "Update src/app.ts.",
@@ -238,6 +241,11 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
         assert waiting["workflow_summary"]["status"] == "waiting_for_input"
         assert interpretation["clarification_question"] == "Which file should Fairy update?"
         assert interpretation["revision"] == 1
+        assert any(
+            event["event_type"] == "assistant.turn.clarification_requested"
+            and event["payload"].get("turn_id") == turn["id"]
+            for event in waiting_events
+        )
         assert resumed["id"] == turn["id"] == replayed["id"]
         assert completed["active_interpretation_revision"] == 2
         assert completed["interpretation_summary"]["disposition"] == "ready"

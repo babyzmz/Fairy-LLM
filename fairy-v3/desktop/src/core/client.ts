@@ -11,6 +11,8 @@ import type {
   AssistantScheduleUpdateInput,
   AssistantTurnCancelInput,
   AssistantTurnCreateInput,
+  AssistantTurnInterpretationInput,
+  AssistantTurnRespondInput,
   AssistantTurnRetryInput,
   AssistantTurnSteerInput,
   ChangesetProposal,
@@ -771,12 +773,16 @@ export class CoreClient {
     turns: {
       create: (input: AssistantTurnCreateInput) => this.transport.call("assistant.turns.create", input),
       get: (turnId: string) => this.transport.call("assistant.turns.get", { turn_id: turnId }),
+      getInterpretation: (input: AssistantTurnInterpretationInput) =>
+        this.transport.call("assistant.turns.interpretation.get", input),
       pause: (turnId: string) => this.transport.call("assistant.turns.pause", { turn_id: turnId }),
       cancel: (input: AssistantTurnCancelInput) => this.transport.call("assistant.turns.cancel", input),
       run: (turnId: string) => this.transport.call("assistant.turns.run", { turn_id: turnId }),
       start: (turnId: string) => this.transport.call("assistant.turns.start", { turn_id: turnId }),
       retry: (input: AssistantTurnRetryInput) => this.transport.call("assistant.turns.retry", input),
       resume: (turnId: string) => this.transport.call("assistant.turns.resume", { turn_id: turnId }),
+      respond: (input: AssistantTurnRespondInput) =>
+        this.transport.call("assistant.turns.respond", input),
       steer: (input: AssistantTurnSteerInput) => this.transport.call("assistant.turns.steer", input),
       trace: (turnId: string) =>
         this.transport.call("assistant.turns.trace.list", { turn_id: turnId }),

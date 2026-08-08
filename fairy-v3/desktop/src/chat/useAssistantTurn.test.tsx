@@ -614,6 +614,47 @@ describe("useAssistantTurn", () => {
     expect(startTurn).toHaveBeenCalledTimes(2);
   });
 
+  it("submits clarification against the active interpretation revision", async () => {
+    const waiting = assistantTurn({
+      status: "waiting_for_input",
+      active_interpretation_revision: 3,
+      workflow_summary: workflowSummary({ status: "waiting_for_input" }),
+    });
+    const resumed = assistantTurn({
+      status: "running",
+      active_interpretation_revision: 4,
+      workflow_summary: workflowSummary({ status: "queued" }),
+    });
+    const respondTurn = vi.fn(async () => resumed);
+    const client = assistantClient({
+      createTask: async () => ({ task: { id: taskId } }) as never,
+      createTurn: async () => assistantTurn(),
+      startTurn: async () => waiting,
+      respondTurn,
+    });
+    const { result } = renderHook(() =>
+      useAssistantTurn({
+        client,
+        conversationId,
+        profileId: "openrouter-free",
+        operationMode: "answer",
+        events: [],
+      }),
+    );
+
+    await act(async () => result.current.send("Update it", []));
+    await act(async () => result.current.respondToClarification("src/app.ts"));
+
+    expect(respondTurn).toHaveBeenCalledWith({
+      turn_id: turnId,
+      content: "src/app.ts",
+      expected_interpretation_revision: 3,
+      idempotency_key: expect.stringContaining("assistant-clarification"),
+    });
+    expect(result.current.turn).toEqual(resumed);
+    expect(result.current.isBusy).toBe(true);
+  });
+
   it("projects a Core-owned approval resume without starting the turn twice", async () => {
     const waiting = assistantTurn({ status: "waiting_for_tool" });
     const completed = assistantTurn({
@@ -723,6 +764,7 @@ interface ClientOverrides {
   pauseTurn?: AssistantTurnClient["assistant"]["turns"]["pause"];
   resumeWorkflow?: AssistantTurnClient["assistant"]["turns"]["resume"];
   steerTurn?: AssistantTurnClient["assistant"]["turns"]["steer"];
+  respondTurn?: NonNullable<AssistantTurnClient["assistant"]["turns"]["respond"]>;
 }
 
 function assistantClient(overrides: ClientOverrides): AssistantTurnClient {
@@ -746,6 +788,7 @@ function assistantClient(overrides: ClientOverrides): AssistantTurnClient {
         resume:
           overrides.resumeWorkflow ?? (async () => assistantTurn({ status: "completed" })),
         steer: overrides.steerTurn ?? (async () => assistantTurn({ status: "running" })),
+        respond: overrides.respondTurn,
       },
     },
   };

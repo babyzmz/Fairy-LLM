@@ -110,6 +110,12 @@ export type ArtifactPage = Schemas["ArtifactPageModel"];
 export type AssistantTurn = Schemas["AssistantTurnModel"];
 export type AssistantTurnCancelInput = Schemas["AssistantTurnCancelInput"];
 export type AssistantTurnCreateInput = Schemas["AssistantTurnCreateInput"];
+export type AssistantTurnInterpretation = Schemas["AssistantRequestInterpretationModel"];
+export interface AssistantTurnInterpretationInput {
+  turn_id: string;
+  revision?: number | null;
+}
+export type AssistantTurnRespondInput = Schemas["AssistantTurnRespondInput"];
 export type AssistantTurnSteerInput = Schemas["AssistantTurnSteerInput"];
 export type AssistantTurnRetryInput = Schemas["AssistantTurnRetryInput"];
 export type AssistantTurnRunInput = Schemas["AssistantTurnRunInput"];
@@ -134,7 +140,15 @@ export interface AssistantBackgroundTask {
   scheduled_for: string | null;
   next_fire_at: string | null;
   schedule_revision: number | null;
-  turn_status: "created" | "running" | "waiting_for_tool" | "completed" | "cancelled" | "failed" | null;
+  turn_status:
+    | "created"
+    | "running"
+    | "waiting_for_tool"
+    | "waiting_for_input"
+    | "completed"
+    | "cancelled"
+    | "failed"
+    | null;
   turn_cancellation_revision: number | null;
   workflow_budget_tier: "normal" | "deep" | null;
   created_at: string;
@@ -856,6 +870,10 @@ export interface CoreMethodMap {
     result: AssistantSchedule;
   };
   "assistant.turns.get": { params: { turn_id: string }; result: AssistantTurn };
+  "assistant.turns.interpretation.get": {
+    params: AssistantTurnInterpretationInput;
+    result: AssistantTurnInterpretation;
+  };
   "assistant.turns.pause": { params: { turn_id: string }; result: AssistantTurn };
   "assistant.turns.cancel": {
     params: AssistantTurnCancelInput;
@@ -874,6 +892,10 @@ export interface CoreMethodMap {
     result: AssistantTurn;
   };
   "assistant.turns.resume": { params: { turn_id: string }; result: AssistantTurn };
+  "assistant.turns.respond": {
+    params: AssistantTurnRespondInput;
+    result: AssistantTurn;
+  };
   "assistant.turns.steer": {
     params: AssistantTurnSteerInput;
     result: AssistantTurn;

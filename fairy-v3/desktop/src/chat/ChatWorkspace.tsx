@@ -78,6 +78,7 @@ export interface ChatWorkspaceProps {
   onPauseWorkflow?(): Promise<void>;
   onResumeWorkflow?(): Promise<void>;
   onSteer?(instruction: string): Promise<void>;
+  onRespondToClarification?(content: string): Promise<void>;
   onRetry(): Promise<void>;
   onRetryPending(): Promise<void>;
   onDeletePending(): void;
@@ -126,6 +127,8 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const pendingApproval =
     props.approvals.find((approval) => approval.decision === "pending") ?? null;
   const workflowSummary = props.turn?.workflow_summary ?? null;
+  const interpretation = props.turn?.interpretation_summary ?? null;
+  const waitingForClarification = props.turn?.status === "waiting_for_input";
   const workflowCanUpdate =
     props.turn?.status === "running" &&
     workflowSummary !== null &&
@@ -134,10 +137,18 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     if (!providerAvailable) return "Provider unavailable";
     if (props.offline) return "Core offline";
     if (pendingApproval !== null) return "Approval required";
+    if (waitingForClarification) return "Clarification needed";
     if (workflowSummary?.status === "paused") return "Task paused";
     if (props.isBusy) return "Fairy is working";
     return "Ready";
-  }, [pendingApproval, props.isBusy, props.offline, providerAvailable, workflowSummary?.status]);
+  }, [
+    pendingApproval,
+    props.isBusy,
+    props.offline,
+    providerAvailable,
+    waitingForClarification,
+    workflowSummary?.status,
+  ]);
   const scheduleActions = useMemo<ScheduleCardActions>(() => ({
     update: (schedule, rule) => requiredScheduleAction(props.onUpdateSchedule)(schedule, rule),
     pause: (schedule) => requiredScheduleAction(props.onPauseSchedule)(schedule),
@@ -212,6 +223,18 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     files: File[],
     images: PendingImageAttachment[],
   ) => {
+    if (waitingForClarification) {
+      setNotice(null);
+      if (files.length > 0 || images.length > 0) {
+        setNotice("Clarification replies cannot add attachments");
+        return;
+      }
+      if (props.onRespondToClarification === undefined) {
+        throw new Error("Clarification response control is unavailable");
+      }
+      await props.onRespondToClarification(value);
+      return;
+    }
     const command = parseSlashCommand(value, props.slashCommands);
     if (command === null) {
       setNotice(null);
@@ -460,6 +483,26 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           </div>
         </div>
       ) : null}
+      {interpretation !== null &&
+      (waitingForClarification || interpretation.disposition === "assumed") ? (
+        <section
+          className={`request-interpretation-card ${waitingForClarification ? "needs-input" : "assumed"}`}
+          aria-label={waitingForClarification ? "Clarification required" : "Request interpretation"}
+          role={waitingForClarification ? "status" : undefined}
+        >
+          <span className="eyebrow">
+            {waitingForClarification ? "ONE DETAIL NEEDED" : "INTERPRETATION"}
+          </span>
+          <strong>
+            {waitingForClarification
+              ? interpretation.clarification_question
+              : interpretation.public_summary}
+          </strong>
+          {!waitingForClarification && interpretation.assumptions.length > 0 ? (
+            <p>{interpretation.assumptions.join(" · ")}</p>
+          ) : null}
+        </section>
+      ) : null}
       <Composer
         disabled={
           props.offline ||
@@ -473,6 +516,9 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         modelSelectionDisabled={props.offline || props.modelSelectionLoading}
         submissionBlockedReason={props.modelSelectionBlockReason}
         workflowSummary={workflowSummary}
+        clarificationQuestion={
+          waitingForClarification ? interpretation?.clarification_question ?? null : null
+        }
         draft={composerDraft}
         onSubmit={submit}
         onSchedule={props.onCreateSchedule === undefined ? undefined : async (instruction, rule) => {

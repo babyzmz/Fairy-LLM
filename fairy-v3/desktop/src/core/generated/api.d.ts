@@ -191,6 +191,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/assistant/turns/{turn_id}/interpretation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Assistant Turn Interpretation */
+        get: operations["assistant.turns.interpretation.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/assistant/turns/{turn_id}/pause": {
         parameters: {
             query?: never;
@@ -202,6 +219,23 @@ export interface paths {
         put?: never;
         /** Pause Assistant Turn */
         post: operations["assistant.turns.pause"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assistant/turns/{turn_id}/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Respond To Assistant Turn */
+        post: operations["assistant.turns.respond"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2889,6 +2923,70 @@ export interface components {
             /** Role */
             role: string;
         };
+        /** AssistantRequestInterpretationModel */
+        AssistantRequestInterpretationModel: {
+            action: components["schemas"]["RequestAction"];
+            /**
+             * Assumptions
+             * @default []
+             */
+            assumptions: string[];
+            /** Clarification Question */
+            clarification_question?: string | null;
+            confidence: components["schemas"]["InterpretationConfidence"];
+            /**
+             * Constraints
+             * @default []
+             */
+            constraints: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Deliverable */
+            deliverable?: string | null;
+            disposition: components["schemas"]["InterpretationDisposition"];
+            /** Evidence Requirements */
+            evidence_requirements: components["schemas"]["EvidenceRequirementKind"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Missing Information
+             * @default []
+             */
+            missing_information: string[];
+            /** Normalized Goal */
+            normalized_goal: string;
+            /** Objectives */
+            objectives: components["schemas"]["InterpretedObjectiveModel"][];
+            /** Public Summary */
+            public_summary: string;
+            /** Revision */
+            revision: number;
+            /** Schema Version */
+            schema_version: number;
+            /**
+             * Source Message Id
+             * Format: uuid
+             */
+            source_message_id: string;
+            /** Source Message Sha256 */
+            source_message_sha256: string;
+            /**
+             * Targets
+             * @default []
+             */
+            targets: string[];
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+        };
         /** AssistantTurnCancelInput */
         AssistantTurnCancelInput: {
             /** Expected Cancellation Revision */
@@ -2924,6 +3022,8 @@ export interface components {
         };
         /** AssistantTurnModel */
         AssistantTurnModel: {
+            /** Active Interpretation Revision */
+            active_interpretation_revision?: number | null;
             /** Budget Approval Run Id */
             budget_approval_run_id: string | null;
             /** Cancellation Revision */
@@ -2963,6 +3063,7 @@ export interface components {
             id: string;
             /** Idempotency Key */
             idempotency_key: string;
+            interpretation_summary?: components["schemas"]["AssistantRequestInterpretationModel"] | null;
             /** Knowledge Snapshot Hash */
             knowledge_snapshot_hash?: string | null;
             /** Knowledge Snapshot Id */
@@ -3001,6 +3102,20 @@ export interface components {
             workflow_run_id?: string | null;
             workflow_summary?: components["schemas"]["AssistantWorkflowSummaryModel"] | null;
         };
+        /** AssistantTurnRespondInput */
+        AssistantTurnRespondInput: {
+            /** Content */
+            content: string;
+            /** Expected Interpretation Revision */
+            expected_interpretation_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+        };
         /** AssistantTurnRetryInput */
         AssistantTurnRetryInput: {
             /** Idempotency Key */
@@ -3031,7 +3146,7 @@ export interface components {
          * AssistantTurnStatus
          * @enum {string}
          */
-        AssistantTurnStatus: "created" | "running" | "waiting_for_tool" | "completed" | "cancelled" | "failed";
+        AssistantTurnStatus: "created" | "running" | "waiting_for_tool" | "waiting_for_input" | "completed" | "cancelled" | "failed";
         /** AssistantTurnSteerInput */
         AssistantTurnSteerInput: {
             /** Expected Revision */
@@ -4473,6 +4588,27 @@ export interface components {
             /** Turn Id */
             turn_id: string | null;
             visibility: components["schemas"]["PublicMessageVisibilityModel"];
+        };
+        /**
+         * InterpretationConfidence
+         * @enum {string}
+         */
+        InterpretationConfidence: "low" | "medium" | "high";
+        /**
+         * InterpretationDisposition
+         * @enum {string}
+         */
+        InterpretationDisposition: "ready" | "assumed" | "clarification_required";
+        /** InterpretedObjectiveModel */
+        InterpretedObjectiveModel: {
+            action: components["schemas"]["RequestAction"];
+            /**
+             * Depends On
+             * @default []
+             */
+            depends_on: number[];
+            /** Goal */
+            goal: string;
         };
         /** KnowledgeCollectionModel */
         KnowledgeCollectionModel: {
@@ -6761,6 +6897,11 @@ export interface components {
             /** Removed */
             removed: boolean;
         };
+        /**
+         * RequestAction
+         * @enum {string}
+         */
+        RequestAction: "answer" | "explain" | "review" | "change" | "create" | "run" | "browse" | "generate" | "schedule" | "manage";
         /** RevealPathAction */
         RevealPathAction: {
             /** Relative Path */
@@ -8026,7 +8167,7 @@ export interface components {
          * WorkflowRunStatus
          * @enum {string}
          */
-        WorkflowRunStatus: "queued" | "running" | "waiting_for_approval" | "paused" | "completed" | "cancelled" | "failed";
+        WorkflowRunStatus: "queued" | "running" | "waiting_for_approval" | "waiting_for_input" | "paused" | "completed" | "cancelled" | "failed";
         /** WorkspaceExportInput */
         WorkspaceExportInput: {
             /**
@@ -8594,6 +8735,41 @@ export interface operations {
             };
         };
     };
+    "assistant.turns.interpretation.get": {
+        parameters: {
+            query?: {
+                revision?: number | null;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantRequestInterpretationModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "assistant.turns.pause": {
         parameters: {
             query?: never;
@@ -8608,6 +8784,44 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AssistantTurnIdInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantTurnModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "assistant.turns.respond": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantTurnRespondInput"];
             };
         };
         responses: {

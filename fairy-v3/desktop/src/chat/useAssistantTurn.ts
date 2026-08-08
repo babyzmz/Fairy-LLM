@@ -15,8 +15,16 @@ export interface AssistantTurnClient {
   assistant: {
     turns: Pick<
       CoreClient["assistant"]["turns"],
-      "create" | "get" | "start" | "cancel" | "retry" | "pause" | "resume" | "steer"
-    >;
+      | "create"
+      | "get"
+      | "start"
+      | "cancel"
+      | "retry"
+      | "pause"
+      | "resume"
+      | "steer"
+    > &
+      Partial<Pick<CoreClient["assistant"]["turns"], "respond">>;
   };
 }
 
@@ -69,6 +77,7 @@ interface AssistantTurnState {
   pauseWorkflow(): Promise<void>;
   resumeWorkflow(): Promise<void>;
   steer(instruction: string): Promise<void>;
+  respondToClarification(content: string): Promise<void>;
   markApprovalResume(turnId: string): void;
   retry(): Promise<void>;
   retryPending(): Promise<void>;
@@ -389,6 +398,48 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     }
   }, [commitTurn, options.client.assistant.turns, settle]);
 
+  const respondToClarification = useCallback(async (content: string) => {
+    const current = turnRef.current;
+    const normalized = content.trim();
+    if (current?.status !== "waiting_for_input") {
+      throw new Error("The current Assistant task is not waiting for clarification");
+    }
+    if (!normalized) throw new Error("Clarification cannot be empty");
+    const revision = current.active_interpretation_revision;
+    if (revision === null || revision === undefined) {
+      throw new Error("The clarification revision is unavailable");
+    }
+    const operation = ++operationRef.current;
+    busyRef.current = true;
+    setIsBusy(true);
+    setError(null);
+    try {
+      const respond = options.client.assistant.turns.respond;
+      if (respond === undefined) {
+        throw new Error("Clarification response control is unavailable");
+      }
+      const updated = await respond({
+        turn_id: current.id,
+        content: normalized,
+        expected_interpretation_revision: revision,
+        idempotency_key: idempotencyKey("assistant-clarification"),
+      });
+      if (operation !== operationRef.current) return;
+      commitTurn(updated);
+      const active = isActive(updated);
+      busyRef.current = active;
+      setIsBusy(active);
+      await settle();
+    } catch (caught) {
+      if (operation === operationRef.current) {
+        busyRef.current = false;
+        setIsBusy(false);
+        setError(errorMessage(caught));
+      }
+      throw caught;
+    }
+  }, [commitTurn, options.client.assistant.turns, settle]);
+
   const resume = useCallback(async () => {
     if (turn === null || turn.status !== "waiting_for_tool" || busyRef.current) return;
     const operation = ++operationRef.current;
@@ -543,6 +594,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     pauseWorkflow,
     resumeWorkflow,
     steer,
+    respondToClarification,
     markApprovalResume,
     retry,
     retryPending,
@@ -558,6 +610,8 @@ const STATUS_EVENT_TYPES = new Set([
   "assistant.turn.cancelled",
   "assistant.turn.failed",
   "assistant.turn.steered",
+  "assistant.turn.clarification_requested",
+  "assistant.turn.clarification_received",
   "assistant.budget.approval_requested",
   "command.waiting_approval",
   "approval.requested",

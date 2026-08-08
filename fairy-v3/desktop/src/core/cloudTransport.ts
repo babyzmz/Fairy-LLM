@@ -218,6 +218,8 @@ const routes = {
     postWithIdempotency(`/v1/documents/${pathParameter(params, "document_id")}/delete`, params),
   "assistant.turns.create": (params) => postWithIdempotency("/v1/assistant/turns", params),
   "assistant.turns.get": (params) => get(`/v1/assistant/turns/${pathParameter(params, "turn_id")}`),
+  "assistant.turns.interpretation.get": (params) =>
+    getWithQuery(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/interpretation`, params, ["revision"]),
   "assistant.turns.pause": (params) =>
     post(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/pause`, params),
   "assistant.turns.cancel": (params) => post(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/cancel`, params),
@@ -227,6 +229,8 @@ const routes = {
     postWithIdempotency(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/retry`, params),
   "assistant.turns.resume": (params) =>
     post(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/resume`, params),
+  "assistant.turns.respond": (params) =>
+    postWithIdempotency(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/respond`, params),
   "assistant.turns.steer": (params) =>
     postWithIdempotency(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/steer`, params),
   "assistant.turns.trace.list": (params) =>

@@ -258,6 +258,52 @@ describe("ChatWorkspace", () => {
 
     expect(props.onDecision).toHaveBeenCalledWith(pending.id, true);
   });
+
+  it("shows one clarification question and routes the Composer reply to the same turn", async () => {
+    const user = userEvent.setup();
+    const onRespondToClarification = vi.fn(async () => undefined);
+    const props = workspaceProps({
+      turn: {
+        ...TURN,
+        status: "waiting_for_input",
+        completed_at: null,
+        active_interpretation_revision: 1,
+        interpretation_summary: {
+          id: "0198f4de-0114-7000-8000-000000000091",
+          turn_id: TURN.id,
+          revision: 1,
+          source_message_id: MESSAGES[0].id,
+          source_message_sha256: "a".repeat(64),
+          schema_version: 1,
+          normalized_goal: "Update the requested file",
+          action: "change",
+          objectives: [{ goal: "Update the requested file", action: "change", depends_on: [] }],
+          targets: [],
+          constraints: [],
+          deliverable: "Updated file",
+          evidence_requirements: [],
+          assumptions: [],
+          missing_information: ["target file"],
+          confidence: "low",
+          disposition: "clarification_required",
+          public_summary: "The target file is missing.",
+          clarification_question: "Which file should Fairy update?",
+          created_at: "2026-07-11T00:00:00Z",
+        },
+      },
+      onRespondToClarification,
+    });
+    render(<ChatWorkspace {...props} />);
+
+    expect(screen.getByText("Which file should Fairy update?")).toBeVisible();
+    const composer = screen.getByLabelText("Answer Fairy's clarification");
+    await user.type(composer, "src/app.ts");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onRespondToClarification).toHaveBeenCalledWith("src/app.ts");
+    expect(props.onSend).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Schedule message" })).not.toBeInTheDocument();
+  });
 });
 
 const TURN: AssistantTurn = {
@@ -384,6 +430,7 @@ function workspaceProps(
     onSwitchProject: vi.fn(),
     onPermissionChange: vi.fn(async () => undefined),
     onSend: vi.fn(async () => undefined),
+    onRespondToClarification: vi.fn(async () => undefined),
     onCancel: vi.fn(async () => undefined),
     onRetry: vi.fn(async () => undefined),
     onRetryPending: vi.fn(async () => undefined),

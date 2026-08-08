@@ -464,6 +464,16 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
                 "idempotency_key": "http:assistant:steer",
             },
         )
+        mismatched_respond = await client.post(
+            f"/v1/assistant/turns/{created['id']}/respond",
+            headers={"Idempotency-Key": "different"},
+            json={
+                "turn_id": created["id"],
+                "content": "Use src/app.ts",
+                "expected_interpretation_revision": 1,
+                "idempotency_key": "http:assistant:respond",
+            },
+        )
         messages = await client.get(
             "/v1/messages",
             params={"conversation_id": conversation_id},
@@ -513,6 +523,8 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
     assert workflow.json()["status"] == "paused"
     assert mismatched_steer.status_code == 409
     assert mismatched_steer.json()["detail"]["code"] == "SCOPE_MISMATCH"
+    assert mismatched_respond.status_code == 409
+    assert mismatched_respond.json()["detail"]["code"] == "SCOPE_MISMATCH"
     assert [(item["role"], item["content"]) for item in messages.json()["items"]] == [
         ("user", "Explain Fairy")
     ]

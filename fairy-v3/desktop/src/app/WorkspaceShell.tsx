@@ -122,6 +122,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               onPauseWorkflow={model.pauseChatTurn}
               onResumeWorkflow={model.resumeChatTurn}
               onSteer={model.steerChatTurn}
+              onRespondToClarification={model.respondToChatClarification}
               onRetry={model.retryChatTurn}
               onRetryPending={model.retryPendingChatMessage}
               onDeletePending={model.deletePendingChatMessage}

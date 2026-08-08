@@ -29,6 +29,7 @@ interface ComposerProps {
   modelSelectionDisabled?: boolean;
   submissionBlockedReason?: string | null;
   workflowSummary?: AssistantWorkflowSummary | null;
+  clarificationQuestion?: string | null;
   draft?: AssistantDraft | null;
   onSubmit(
     value: string,
@@ -53,6 +54,7 @@ export function Composer({
   modelSelectionDisabled = false,
   submissionBlockedReason = null,
   workflowSummary = null,
+  clarificationQuestion = null,
   draft = null,
   onSubmit,
   onSchedule,
@@ -83,20 +85,26 @@ export function Composer({
     workflowSummary !== null &&
     ["queued", "running", "paused"].includes(workflowSummary.status);
   const workflowPaused = workflowSummary?.status === "paused";
-  const effectiveInputAriaLabel = taskUpdateMode
-    ? "Update the current task"
-    : inputAriaLabel;
+  const clarificationMode = clarificationQuestion !== null;
+  const restrictedInputMode = taskUpdateMode || clarificationMode;
+  const effectiveInputAriaLabel = clarificationMode
+    ? "Answer Fairy's clarification"
+    : taskUpdateMode
+      ? "Update the current task"
+      : inputAriaLabel;
   const effectiveBusy = isSubmitting || (isBusy && !taskUpdateMode);
   const canSubmit =
     !disabled &&
     !effectiveBusy &&
     (submissionBlockedReason === null || taskUpdateAvailable) &&
-    (taskUpdateMode
-      ? taskUpdateAvailable &&
+    (clarificationMode
+      ? value.trim().length > 0 && files.length === 0 && capture === null
+      : taskUpdateMode
+        ? taskUpdateAvailable &&
         value.trim().length > 0 &&
         files.length === 0 &&
         capture === null
-      : value.trim().length > 0 || files.length > 0 || capture !== null);
+        : value.trim().length > 0 || files.length > 0 || capture !== null);
 
   useEffect(() => {
     if (draft === null) return;
@@ -251,9 +259,11 @@ export function Composer({
             placeholder={
               workflowSummary?.status === "waiting_for_approval"
                 ? "Resolve approval to continue"
-                : taskUpdateMode
-                  ? "Update the current task"
-                  : "Message Fairy"
+                : clarificationMode
+                  ? "Type the missing detail"
+                  : taskUpdateMode
+                    ? "Update the current task"
+                    : "Message Fairy"
             }
             disabled={disabled}
             onChange={(event) => {
@@ -288,6 +298,10 @@ export function Composer({
                       : "Update current task"}
                 <span>r{workflowSummary.active_plan_revision}</span>
               </span>
+            ) : clarificationMode ? (
+              <span className="composer-workflow-mode clarification" role="status">
+                Answer one detail
+              </span>
             ) : null}
             <input
               ref={fileInputRef}
@@ -296,7 +310,7 @@ export function Composer({
               multiple
               accept={ACCEPTED_DOCUMENTS}
               aria-label="Attach documents"
-              disabled={disabled || effectiveBusy || taskUpdateMode}
+              disabled={disabled || effectiveBusy || restrictedInputMode}
               onChange={(event) => {
                 const selected = Array.from(event.currentTarget.files ?? []);
                 const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_BYTES);
@@ -315,13 +329,13 @@ export function Composer({
               type="button"
               aria-label="Attach documents"
               title="Attach documents"
-              disabled={disabled || effectiveBusy || taskUpdateMode}
+              disabled={disabled || effectiveBusy || restrictedInputMode}
               onClick={() => fileInputRef.current?.click()}
             >
               <Paperclip size={17} />
             </button>
             <CaptureControl
-              disabled={disabled || effectiveBusy || taskUpdateMode}
+              disabled={disabled || effectiveBusy || restrictedInputMode}
               visionAvailable={visionAvailable}
               value={capture}
               onChange={(nextCapture) => {
@@ -332,7 +346,7 @@ export function Composer({
             <ModelSelector
               catalog={modelCatalog}
               selection={modelSelection}
-              disabled={modelSelectionDisabled || taskUpdateMode}
+              disabled={modelSelectionDisabled || restrictedInputMode}
               onSelect={onSelectModel}
               onOpenSettings={onOpenModelSettings}
             />
@@ -397,7 +411,7 @@ export function Composer({
               </button>
             ) : (
               <>
-                {onSchedule !== undefined ? (
+                {onSchedule !== undefined && !clarificationMode ? (
                   <div className="composer-schedule-menu" ref={scheduleMenuRef}>
                     <button
                       className="icon-button composer-schedule-trigger"

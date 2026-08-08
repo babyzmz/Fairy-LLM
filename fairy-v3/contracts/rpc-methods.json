@@ -127,8 +127,20 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "assistant.turns.interpretation.get",
+      "request_model": "AssistantTurnInterpretationInput",
+      "response_model": "AssistantRequestInterpretationModel",
+      "transport": "local_and_cloud"
+    },
+    {
       "name": "assistant.turns.pause",
       "request_model": "AssistantTurnIdInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "assistant.turns.respond",
+      "request_model": "AssistantTurnRespondInput",
       "response_model": "AssistantTurnModel",
       "transport": "local_and_cloud"
     },

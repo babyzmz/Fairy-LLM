@@ -339,6 +339,7 @@ describe("CoreClient", () => {
       idempotency_key: "turn-1",
     });
     await client.assistant.turns.get(id);
+    await client.assistant.turns.getInterpretation({ turn_id: id, revision: 2 });
     await client.assistant.turns.pause(id);
     await client.assistant.turns.cancel({
       turn_id: id,
@@ -347,6 +348,12 @@ describe("CoreClient", () => {
     await client.assistant.turns.run(id);
     await client.assistant.turns.start(id);
     await client.assistant.turns.resume(id);
+    await client.assistant.turns.respond({
+      turn_id: id,
+      content: "Use src/app.ts",
+      expected_interpretation_revision: 2,
+      idempotency_key: "turn-respond-1",
+    });
     await client.assistant.turns.steer({
       turn_id: id,
       instruction: "Use the updated requirement",
@@ -445,11 +452,13 @@ describe("CoreClient", () => {
       "memory.projection.health",
       "assistant.turns.create",
       "assistant.turns.get",
+      "assistant.turns.interpretation.get",
       "assistant.turns.pause",
       "assistant.turns.cancel",
       "assistant.turns.run",
       "assistant.turns.start",
       "assistant.turns.resume",
+      "assistant.turns.respond",
       "assistant.turns.steer",
       "assistant.turns.retry",
       "assistant.turns.trace.list",
