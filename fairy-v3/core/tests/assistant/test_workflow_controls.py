@@ -106,6 +106,10 @@ def test_steering_revises_one_turn_and_replays_idempotently(tmp_path: Path) -> N
         provider.release.set()
         completed = wait_for_turn(service, turn["id"])
         workflow = service.invoke("assistant.turns.workflow.get", {"turn_id": turn["id"]})
+        interpretation = service.invoke(
+            "assistant.turns.interpretation.get",
+            {"turn_id": turn["id"]},
+        )
         messages = service.invoke(
             "messages.list",
             {"conversation_id": task["conversation_id"]},
@@ -114,6 +118,10 @@ def test_steering_revises_one_turn_and_replays_idempotently(tmp_path: Path) -> N
 
         assert completed["status"] == "completed"
         assert workflow["active_plan_revision"] == 2
+        assert interpretation["revision"] == 2
+        assert interpretation["constraints"][-1] == (
+            "Updated requirement: Focus on the recovery behavior instead."
+        )
         assert [message["content"] for message in messages] == [
             "Draft a response",
             "Focus on the recovery behavior instead.",

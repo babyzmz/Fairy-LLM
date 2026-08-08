@@ -4,7 +4,9 @@ import re
 
 from fairy_core.assistant.interpretation import (
     ClassifierInterpretationPayload,
+    InputSegmentKind,
     RequestAction,
+    segment_user_input,
 )
 from fairy_core.assistant.routing import RoutingTaskKind
 
@@ -82,17 +84,22 @@ def guarded_task_kind(
         }:
             return RoutingTaskKind.GENERAL
 
-    browser_qa = bool(_BROWSER_SUBJECT.search(user_request)) and bool(
-        _BROWSER_ACTION.search(user_request)
+    actionable_text = "".join(
+        segment.text
+        for segment in segment_user_input(user_request)
+        if segment.kind is InputSegmentKind.TEXT
+    )
+    browser_qa = bool(_BROWSER_SUBJECT.search(actionable_text)) and bool(
+        _BROWSER_ACTION.search(actionable_text)
     )
     if browser_qa:
         return (
             RoutingTaskKind.CODE
-            if _WORKSPACE_MUTATION.search(user_request)
+            if _WORKSPACE_MUTATION.search(actionable_text)
             else RoutingTaskKind.BROWSER
         )
     media_pattern = _MEDIA_GENERATION.get(routed_kind)
-    if media_pattern is not None and media_pattern.search(user_request) is None:
+    if media_pattern is not None and media_pattern.search(actionable_text) is None:
         return RoutingTaskKind.GENERAL
     return routed_kind
 

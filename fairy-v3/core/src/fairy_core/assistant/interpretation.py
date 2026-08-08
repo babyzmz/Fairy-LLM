@@ -15,7 +15,7 @@ from fairy_core.assistant.evidence import EvidenceRequirementKind
 from fairy_core.domain.ids import new_id
 
 INTERPRETATION_SCHEMA_VERSION = 1
-INTERPRETATION_MAX_CLASSIFIER_CHARS = 140_000
+INTERPRETATION_SEGMENT_CHARS = 16_384
 
 
 class RequestAction(StrEnum):
@@ -230,7 +230,7 @@ def build_classifier_input_envelope(
 
     if attachment_count < 0:
         raise ValueError("attachment count cannot be negative")
-    segments = segment_user_input(content)
+    segments = _chunk_classifier_segments(segment_user_input(content))
     payload: dict[str, Any] = {
         "schema_version": INTERPRETATION_SCHEMA_VERSION,
         "source_message_id": str(source_message_id),
@@ -239,13 +239,15 @@ def build_classifier_input_envelope(
         "attachment_count": attachment_count,
         "content_is_untrusted_user_data": True,
         "segments": [
-            {"kind": segment.kind.value, "text": segment.text} for segment in segments
+            {
+                "index": index,
+                "kind": segment.kind.value,
+                "text": segment.text,
+            }
+            for index, segment in enumerate(segments)
         ],
     }
-    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    if len(encoded) > INTERPRETATION_MAX_CLASSIFIER_CHARS:
-        raise ValueError("classifier input requires deterministic chunking")
-    return encoded
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def interpretation_from_classifier(
@@ -364,6 +366,24 @@ def _split_quotes(content: str) -> list[ClassifierInputSegment]:
     return result
 
 
+def _chunk_classifier_segments(
+    segments: tuple[ClassifierInputSegment, ...],
+) -> tuple[ClassifierInputSegment, ...]:
+    chunks: list[ClassifierInputSegment] = []
+    for segment in segments:
+        if not segment.text:
+            chunks.append(segment)
+            continue
+        chunks.extend(
+            ClassifierInputSegment(
+                segment.kind,
+                segment.text[offset : offset + INTERPRETATION_SEGMENT_CHARS],
+            )
+            for offset in range(0, len(segment.text), INTERPRETATION_SEGMENT_CHARS)
+        )
+    return tuple(chunks)
+
+
 def _bounded_text(value: str, name: str, *, maximum: int) -> None:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ValueError(f"{name} is invalid")
@@ -393,8 +413,8 @@ def _clarification_question(missing: tuple[str, ...]) -> str:
 
 
 __all__ = [
-    "INTERPRETATION_MAX_CLASSIFIER_CHARS",
     "INTERPRETATION_SCHEMA_VERSION",
+    "INTERPRETATION_SEGMENT_CHARS",
     "AssistantRequestInterpretationRevision",
     "ClassifierInputSegment",
     "ClassifierInterpretationPayload",

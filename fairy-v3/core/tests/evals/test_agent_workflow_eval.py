@@ -35,6 +35,13 @@ def test_eval_report_is_machine_readable_and_marks_live_provider_unverified(
     persisted = json.loads(json_path.read_text(encoding="utf-8"))
     assert persisted["overall_status"] == "passed"
     assert persisted["deterministic"]["metrics"]["success_rate"] == 1.0
+    assert persisted["deterministic"]["metrics"]["intent_match_gate_rate"] == 1.0
+    assert persisted["deterministic"]["metrics"]["clarification_gate_rate"] == 1.0
+    assert persisted["deterministic"]["metrics"]["quoted_content_isolation_rate"] == 1.0
+    assert persisted["deterministic"]["metrics"]["auto_manual_consistency_rate"] == 1.0
+    assert persisted["deterministic"]["metrics"][
+        "high_impact_unintended_execution_count"
+    ] == 0
     assert persisted["live_provider"]["status"] == "unverified"
     assert {
         "scheduled_turn_boundary",

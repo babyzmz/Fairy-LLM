@@ -618,6 +618,42 @@ class AssistantLedgerApplication:
                     content=instruction,
                 )
                 unit_of_work.assistant.append_message(message)
+                next_interpretation_revision: int | None = None
+                current_interpretation = unit_of_work.assistant.get_interpretation(
+                    turn.id,
+                    turn.active_interpretation_revision,
+                )
+                if current_interpretation is not None:
+                    next_interpretation_revision = current_interpretation.revision + 1
+                    update_constraint = f"Updated requirement: {instruction[:1_950]}"
+                    revised_interpretation = AssistantRequestInterpretationRevision.create(
+                        turn_id=turn.id,
+                        revision=next_interpretation_revision,
+                        idempotency_key=f"steer:{idempotency_key}",
+                        source_message_id=message.id,
+                        source_message=message.content,
+                        normalized_goal=current_interpretation.normalized_goal,
+                        action=current_interpretation.action,
+                        objectives=current_interpretation.objectives,
+                        targets=current_interpretation.targets,
+                        constraints=tuple(
+                            dict.fromkeys(
+                                (*current_interpretation.constraints, update_constraint)
+                            )
+                        ),
+                        deliverable=current_interpretation.deliverable,
+                        evidence_requirements=current_interpretation.evidence_requirements,
+                        assumptions=current_interpretation.assumptions,
+                        missing_information=current_interpretation.missing_information,
+                        confidence=current_interpretation.confidence,
+                        disposition=current_interpretation.disposition,
+                        public_summary="The active task requirements were updated",
+                        clarification_question=current_interpretation.clarification_question,
+                    )
+                    unit_of_work.assistant.append_interpretation(
+                        revised_interpretation,
+                        expected_revision=current_interpretation.revision,
+                    )
                 paused = unit_of_work.workflows.request_pause(turn.workflow_run_id)
                 unit_of_work.commands.append_domain_event(
                     event_type="assistant.turn.steered",
@@ -628,6 +664,7 @@ class AssistantLedgerApplication:
                         "message_id": str(message.id),
                         "workflow_run_id": str(turn.workflow_run_id),
                         "instruction_id": str(workflow_instruction.id),
+                        "interpretation_revision": next_interpretation_revision,
                     },
                     actor="user",
                     project_id=snapshot.run.project_id,

@@ -17,9 +17,51 @@ class EvalScenario:
     evidence_required: bool = False
     recovery_required: bool = False
     safety_required: bool = False
+    intent_required: bool = False
+    clarification_required: bool = False
+    literal_isolation_required: bool = False
+    cross_mode_required: bool = False
 
 
 SCENARIOS = (
+    EvalScenario(
+        "request_interpretation",
+        "Request interpretation and literal input isolation",
+        (
+            "tests/assistant/test_interpretation.py::"
+            "test_classifier_envelope_preserves_prompt_like_text_as_json_data",
+            "tests/assistant/test_interpretation.py::"
+            "test_literal_segments_cannot_trigger_lexical_specialized_routes",
+            "tests/assistant/test_interpretation.py::"
+            "test_high_impact_missing_target_forces_clarification",
+        ),
+        safety_required=True,
+        intent_required=True,
+        clarification_required=True,
+        literal_isolation_required=True,
+    ),
+    EvalScenario(
+        "classifier_mode_consistency",
+        "Auto and Manual interpretation contract consistency",
+        (
+            "tests/assistant/test_interpretation.py::"
+            "test_auto_and_manual_classifiers_share_the_interpretation_schema",
+        ),
+        intent_required=True,
+        cross_mode_required=True,
+    ),
+    EvalScenario(
+        "clarification_recovery",
+        "Clarification waits and resumes one durable Turn",
+        (
+            "tests/assistant/test_workflow_controls.py::"
+            "test_clarification_waits_and_resumes_the_same_turn_idempotently",
+        ),
+        recovery_required=True,
+        safety_required=True,
+        intent_required=True,
+        clarification_required=True,
+    ),
     EvalScenario(
         "evidence_first",
         "Evidence-first completion",
@@ -188,18 +230,28 @@ def build_report(
                 "evidence_required": scenario.evidence_required,
                 "recovery_required": scenario.recovery_required,
                 "safety_required": scenario.safety_required,
+                "intent_required": scenario.intent_required,
+                "clarification_required": scenario.clarification_required,
+                "literal_isolation_required": scenario.literal_isolation_required,
+                "cross_mode_required": scenario.cross_mode_required,
             }
         )
     passed = [item for item in scenario_results if item["status"] == "passed"]
     evidence = [item for item in scenario_results if item["evidence_required"]]
     recovery = [item for item in scenario_results if item["recovery_required"]]
     safety = [item for item in scenario_results if item["safety_required"]]
+    intent = [item for item in scenario_results if item["intent_required"]]
+    clarification = [item for item in scenario_results if item["clarification_required"]]
+    literal_isolation = [
+        item for item in scenario_results if item["literal_isolation_required"]
+    ]
+    cross_mode = [item for item in scenario_results if item["cross_mode_required"]]
     deterministic_status = (
         "passed" if pytest_exit_code == 0 and len(passed) == len(scenario_results) else "failed"
     )
     normalized_live = _normalize_live_provider(live_provider)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "report_kind": "fairy.agent_workflow_eval",
         "generated_at": (generated_at or datetime.now(UTC)).isoformat(),
         "overall_status": deterministic_status,
@@ -212,6 +264,13 @@ def build_report(
                 "evidence_coverage_rate": _passed_rate(evidence),
                 "recovery_success_rate": _passed_rate(recovery),
                 "safety_scenario_pass_rate": _passed_rate(safety),
+                "intent_match_gate_rate": _passed_rate(intent),
+                "clarification_gate_rate": _passed_rate(clarification),
+                "quoted_content_isolation_rate": _passed_rate(literal_isolation),
+                "auto_manual_consistency_rate": _passed_rate(cross_mode),
+                "high_impact_unintended_execution_count": (
+                    0 if clarification and _passed_rate(clarification) == 1.0 else None
+                ),
                 "parallel_median_improvement_gate": "at_least_25_percent",
             },
         },
@@ -289,7 +348,18 @@ def _normalize_live_provider(payload: Mapping[str, Any] | None) -> dict[str, Any
     if not isinstance(metrics, Mapping):
         raise ValueError("live Provider metrics must be an object")
     normalized_metrics = {}
-    for name in ("success_rate", "tool_accuracy", "evidence_coverage", "recovery_success"):
+    for name in (
+        "success_rate",
+        "tool_accuracy",
+        "evidence_coverage",
+        "recovery_success",
+        "intent_match",
+        "clarification_precision",
+        "clarification_recall",
+        "over_clarification_rate",
+        "auto_manual_consistency",
+        "quoted_content_isolation",
+    ):
         value = metrics.get(name)
         if not isinstance(value, int | float) or isinstance(value, bool) or not 0 <= value <= 1:
             raise ValueError(f"live Provider metric {name} must be between 0 and 1")
