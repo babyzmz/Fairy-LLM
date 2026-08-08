@@ -338,6 +338,7 @@ class AssistantTurn:
     idempotency_key: str
     workflow_run_id: UUID | None = None
     execution_engine_version: int = 1
+    active_interpretation_revision: int | None = None
     workflow_summary: AssistantWorkflowSummary | None = None
     model_selection: ModelSelectionSnapshot | None = None
     routing_decision: RoutingDecision | None = None
@@ -426,6 +427,22 @@ class AssistantTurn:
         if self.is_terminal:
             raise InvalidTransitionError("terminal Assistant Turn cannot bind routing")
         self.routing_decision = decision
+        self.updated_at = _now()
+
+    def bind_interpretation(self, revision: int, *, expected_revision: int | None) -> None:
+        if revision < 1:
+            raise ValueError("interpretation revision must be positive")
+        if self.active_interpretation_revision != expected_revision:
+            raise InvalidTransitionError("Assistant Turn interpretation changed concurrently")
+        if expected_revision is not None and revision != expected_revision + 1:
+            raise InvalidTransitionError(
+                "Assistant Turn interpretation revision must be sequential"
+            )
+        if expected_revision is None and revision != 1:
+            raise InvalidTransitionError("Assistant Turn must start at interpretation revision 1")
+        if self.is_terminal:
+            raise InvalidTransitionError("terminal Assistant Turn cannot bind interpretation")
+        self.active_interpretation_revision = revision
         self.updated_at = _now()
 
     def bind_routing_evidence(self, decision: RoutingDecision) -> None:

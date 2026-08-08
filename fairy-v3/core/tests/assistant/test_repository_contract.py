@@ -7,6 +7,13 @@ from uuid import UUID
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from fairy_core.assistant.interpretation import (
+    AssistantRequestInterpretationRevision,
+    InterpretationConfidence,
+    InterpretationDisposition,
+    InterpretedObjective,
+    RequestAction,
+)
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import (
     AssistantTurn,
@@ -175,6 +182,62 @@ def test_repository_persists_turn_messages_and_tool_invocations(tmp_path: Path) 
     assert second_page.next_cursor is None
     assert invocations == (invocation,)
     assert attempts == (attempt,)
+
+
+def test_repository_appends_interpretation_revisions_and_fences_active_pointer(
+    tmp_path: Path,
+) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "interpretations.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    task, scope = _seed_task(factory, label="interpretation")
+    turn = _turn(task, scope, key="turn:interpretation")
+    user_message = Message.create(
+        conversation_id=task.conversation_id,
+        task_id=task.id,
+        turn_id=turn.id,
+        sequence=1,
+        role=MessageRole.USER,
+        visibility=MessageVisibility.USER,
+        content="Change it",
+    )
+    first = AssistantRequestInterpretationRevision.create(
+        turn_id=turn.id,
+        revision=1,
+        source_message_id=user_message.id,
+        source_message=user_message.content,
+        normalized_goal="Change the referenced item",
+        action=RequestAction.CHANGE,
+        objectives=(InterpretedObjective("Change the referenced item", RequestAction.CHANGE),),
+        missing_information=("target",),
+        confidence=InterpretationConfidence.LOW,
+        disposition=InterpretationDisposition.CLARIFICATION_REQUIRED,
+        public_summary="The change target is unclear",
+        clarification_question="Which item should Fairy change?",
+    )
+
+    with factory() as unit_of_work:
+        unit_of_work.assistant.save_turn(turn)
+        unit_of_work.assistant.append_message(user_message)
+        unit_of_work.assistant.append_interpretation(first, expected_revision=None)
+        unit_of_work.commit()
+
+    with factory() as unit_of_work:
+        restored_turn = unit_of_work.assistant.get_turn(turn.id)
+        restored = unit_of_work.assistant.get_interpretation(turn.id)
+        revisions = unit_of_work.assistant.list_interpretations(turn.id)
+
+    assert restored_turn is not None
+    assert restored_turn.active_interpretation_revision == 1
+    assert restored == first
+    assert revisions == (first,)
+
+    with (
+        factory() as unit_of_work,
+        pytest.raises(InvalidTransitionError, match="changed concurrently"),
+    ):
+        unit_of_work.assistant.append_interpretation(first, expected_revision=None)
+
+    engine.dispose()
 
 
 def test_repository_persists_ordered_turn_trace_and_fences_step_updates(

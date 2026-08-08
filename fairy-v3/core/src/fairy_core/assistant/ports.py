@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from fairy_core.assistant.interpretation import AssistantRequestInterpretationRevision
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -42,6 +43,24 @@ class AssistantRepository(Protocol):
     ) -> None: ...
 
     def get_turn(self, turn_id: UUID) -> AssistantTurn | None: ...
+
+    def append_interpretation(
+        self,
+        interpretation: AssistantRequestInterpretationRevision,
+        *,
+        expected_revision: int | None,
+    ) -> None: ...
+
+    def get_interpretation(
+        self,
+        turn_id: UUID,
+        revision: int | None = None,
+    ) -> AssistantRequestInterpretationRevision | None: ...
+
+    def list_interpretations(
+        self,
+        turn_id: UUID,
+    ) -> tuple[AssistantRequestInterpretationRevision, ...]: ...
 
     def find_turn_by_idempotency_key(self, idempotency_key: str) -> AssistantTurn | None: ...
 
