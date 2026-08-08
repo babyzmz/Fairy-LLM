@@ -273,6 +273,7 @@ def auto_routing_decision(
     task_kind = guarded_task_kind(
         user_request=user_request,
         routed_kind=routed.task_kind,
+        interpretation=routed.interpretation,
     )
     media_model_id = {
         RoutingTaskKind.IMAGE: IMAGE_MODEL_ID,

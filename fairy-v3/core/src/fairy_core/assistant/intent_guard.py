@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import re
 
+from fairy_core.assistant.interpretation import (
+    ClassifierInterpretationPayload,
+    RequestAction,
+)
 from fairy_core.assistant.routing import RoutingTaskKind
 
 _BROWSER_SUBJECT = re.compile(
@@ -57,8 +61,26 @@ def guarded_task_kind(
     *,
     user_request: str,
     routed_kind: RoutingTaskKind,
+    interpretation: ClassifierInterpretationPayload | None = None,
 ) -> RoutingTaskKind:
     """Fail closed when a specialized route lacks its explicit deliverable."""
+
+    if interpretation is not None:
+        if interpretation.action is RequestAction.BROWSE:
+            return RoutingTaskKind.BROWSER
+        if interpretation.action is RequestAction.GENERATE:
+            return (
+                routed_kind
+                if routed_kind
+                in {RoutingTaskKind.IMAGE, RoutingTaskKind.MUSIC, RoutingTaskKind.VIDEO}
+                else RoutingTaskKind.GENERAL
+            )
+        if routed_kind in {
+            RoutingTaskKind.IMAGE,
+            RoutingTaskKind.MUSIC,
+            RoutingTaskKind.VIDEO,
+        }:
+            return RoutingTaskKind.GENERAL
 
     browser_qa = bool(_BROWSER_SUBJECT.search(user_request)) and bool(
         _BROWSER_ACTION.search(user_request)
