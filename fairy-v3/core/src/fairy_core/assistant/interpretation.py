@@ -116,6 +116,7 @@ class AssistantRequestInterpretationRevision:
     id: UUID
     turn_id: UUID
     revision: int
+    idempotency_key: str
     source_message_id: UUID
     source_message_sha256: str
     schema_version: int
@@ -137,6 +138,7 @@ class AssistantRequestInterpretationRevision:
     def __post_init__(self) -> None:
         if self.revision < 1 or self.schema_version < 1:
             raise ValueError("interpretation revisions and schema versions must be positive")
+        _bounded_text(self.idempotency_key, "idempotency key", maximum=512)
         _digest(self.source_message_sha256)
         _bounded_text(self.normalized_goal, "normalized goal", maximum=4_000)
         _bounded_text(self.public_summary, "public summary", maximum=240)
@@ -171,6 +173,7 @@ class AssistantRequestInterpretationRevision:
         revision: int,
         source_message_id: UUID,
         source_message: str,
+        idempotency_key: str | None = None,
         normalized_goal: str,
         action: RequestAction,
         objectives: tuple[InterpretedObjective, ...],
@@ -189,6 +192,7 @@ class AssistantRequestInterpretationRevision:
             id=new_id(),
             turn_id=turn_id,
             revision=revision,
+            idempotency_key=(idempotency_key or f"interpretation:{revision}").strip(),
             source_message_id=source_message_id,
             source_message_sha256=hashlib.sha256(source_message.encode("utf-8")).hexdigest(),
             schema_version=INTERPRETATION_SCHEMA_VERSION,

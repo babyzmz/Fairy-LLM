@@ -19,11 +19,12 @@ from fairy_core.memory.schema import memory_metadata
 from fairy_core.memory.sqlite_fts import initialize_sqlite_fts
 from fairy_core.persistence.sqlite_split_migration import import_split_sqlite_databases
 from fairy_core.persistence.tenant import normalize_tenant_id
-from fairy_core.storage.assistant_schedule_sqlite_migrations import (
-    migrate_assistant_schedule_operation_mode,
-)
 from fairy_core.storage.assistant_interpretation_sqlite_migrations import (
     migrate_assistant_request_interpretations,
+    migrate_assistant_waiting_for_input,
+)
+from fairy_core.storage.assistant_schedule_sqlite_migrations import (
+    migrate_assistant_schedule_operation_mode,
 )
 from fairy_core.storage.schema import state_metadata
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
@@ -62,6 +63,7 @@ def create_sqlite_core_engine(
         prepare_pre_tenant_schema(engine)
         state_metadata.create_all(engine)
         migrate_assistant_request_interpretations(engine)
+        migrate_assistant_waiting_for_input(engine)
         migrate_assistant_schedule_operation_mode(engine)
         migrate_assistant_model_routing(engine)
         migrate_assistant_workflow_binding(engine)

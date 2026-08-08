@@ -147,10 +147,13 @@ from fairy_core.contracts.models import (
     ArtifactListInput,
     ArtifactModel,
     ArtifactPageModel,
+    AssistantRequestInterpretationModel,
     AssistantTurnCancelInput,
     AssistantTurnCreateInput,
     AssistantTurnIdInput,
+    AssistantTurnInterpretationInput,
     AssistantTurnModel,
+    AssistantTurnRespondInput,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
     AssistantTurnStartInput,
@@ -475,6 +478,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             AssistantTurnIdInput,
             AssistantTurnModel,
         ),
+        "assistant.turns.interpretation.get": CoreMethod(
+            "assistant.turns.interpretation.get",
+            AssistantTurnInterpretationInput,
+            AssistantRequestInterpretationModel,
+        ),
         "assistant.turns.retry": CoreMethod(
             "assistant.turns.retry",
             AssistantTurnRetryInput,
@@ -493,6 +501,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
         "assistant.turns.resume": CoreMethod(
             "assistant.turns.resume",
             AssistantTurnIdInput,
+            AssistantTurnModel,
+        ),
+        "assistant.turns.respond": CoreMethod(
+            "assistant.turns.respond",
+            AssistantTurnRespondInput,
             AssistantTurnModel,
         ),
         "assistant.turns.steer": CoreMethod(

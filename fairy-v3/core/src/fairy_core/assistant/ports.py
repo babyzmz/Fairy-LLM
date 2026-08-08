@@ -62,6 +62,12 @@ class AssistantRepository(Protocol):
         turn_id: UUID,
     ) -> tuple[AssistantRequestInterpretationRevision, ...]: ...
 
+    def find_interpretation_by_idempotency_key(
+        self,
+        turn_id: UUID,
+        idempotency_key: str,
+    ) -> AssistantRequestInterpretationRevision | None: ...
+
     def find_turn_by_idempotency_key(self, idempotency_key: str) -> AssistantTurn | None: ...
 
     def list_turns(

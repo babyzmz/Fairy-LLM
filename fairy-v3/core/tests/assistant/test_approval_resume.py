@@ -179,8 +179,8 @@ def test_approval_queued_before_prior_background_runner_exits_resumes_once(
         provider_registry=ProviderRegistry((provider,)),
         tool_executor=executor,
     )
-    first_finish_reached = Event()
-    release_first_finish = Event()
+    execution_finish_reached = Event()
+    release_execution_finish = Event()
     finish_calls = 0
     scheduler = service._workflow_scheduler  # type: ignore[attr-defined]
     original_finish = scheduler._finish_active  # type: ignore[attr-defined]
@@ -188,9 +188,10 @@ def test_approval_queued_before_prior_background_runner_exits_resumes_once(
     def delayed_first_finish(active) -> None:
         nonlocal finish_calls
         finish_calls += 1
-        if finish_calls == 1:
-            first_finish_reached.set()
-            assert release_first_finish.wait(timeout=5)
+        # The durable interpretation node now completes before the execution node.
+        if finish_calls == 2:
+            execution_finish_reached.set()
+            assert release_execution_finish.wait(timeout=5)
         original_finish(active)
 
     scheduler._finish_active = delayed_first_finish  # type: ignore[attr-defined,method-assign]
@@ -201,21 +202,21 @@ def test_approval_queued_before_prior_background_runner_exits_resumes_once(
         )
         turn = _turn(service, task, "turn:approval:runner-race")
         service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
-        assert first_finish_reached.wait(timeout=5)
+        assert execution_finish_reached.wait(timeout=5)
         approval = service.invoke("approvals.list", {"task_id": task["id"]})["items"][0]
 
         service.invoke(
             "approvals.decide",
             {"approval_id": approval["id"], "approved": True},
         )
-        release_first_finish.set()
+        release_execution_finish.set()
         completed = wait_for_turn(service, turn["id"])
 
         assert completed["status"] == "completed"
         assert len(executor.calls) == 1
         assert len(provider.requests) == 2
     finally:
-        release_first_finish.set()
+        release_execution_finish.set()
         service.close()
 
 

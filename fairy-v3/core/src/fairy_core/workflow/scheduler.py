@@ -53,6 +53,12 @@ class WorkflowWaitingForApproval(RuntimeError):
         self.result = dict(result or {})
 
 
+class WorkflowWaitingForInput(RuntimeError):
+    def __init__(self, result: Mapping[str, Any] | None = None) -> None:
+        super().__init__("Workflow is waiting for user input")
+        self.result = dict(result or {})
+
+
 class WorkflowCancelled(RuntimeError):
     pass
 
@@ -205,6 +211,7 @@ class WorkflowScheduler:
                 WorkflowRunStatus.FAILED,
                 WorkflowRunStatus.PAUSED,
                 WorkflowRunStatus.WAITING_FOR_APPROVAL,
+                WorkflowRunStatus.WAITING_FOR_INPUT,
             }:
                 return snapshot
             remaining = deadline - time.monotonic()
@@ -410,6 +417,14 @@ class WorkflowScheduler:
                 settled = True
             except Exception:
                 logger.exception("Workflow node %s could not wait for approval", claim.node_id)
+        except WorkflowWaitingForInput as waiting:
+            try:
+                with self._unit_of_work_factory() as unit_of_work:
+                    unit_of_work.workflows.wait_for_input(claim, result=waiting.result)
+                    unit_of_work.commit()
+                settled = True
+            except Exception:
+                logger.exception("Workflow node %s could not wait for user input", claim.node_id)
         except WorkflowCancelled:
             try:
                 with self._unit_of_work_factory() as unit_of_work:
@@ -474,6 +489,7 @@ class WorkflowScheduler:
                     resolved = True
                 elif snapshot.run.status in {
                     WorkflowRunStatus.WAITING_FOR_APPROVAL,
+                    WorkflowRunStatus.WAITING_FOR_INPUT,
                     WorkflowRunStatus.PAUSED,
                 }:
                     unit_of_work.workflows.resume(run_id)
@@ -521,4 +537,5 @@ __all__ = [
     "WorkflowRetryableError",
     "WorkflowScheduler",
     "WorkflowWaitingForApproval",
+    "WorkflowWaitingForInput",
 ]

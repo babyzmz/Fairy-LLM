@@ -11,6 +11,12 @@ from uuid import UUID
 
 from pydantic import Field, RootModel, field_validator, model_validator
 
+from fairy_core.assistant.evidence import EvidenceRequirementKind
+from fairy_core.assistant.interpretation import (
+    InterpretationConfidence,
+    InterpretationDisposition,
+    RequestAction,
+)
 from fairy_core.assistant.models import (
     AssistantTurnStatus,
     MessageRole,
@@ -329,6 +335,16 @@ class AssistantTurnSteerInput(AssistantTurnIdInput):
     idempotency_key: str = Field(min_length=1, max_length=512)
 
 
+class AssistantTurnInterpretationInput(AssistantTurnIdInput):
+    revision: int | None = Field(default=None, ge=1)
+
+
+class AssistantTurnRespondInput(AssistantTurnIdInput):
+    content: str = Field(min_length=1, max_length=8_000)
+    expected_interpretation_revision: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
 class MessageListInput(CollectionPageInput):
     conversation_id: UUID
 
@@ -627,6 +643,35 @@ class AssistantWorkflowSummaryModel(ContractModel):
     updated_at: datetime
 
 
+class InterpretedObjectiveModel(ContractModel):
+    goal: str = Field(min_length=1, max_length=2_000)
+    action: RequestAction
+    depends_on: tuple[int, ...] = Field(default=(), max_length=32)
+
+
+class AssistantRequestInterpretationModel(ContractModel):
+    id: UUID
+    turn_id: UUID
+    revision: int = Field(ge=1)
+    source_message_id: UUID
+    source_message_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    schema_version: int = Field(ge=1)
+    normalized_goal: str = Field(min_length=1, max_length=4_000)
+    action: RequestAction
+    objectives: tuple[InterpretedObjectiveModel, ...] = Field(min_length=1, max_length=16)
+    targets: tuple[str, ...] = Field(default=(), max_length=64)
+    constraints: tuple[str, ...] = Field(default=(), max_length=64)
+    deliverable: str | None = Field(default=None, min_length=1, max_length=2_000)
+    evidence_requirements: tuple[EvidenceRequirementKind, ...]
+    assumptions: tuple[str, ...] = Field(default=(), max_length=32)
+    missing_information: tuple[str, ...] = Field(default=(), max_length=32)
+    confidence: InterpretationConfidence
+    disposition: InterpretationDisposition
+    public_summary: str = Field(min_length=1, max_length=240)
+    clarification_question: str | None = Field(default=None, min_length=1, max_length=1_000)
+    created_at: datetime
+
+
 class AssistantTurnModel(ContractModel):
     id: UUID
     conversation_id: UUID
@@ -652,6 +697,8 @@ class AssistantTurnModel(ContractModel):
     cited_evidence_receipt_ids: tuple[UUID, ...] = Field(default=(), max_length=32)
     workflow_run_id: UUID | None = None
     execution_engine_version: int = Field(default=1, ge=1)
+    active_interpretation_revision: int | None = Field(default=None, ge=1)
+    interpretation_summary: AssistantRequestInterpretationModel | None = None
     workflow_summary: AssistantWorkflowSummaryModel | None = None
     status: AssistantTurnStatus
     cancellation_revision: int = Field(ge=0)

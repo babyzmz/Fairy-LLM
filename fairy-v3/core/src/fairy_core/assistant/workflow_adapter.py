@@ -8,6 +8,7 @@ from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import AssistantTurnStatus
 from fairy_core.assistant.workflow_plan import (
     ASSISTANT_WORKFLOW_NODE_KIND,
+    ASSISTANT_WORKFLOW_PREPARE_NODE_KIND,
     apply_pending_assistant_steering,
 )
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -18,6 +19,7 @@ from fairy_core.workflow.scheduler import (
     WorkflowCancelled,
     WorkflowNodeResult,
     WorkflowWaitingForApproval,
+    WorkflowWaitingForInput,
 )
 
 
@@ -55,12 +57,53 @@ class AssistantTurnWorkflowAdapter:
         node: WorkflowNode,
         cancellation: CancellationToken,
     ) -> WorkflowNodeResult:
-        if node.kind != ASSISTANT_WORKFLOW_NODE_KIND or set(node.payload) != {"turn_id"}:
+        if node.kind not in {
+            ASSISTANT_WORKFLOW_NODE_KIND,
+            ASSISTANT_WORKFLOW_PREPARE_NODE_KIND,
+        } or set(node.payload) != {"turn_id"}:
             raise AssistantWorkflowError("ASSISTANT_WORKFLOW_PAYLOAD_INVALID")
         try:
             turn_id = UUID(str(node.payload["turn_id"]))
         except (TypeError, ValueError) as error:
             raise AssistantWorkflowError("ASSISTANT_WORKFLOW_PAYLOAD_INVALID") from error
+        if node.kind == ASSISTANT_WORKFLOW_PREPARE_NODE_KIND:
+            turn = self._application.prepare_turn(turn_id, cancellation)
+            if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
+                raise WorkflowWaitingForApproval(
+                    {
+                        "turn_id": str(turn.id),
+                        "turn_status": turn.status.value,
+                    }
+                )
+            if turn.status is AssistantTurnStatus.WAITING_FOR_INPUT:
+                with self._unit_of_work_factory() as unit_of_work:
+                    interpretation = unit_of_work.assistant.get_interpretation(
+                        turn.id,
+                        turn.active_interpretation_revision,
+                    )
+                raise WorkflowWaitingForInput(
+                    {
+                        "turn_id": str(turn.id),
+                        "interpretation_revision": turn.active_interpretation_revision,
+                        "clarification_question": (
+                            interpretation.clarification_question
+                            if interpretation is not None
+                            else None
+                        ),
+                    }
+                )
+            if turn.is_terminal:
+                raise AssistantWorkflowError(
+                    turn.error_code or "ASSISTANT_PREPARATION_TERMINATED"
+                )
+            return WorkflowNodeResult(
+                output={
+                    "turn_id": str(turn.id),
+                    "interpretation_revision": turn.active_interpretation_revision,
+                    "routed": turn.routing_decision is not None,
+                },
+                public_summary="Fairy understood and routed the request",
+            )
         turn = self._application.run_turn(turn_id, cancellation)
         if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
             raise WorkflowWaitingForApproval(
@@ -102,10 +145,9 @@ def register_assistant_workflow_adapter(
     application: AssistantApplication,
     ledger: AssistantLedgerApplication,
 ) -> None:
-    adapters.register(
-        ASSISTANT_WORKFLOW_NODE_KIND,
-        AssistantTurnWorkflowAdapter(application, ledger, unit_of_work_factory),
-    )
+    adapter = AssistantTurnWorkflowAdapter(application, ledger, unit_of_work_factory)
+    adapters.register(ASSISTANT_WORKFLOW_PREPARE_NODE_KIND, adapter)
+    adapters.register(ASSISTANT_WORKFLOW_NODE_KIND, adapter)
 
 
 def resumable_assistant_turn_ids(ledger: AssistantLedgerApplication) -> tuple[UUID, ...]:

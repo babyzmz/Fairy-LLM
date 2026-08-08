@@ -75,7 +75,7 @@ def build_workflow_schema(
             name="uq_core_workflow_runs_owner_engine",
         ),
         CheckConstraint(
-            "status IN ('queued','running','waiting_for_approval','paused',"
+            "status IN ('queued','running','waiting_for_approval','waiting_for_input','paused',"
             "'completed','cancelled','failed')",
             name="ck_core_workflow_runs_status",
         ),
@@ -190,7 +190,8 @@ def build_workflow_schema(
             name="uq_core_workflow_nodes_plan_key",
         ),
         CheckConstraint(
-            "status IN ('pending','ready','running','waiting_for_approval','succeeded',"
+            "status IN ('pending','ready','running','waiting_for_approval','waiting_for_input',"
+            "'succeeded',"
             "'failed','cancelled','skipped','superseded')",
             name="ck_core_workflow_nodes_status",
         ),

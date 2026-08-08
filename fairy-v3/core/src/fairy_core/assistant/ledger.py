@@ -4,6 +4,11 @@ from collections.abc import Callable
 from datetime import datetime
 from uuid import UUID
 
+from fairy_core.assistant.interpretation import (
+    AssistantRequestInterpretationRevision,
+    InterpretationConfidence,
+    InterpretationDisposition,
+)
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -18,7 +23,7 @@ from fairy_core.assistant.turn_reader import require_turn
 from fairy_core.assistant.workflow_plan import (
     ASSISTANT_WORKFLOW_ENGINE_VERSION,
     apply_pending_assistant_steering,
-    assistant_workflow_node,
+    assistant_workflow_plan,
 )
 from fairy_core.commanding.models import CommandStatus, EventVisibility
 from fairy_core.commanding.registry import ToolRegistry
@@ -220,6 +225,120 @@ class AssistantLedgerApplication:
             raise KeyError(f"Assistant Turn not found: {turn_id}")
         return turn
 
+    def get_interpretation(
+        self,
+        *,
+        turn_id: UUID,
+        revision: int | None = None,
+    ) -> AssistantRequestInterpretationRevision:
+        with self._unit_of_work_factory() as unit_of_work:
+            if unit_of_work.assistant.get_turn(turn_id) is None:
+                raise KeyError(f"Assistant Turn not found: {turn_id}")
+            interpretation = unit_of_work.assistant.get_interpretation(turn_id, revision)
+        if interpretation is None:
+            raise KeyError(f"Assistant Turn interpretation not found: {turn_id}")
+        return interpretation
+
+    def respond_to_clarification(
+        self,
+        *,
+        turn_id: UUID,
+        content: str,
+        expected_interpretation_revision: int,
+        idempotency_key: str,
+    ) -> AssistantTurn:
+        normalized_content = content.strip()
+        normalized_key = idempotency_key.strip()
+        with self._unit_of_work_factory() as unit_of_work:
+            turn = require_turn(unit_of_work, turn_id)
+            replay = unit_of_work.assistant.find_interpretation_by_idempotency_key(
+                turn_id,
+                normalized_key,
+            )
+            if replay is not None:
+                source = unit_of_work.assistant.get_message(replay.source_message_id)
+                if source is None or source.content != normalized_content:
+                    raise IdempotencyConflictError(
+                        "clarification idempotency key was reused with different content"
+                    )
+                return turn
+            if turn.status is not AssistantTurnStatus.WAITING_FOR_INPUT:
+                raise InvalidTransitionError("Assistant Turn is not waiting for user input")
+            if turn.active_interpretation_revision != expected_interpretation_revision:
+                raise VersionConflictError("Assistant interpretation revision changed")
+            current = unit_of_work.assistant.get_interpretation(
+                turn.id,
+                expected_interpretation_revision,
+            )
+            if (
+                current is None
+                or current.disposition is not InterpretationDisposition.CLARIFICATION_REQUIRED
+            ):
+                raise InvalidTransitionError("Assistant Turn has no active clarification")
+            message = Message.create(
+                conversation_id=turn.conversation_id,
+                task_id=turn.task_id,
+                turn_id=turn.id,
+                sequence=unit_of_work.assistant.next_message_sequence(turn.conversation_id),
+                role=MessageRole.USER,
+                visibility=MessageVisibility.USER,
+                content=normalized_content,
+            )
+            next_revision = expected_interpretation_revision + 1
+            clarification_constraint = f"Clarification response: {normalized_content[:1_950]}"
+            revised = AssistantRequestInterpretationRevision.create(
+                turn_id=turn.id,
+                revision=next_revision,
+                idempotency_key=normalized_key,
+                source_message_id=message.id,
+                source_message=message.content,
+                normalized_goal=current.normalized_goal,
+                action=current.action,
+                objectives=current.objectives,
+                targets=tuple(dict.fromkeys((*current.targets, normalized_content[:1_000]))),
+                constraints=tuple(
+                    dict.fromkeys((*current.constraints, clarification_constraint))
+                ),
+                deliverable=current.deliverable,
+                evidence_requirements=current.evidence_requirements,
+                assumptions=current.assumptions,
+                missing_information=(),
+                confidence=InterpretationConfidence.HIGH,
+                disposition=InterpretationDisposition.READY,
+                public_summary=current.public_summary,
+            )
+            unit_of_work.assistant.append_message(message)
+            unit_of_work.assistant.append_interpretation(
+                revised,
+                expected_revision=expected_interpretation_revision,
+            )
+            expected_status = turn.status
+            expected_cancellation = turn.cancellation_revision
+            turn.bind_interpretation(
+                next_revision,
+                expected_revision=expected_interpretation_revision,
+            )
+            turn.resume_from_input()
+            unit_of_work.assistant.update_turn(
+                turn,
+                expected_status=expected_status,
+                expected_cancellation_revision=expected_cancellation,
+            )
+            unit_of_work.commands.append_domain_event(
+                event_type="assistant.turn.clarification_received",
+                visibility=EventVisibility.USER,
+                message="Clarification received",
+                payload={
+                    "turn_id": str(turn.id),
+                    "interpretation_revision": next_revision,
+                },
+                actor="user",
+                conversation_id=turn.conversation_id,
+                task_id=turn.task_id,
+            )
+            unit_of_work.commit()
+        return self.get_turn(turn_id)
+
     def renew_turn_command_leases(
         self,
         turn_id: UUID,
@@ -352,12 +471,12 @@ class AssistantLedgerApplication:
             project_id=task.project_id,
             engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION,
         )
-        node = assistant_workflow_node(
+        nodes, edges = assistant_workflow_plan(
             run_id=run.id,
             revision=1,
             turn_id=turn.id,
         )
-        unit_of_work.workflows.create(run, nodes=(node,), edges=())
+        unit_of_work.workflows.create(run, nodes=nodes, edges=edges)
         unit_of_work.workflows.request_pause(run.id)
         turn.bind_workflow(run.id, engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION)
         unit_of_work.assistant.bind_turn_workflow(

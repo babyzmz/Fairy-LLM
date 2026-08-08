@@ -197,6 +197,7 @@ class SqlAlchemyWorkflowRepository(
                         WorkflowNodeStatus.PENDING.value,
                         WorkflowNodeStatus.READY.value,
                         WorkflowNodeStatus.WAITING_FOR_APPROVAL.value,
+                        WorkflowNodeStatus.WAITING_FOR_INPUT.value,
                     )
                 ),
             )
@@ -606,6 +607,7 @@ class SqlAlchemyWorkflowRepository(
                         WorkflowNodeStatus.READY.value,
                         WorkflowNodeStatus.RUNNING.value,
                         WorkflowNodeStatus.WAITING_FOR_APPROVAL.value,
+                        WorkflowNodeStatus.WAITING_FOR_INPUT.value,
                     )
                 ),
             )
@@ -761,14 +763,22 @@ class SqlAlchemyWorkflowRepository(
         run = run_from_row(self._locked_run(run_id))
         if run.status in _RUN_TERMINAL:
             return load_snapshot(self._connection, self._tenant_id, run)
-        if run.status is WorkflowRunStatus.WAITING_FOR_APPROVAL:
+        if run.status in {
+            WorkflowRunStatus.WAITING_FOR_APPROVAL,
+            WorkflowRunStatus.WAITING_FOR_INPUT,
+        }:
             self._connection.execute(
                 update(workflow_nodes)
                 .where(
                     workflow_nodes.c.tenant_id == self._tenant_id,
                     workflow_nodes.c.run_id == str(run_id),
                     workflow_nodes.c.plan_revision == run.active_plan_revision,
-                    workflow_nodes.c.status == WorkflowNodeStatus.WAITING_FOR_APPROVAL.value,
+                    workflow_nodes.c.status.in_(
+                        (
+                            WorkflowNodeStatus.WAITING_FOR_APPROVAL.value,
+                            WorkflowNodeStatus.WAITING_FOR_INPUT.value,
+                        )
+                    ),
                 )
                 .values(status=WorkflowNodeStatus.READY.value, updated_at=now)
             )
@@ -1117,6 +1127,9 @@ class SqlAlchemyWorkflowRepository(
             completed_at = None
         elif any(value == WorkflowNodeStatus.WAITING_FOR_APPROVAL.value for value in active_nodes):
             status = WorkflowRunStatus.WAITING_FOR_APPROVAL
+            completed_at = None
+        elif any(value == WorkflowNodeStatus.WAITING_FOR_INPUT.value for value in active_nodes):
+            status = WorkflowRunStatus.WAITING_FOR_INPUT
             completed_at = None
         else:
             status = WorkflowRunStatus.QUEUED

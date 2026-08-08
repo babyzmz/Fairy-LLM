@@ -67,6 +67,28 @@ class AssistantTurnScheduler:
         self._workflow_scheduler.wake()
         return turn
 
+    def respond(
+        self,
+        *,
+        turn_id: UUID,
+        content: str,
+        expected_interpretation_revision: int,
+        idempotency_key: str,
+    ) -> AssistantTurn:
+        was_waiting_for_input = (
+            self._ledger.get_turn(turn_id).status is AssistantTurnStatus.WAITING_FOR_INPUT
+        )
+        turn = self._ledger.respond_to_clarification(
+            turn_id=turn_id,
+            content=content,
+            expected_interpretation_revision=expected_interpretation_revision,
+            idempotency_key=idempotency_key,
+        )
+        assert turn.workflow_run_id is not None
+        if was_waiting_for_input:
+            self._workflow_scheduler.resume_after_boundary(turn.workflow_run_id)
+        return turn
+
     def run(self, turn_id: UUID) -> AssistantTurn:
         turn = self._ledger.get_turn(turn_id)
         if turn.status in _TERMINAL_TURN_STATUSES:

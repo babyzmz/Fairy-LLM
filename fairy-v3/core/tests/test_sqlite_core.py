@@ -24,6 +24,9 @@ from fairy_core.domain.models import (
 )
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.storage import SqliteStateStore
+from fairy_core.storage.assistant_interpretation_sqlite_migrations import (
+    migrate_assistant_waiting_for_input,
+)
 from fairy_core.storage.schema import state_metadata
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
@@ -53,6 +56,67 @@ def _scope(tmp_path: Path, name: str) -> ScopeContract:
         memory_read_scope=("project_canonical",),
         memory_write_scope=("current_conversation_draft",),
     )
+
+
+def test_waiting_for_input_migration_rebuilds_legacy_status_checks(tmp_path: Path) -> None:
+    engine = create_sqlite_engine(tmp_path / "legacy-waiting-input.db")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE core_assistant_turns ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "status VARCHAR(32) NOT NULL, PRIMARY KEY (tenant_id, id), "
+            "CONSTRAINT ck_core_assistant_turns_status CHECK "
+            "(status IN ('created','running','waiting_for_tool','completed','cancelled','failed')))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE core_workflow_runs ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "status VARCHAR(32) NOT NULL, PRIMARY KEY (tenant_id, id), "
+            "CONSTRAINT ck_core_workflow_runs_status CHECK "
+            "(status IN ('queued','running','waiting_for_approval','paused','completed',"
+            "'cancelled','failed')))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE core_workflow_nodes ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "status VARCHAR(32) NOT NULL, PRIMARY KEY (tenant_id, id), "
+            "CONSTRAINT ck_core_workflow_nodes_status CHECK "
+            "(status IN ('pending','ready','running','waiting_for_approval','succeeded',"
+            "'failed','cancelled','skipped','superseded')))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE core_assistant_request_interpretations ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "turn_id VARCHAR(36) NOT NULL, revision BIGINT NOT NULL, "
+            "PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_assistant_request_interpretations "
+            "(tenant_id, id, turn_id, revision) VALUES ('local','i-1','turn-1',1)"
+        )
+
+    migrate_assistant_waiting_for_input(engine)
+    migrate_assistant_waiting_for_input(engine)
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO core_assistant_turns VALUES ('local','turn-1','waiting_for_input')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_workflow_runs VALUES ('local','run-1','waiting_for_input')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_workflow_nodes VALUES ('local','node-1','waiting_for_input')"
+        )
+        interpretation = connection.execute(
+            text(
+                "SELECT idempotency_key FROM core_assistant_request_interpretations "
+                "WHERE id = 'i-1'"
+            )
+        ).scalar_one()
+        assert interpretation == "legacy:1"
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []
+    engine.dispose()
 
 
 def test_workspace_identity_migrates_legacy_project_version(tmp_path: Path) -> None:

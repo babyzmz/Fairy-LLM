@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Iterator
 from pathlib import Path
 from threading import Event
 
-from fairy_core.providers import CancellationToken, ModelDelta, ModelRequest, ProviderRegistry
+from fairy_core.assistant.routing import QWEN_FREE_MODEL_ID
+from fairy_core.providers import (
+    CancellationToken,
+    ModelDelta,
+    ModelRequest,
+    ProviderCapability,
+    ProviderRegistry,
+)
 from fairy_core.transports.stdio import build_local_service
 from tests.assistant.support import ScriptedProvider, wait_for_turn
 from tests.assistant.test_application import _scratch_task, _turn
@@ -115,4 +123,129 @@ def test_steering_revises_one_turn_and_replays_idempotently(tmp_path: Path) -> N
         assert provider.call_count == 2
     finally:
         provider.release.set()
+        service.close()
+
+
+def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Path) -> None:
+    profile_id = "openrouter-qwen-free"
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.text(
+                    profile_id=profile_id,
+                    sequence=1,
+                    text=json.dumps(
+                        {
+                            "evidence_requirements": [],
+                            "requires_workspace_changes": False,
+                            "public_summary": "Clarify the durable change target.",
+                            "interpretation": {
+                                "normalized_goal": "Update the requested project file.",
+                                "action": "change",
+                                "objectives": [
+                                    {
+                                        "goal": "Update the requested project file.",
+                                        "action": "change",
+                                        "depends_on": [],
+                                    }
+                                ],
+                                "targets": [],
+                                "constraints": [],
+                                "deliverable": "Updated project file",
+                                "assumptions": [],
+                                "missing_information": ["target file"],
+                                "confidence": "low",
+                                "disposition": "clarification_required",
+                                "public_summary": "The target file is missing.",
+                                "clarification_question": "Which file should Fairy update?",
+                            },
+                        }
+                    ),
+                ),
+                ModelDelta.done(profile_id=profile_id, sequence=2, finish_reason="stop"),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id=profile_id,
+                    sequence=1,
+                    text="Updated the clarified target.",
+                ),
+                ModelDelta.done(profile_id=profile_id, sequence=2, finish_reason="stop"),
+            ),
+        ],
+        profile_id=profile_id,
+        model_id=QWEN_FREE_MODEL_ID,
+        capabilities=frozenset(
+            {
+                ProviderCapability.TEXT,
+                ProviderCapability.TOOLS,
+                ProviderCapability.STRUCTURED_OUTPUT,
+            }
+        ),
+    )
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((provider,)),
+    )
+    try:
+        service.invoke(
+            "models.selection.update",
+            {
+                "mode": "manual",
+                "model_id": QWEN_FREE_MODEL_ID,
+                "allow_free_fallback": False,
+                "zero_data_retention": False,
+                "expected_revision": 0,
+                "idempotency_key": "selection:clarification",
+            },
+        )
+        task = _scratch_task(service, "Update it")
+        selection = service.invoke("models.selection.get", {})
+        turn = service.invoke(
+            "assistant.turns.create",
+            {
+                "task_id": task["id"],
+                "model_selection": {
+                    "mode": selection["mode"],
+                    "model_id": selection["model_id"],
+                    "revision": selection["revision"],
+                },
+                "idempotency_key": "turn:clarification",
+            },
+        )
+
+        service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
+        waiting = wait_for_turn(service, turn["id"], status="waiting_for_input")
+        interpretation = service.invoke(
+            "assistant.turns.interpretation.get",
+            {"turn_id": turn["id"]},
+        )
+        response = {
+            "turn_id": turn["id"],
+            "content": "Update src/app.ts.",
+            "expected_interpretation_revision": 1,
+            "idempotency_key": "clarification:target",
+        }
+
+        resumed = service.invoke("assistant.turns.respond", response)
+        replayed = service.invoke("assistant.turns.respond", response)
+        completed = wait_for_turn(service, turn["id"])
+        messages = service.invoke(
+            "messages.list",
+            {"conversation_id": task["conversation_id"]},
+        )["items"]
+
+        assert waiting["workflow_summary"]["status"] == "waiting_for_input"
+        assert interpretation["clarification_question"] == "Which file should Fairy update?"
+        assert interpretation["revision"] == 1
+        assert resumed["id"] == turn["id"] == replayed["id"]
+        assert completed["active_interpretation_revision"] == 2
+        assert completed["interpretation_summary"]["disposition"] == "ready"
+        assert [(message["role"], message["content"]) for message in messages] == [
+            ("user", "Update it"),
+            ("user", "Update src/app.ts."),
+            ("assistant", "Updated the clarified target."),
+        ]
+        assert len(provider.requests) == 2
+    finally:
         service.close()

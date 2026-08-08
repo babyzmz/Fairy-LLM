@@ -13,6 +13,8 @@ from fairy_core.contracts.models import (
     ArtifactIdInput,
     ArtifactListInput,
     AssistantTurnIdInput,
+    AssistantTurnInterpretationInput,
+    AssistantTurnRespondInput,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
     AssistantTurnStartInput,
@@ -56,6 +58,8 @@ class CoreServiceEndpointsMixin:
     def _assistant_workflow_handlers(self) -> dict[str, Any]:
         return {
             "assistant.turns.pause": self._pause_assistant_turn,
+            "assistant.turns.interpretation.get": self._get_assistant_turn_interpretation,
+            "assistant.turns.respond": self._respond_assistant_turn,
             "assistant.turns.resume": self._resume_assistant_turn,
             "assistant.turns.steer": self._steer_assistant_turn,
             "assistant.turns.workflow.get": self._get_assistant_turn_workflow,
@@ -83,6 +87,22 @@ class CoreServiceEndpointsMixin:
             turn_id=validated.turn_id,
             instruction=validated.instruction,
             expected_revision=validated.expected_revision,
+            idempotency_key=validated.idempotency_key,
+        )
+
+    def _get_assistant_turn_interpretation(self, request: BaseModel) -> Any:
+        validated = cast(AssistantTurnInterpretationInput, request)
+        return self._assistant_ledger.get_interpretation(
+            turn_id=validated.turn_id,
+            revision=validated.revision,
+        )
+
+    def _respond_assistant_turn(self, request: BaseModel) -> Any:
+        validated = cast(AssistantTurnRespondInput, request)
+        return self._assistant_scheduler.respond(
+            turn_id=validated.turn_id,
+            content=validated.content,
+            expected_interpretation_revision=validated.expected_interpretation_revision,
             idempotency_key=validated.idempotency_key,
         )
 

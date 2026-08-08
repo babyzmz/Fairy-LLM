@@ -299,6 +299,20 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
             )
         return tuple(_interpretation_from_row(row) for row in rows)
 
+    def find_interpretation_by_idempotency_key(
+        self,
+        turn_id: UUID,
+        idempotency_key: str,
+    ) -> AssistantRequestInterpretationRevision | None:
+        row = self._first(
+            select(assistant_request_interpretations).where(
+                assistant_request_interpretations.c.tenant_id == self._tenant_id,
+                assistant_request_interpretations.c.turn_id == str(turn_id),
+                assistant_request_interpretations.c.idempotency_key == idempotency_key.strip(),
+            )
+        )
+        return _interpretation_from_row(row) if row is not None else None
+
     def find_turn_by_idempotency_key(self, idempotency_key: str) -> AssistantTurn | None:
         row = self._first(
             select(assistant_turns).where(
@@ -357,6 +371,7 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
                                 AssistantTurnStatus.CREATED.value,
                                 AssistantTurnStatus.RUNNING.value,
                                 AssistantTurnStatus.WAITING_FOR_TOOL.value,
+                                AssistantTurnStatus.WAITING_FOR_INPUT.value,
                             )
                         ),
                     )
@@ -381,6 +396,7 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
                         AssistantTurnStatus.CREATED.value,
                         AssistantTurnStatus.RUNNING.value,
                         AssistantTurnStatus.WAITING_FOR_TOOL.value,
+                        AssistantTurnStatus.WAITING_FOR_INPUT.value,
                     )
                 ),
             )
@@ -1029,11 +1045,17 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
         )
 
     def _with_workflow_summary(self, turn: AssistantTurn) -> AssistantTurn:
-        return attach_workflow_summary(
+        projected = attach_workflow_summary(
             self._session,
             tenant_id=self._tenant_id,
             turn=turn,
         )
+        if projected.active_interpretation_revision is not None:
+            projected.interpretation_summary = self.get_interpretation(
+                projected.id,
+                projected.active_interpretation_revision,
+            )
+        return projected
 
     @staticmethod
     def _provider_attempt_from_row(row: Mapping[str, Any]) -> ProviderAttempt:
@@ -1234,6 +1256,7 @@ def _interpretation_values(
         "id": str(value.id),
         "turn_id": str(value.turn_id),
         "revision": value.revision,
+        "idempotency_key": value.idempotency_key,
         "source_message_id": str(value.source_message_id),
         "source_message_sha256": value.source_message_sha256,
         "schema_version": value.schema_version,
@@ -1268,6 +1291,7 @@ def _interpretation_from_row(
         id=UUID(row["id"]),
         turn_id=UUID(row["turn_id"]),
         revision=int(row["revision"]),
+        idempotency_key=row["idempotency_key"],
         source_message_id=UUID(row["source_message_id"]),
         source_message_sha256=row["source_message_sha256"],
         schema_version=int(row["schema_version"]),

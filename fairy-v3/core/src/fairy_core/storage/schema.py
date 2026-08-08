@@ -402,7 +402,8 @@ assistant_turns = Table(
     ),
     UniqueConstraint("tenant_id", "workflow_run_id", name="uq_core_assistant_turns_workflow_run"),
     CheckConstraint(
-        "status IN ('created', 'running', 'waiting_for_tool', 'completed', 'cancelled', 'failed')",
+        "status IN ('created', 'running', 'waiting_for_tool', 'waiting_for_input', "
+        "'completed', 'cancelled', 'failed')",
         name="ck_core_assistant_turns_status",
     ),
     CheckConstraint(
@@ -521,6 +522,7 @@ assistant_request_interpretations = Table(
     _id(),
     Column("turn_id", String(ID_LENGTH), nullable=False),
     Column("revision", BigInteger, nullable=False),
+    Column("idempotency_key", String(512), nullable=False),
     Column("source_message_id", String(ID_LENGTH), nullable=False),
     Column("source_message_sha256", String(64), nullable=False),
     Column("schema_version", Integer, nullable=False),
@@ -541,6 +543,12 @@ assistant_request_interpretations = Table(
     PrimaryKeyConstraint("tenant_id", "id", name="pk_core_assistant_request_interpretations"),
     UniqueConstraint(
         "tenant_id", "turn_id", "revision", name="uq_core_assistant_interpretations_revision"
+    ),
+    UniqueConstraint(
+        "tenant_id",
+        "turn_id",
+        "idempotency_key",
+        name="uq_core_assistant_interpretations_idempotency",
     ),
     CheckConstraint("revision > 0", name="ck_core_assistant_interpretations_revision"),
     CheckConstraint("schema_version > 0", name="ck_core_assistant_interpretations_schema"),

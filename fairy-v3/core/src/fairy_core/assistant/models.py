@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from fairy_core.assistant.evidence import EvidenceReceipt
+from fairy_core.assistant.interpretation import AssistantRequestInterpretationRevision
 from fairy_core.assistant.routing import RoutingDecision
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.ids import new_id
@@ -53,6 +54,7 @@ class AssistantTurnStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
     WAITING_FOR_TOOL = "waiting_for_tool"
+    WAITING_FOR_INPUT = "waiting_for_input"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     FAILED = "failed"
@@ -142,6 +144,7 @@ _TURN_TRANSITIONS: dict[AssistantTurnStatus, frozenset[AssistantTurnStatus]] = {
     AssistantTurnStatus.CREATED: frozenset(
         {
             AssistantTurnStatus.RUNNING,
+            AssistantTurnStatus.WAITING_FOR_INPUT,
             AssistantTurnStatus.CANCELLED,
             AssistantTurnStatus.FAILED,
         }
@@ -149,6 +152,7 @@ _TURN_TRANSITIONS: dict[AssistantTurnStatus, frozenset[AssistantTurnStatus]] = {
     AssistantTurnStatus.RUNNING: frozenset(
         {
             AssistantTurnStatus.WAITING_FOR_TOOL,
+            AssistantTurnStatus.WAITING_FOR_INPUT,
             AssistantTurnStatus.COMPLETED,
             AssistantTurnStatus.CANCELLED,
             AssistantTurnStatus.FAILED,
@@ -156,6 +160,14 @@ _TURN_TRANSITIONS: dict[AssistantTurnStatus, frozenset[AssistantTurnStatus]] = {
     ),
     AssistantTurnStatus.WAITING_FOR_TOOL: frozenset(
         {
+            AssistantTurnStatus.RUNNING,
+            AssistantTurnStatus.CANCELLED,
+            AssistantTurnStatus.FAILED,
+        }
+    ),
+    AssistantTurnStatus.WAITING_FOR_INPUT: frozenset(
+        {
+            AssistantTurnStatus.CREATED,
             AssistantTurnStatus.RUNNING,
             AssistantTurnStatus.CANCELLED,
             AssistantTurnStatus.FAILED,
@@ -339,6 +351,7 @@ class AssistantTurn:
     workflow_run_id: UUID | None = None
     execution_engine_version: int = 1
     active_interpretation_revision: int | None = None
+    interpretation_summary: AssistantRequestInterpretationRevision | None = None
     workflow_summary: AssistantWorkflowSummary | None = None
     model_selection: ModelSelectionSnapshot | None = None
     routing_decision: RoutingDecision | None = None
@@ -482,6 +495,16 @@ class AssistantTurn:
 
     def wait_for_tool(self) -> None:
         self._transition_to(AssistantTurnStatus.WAITING_FOR_TOOL)
+
+    def wait_for_input(self) -> None:
+        self._transition_to(AssistantTurnStatus.WAITING_FOR_INPUT)
+
+    def resume_from_input(self) -> None:
+        self._transition_to(
+            AssistantTurnStatus.RUNNING
+            if self.started_at is not None
+            else AssistantTurnStatus.CREATED
+        )
 
     def resume(self) -> None:
         self._transition_to(AssistantTurnStatus.RUNNING)
