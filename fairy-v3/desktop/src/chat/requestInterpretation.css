@@ -1,0 +1,35 @@
+.request-interpretation-card {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 5px;
+  margin: 0 max(18px, calc((100% - 900px) / 2)) 10px;
+  padding: 11px 13px;
+  border: 1px solid #39443f;
+  border-left: 2px solid #68bdb4;
+  border-radius: 6px;
+  color: #d7ddda;
+  background: #181c1a;
+}
+
+.request-interpretation-card.assumed {
+  border-left-color: #7f8b84;
+}
+
+.request-interpretation-card .eyebrow {
+  color: #77cfc5;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.request-interpretation-card strong {
+  font-size: 12px;
+  font-weight: 570;
+  line-height: 1.45;
+}
+
+.request-interpretation-card p {
+  margin: 0;
+  color: #929c96;
+  font-size: 10px;
+  line-height: 1.45;
+}

@@ -93,6 +93,7 @@ from fairy_core.contracts.history import (
     TrashPurgeAllInput,
     TrashPurgeResultModel,
 )
+from fairy_core.contracts.interpretation_methods import INTERPRETATION_METHODS
 from fairy_core.contracts.knowledge import (
     HarnessContextManifestModel,
     HarnessManifestGetInput,
@@ -147,13 +148,10 @@ from fairy_core.contracts.models import (
     ArtifactListInput,
     ArtifactModel,
     ArtifactPageModel,
-    AssistantRequestInterpretationModel,
     AssistantTurnCancelInput,
     AssistantTurnCreateInput,
     AssistantTurnIdInput,
-    AssistantTurnInterpretationInput,
     AssistantTurnModel,
-    AssistantTurnRespondInput,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
     AssistantTurnStartInput,
@@ -478,11 +476,6 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             AssistantTurnIdInput,
             AssistantTurnModel,
         ),
-        "assistant.turns.interpretation.get": CoreMethod(
-            "assistant.turns.interpretation.get",
-            AssistantTurnInterpretationInput,
-            AssistantRequestInterpretationModel,
-        ),
         "assistant.turns.retry": CoreMethod(
             "assistant.turns.retry",
             AssistantTurnRetryInput,
@@ -503,11 +496,7 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             AssistantTurnIdInput,
             AssistantTurnModel,
         ),
-        "assistant.turns.respond": CoreMethod(
-            "assistant.turns.respond",
-            AssistantTurnRespondInput,
-            AssistantTurnModel,
-        ),
+        **INTERPRETATION_METHODS,
         "assistant.turns.steer": CoreMethod(
             "assistant.turns.steer",
             AssistantTurnSteerInput,

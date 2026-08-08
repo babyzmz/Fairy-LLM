@@ -1195,9 +1195,5 @@ class SqlAlchemyWorkflowRepository(
         )
 
 
-__all__ = [
-    "SqlAlchemyWorkflowRepository",
-    "WorkflowBudgetExceeded",
-    "WorkflowFenceError",
-    "WorkflowRevisionError",
-]
+__all__ = ["SqlAlchemyWorkflowRepository", "WorkflowBudgetExceeded", "WorkflowFenceError",
+           "WorkflowRevisionError"]

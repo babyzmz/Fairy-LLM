@@ -20,7 +20,6 @@ from fairy_core.assistant.evidence import (
     evidence_context,
     seal_evidence_drafts,
 )
-from fairy_core.assistant.interpretation import InterpretationDisposition
 from fairy_core.assistant.media_routing import constrain_context_for_media
 from fairy_core.assistant.models import (
     AssistantTurn,
@@ -31,6 +30,7 @@ from fairy_core.assistant.models import (
 )
 from fairy_core.assistant.parallel_tools import AssistantParallelToolsMixin
 from fairy_core.assistant.plan_budget import consume_tool_budget
+from fairy_core.assistant.preparation import AssistantPreparationMixin
 from fairy_core.assistant.provider_attempts import ProviderAttemptRecorder
 from fairy_core.assistant.routing import RoutingDecision
 from fairy_core.assistant.routing_runtime import AssistantRoutingMixin
@@ -50,7 +50,7 @@ from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.turn_lifecycle import AssistantTurnLifecycleMixin
 from fairy_core.assistant.turn_reader import AssistantTurnReader, require_task, require_turn
 from fairy_core.assistant.workflow_runtime import AssistantWorkflowRuntimeMixin
-from fairy_core.commanding import CommandRun, EventVisibility
+from fairy_core.commanding import CommandRun
 from fairy_core.commanding.bus import CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolDefinition, ToolRegistry
@@ -88,6 +88,7 @@ from fairy_core.workflow.scheduler import WorkflowPaused
 class AssistantApplication(
     AssistantContextDiagnosticsMixin,
     AssistantParallelToolsMixin,
+    AssistantPreparationMixin,
     AssistantToolContextMixin,
     AssistantToolApprovalMixin,
     AssistantRoutingMixin,
@@ -696,101 +697,6 @@ class AssistantApplication(
         finally:
             _zero_model_images(transient_images)
             self._turns.release_terminal_images(turn_id, self._image_attachments)
-
-    def prepare_turn(
-        self,
-        turn_id: UUID,
-        cancellation: CancellationToken,
-    ) -> AssistantTurn:
-        try:
-            return self._prepare_turn(turn_id, cancellation)
-        except (ProviderCancelledError, McpCancelledError):
-            return self._cancel_turn(turn_id, None)
-        except ProviderAuthenticationError:
-            return self._fail_turn(turn_id, None, error_code="PROVIDER_AUTHENTICATION_FAILED")
-        except ProviderRateLimitError:
-            return self._fail_turn(turn_id, None, error_code="PROVIDER_RATE_LIMITED")
-        except ProviderTimeoutError:
-            return self._fail_turn(turn_id, None, error_code="PROVIDER_TIMEOUT")
-        except ProviderContextLengthError:
-            return self._fail_turn(turn_id, None, error_code="PROVIDER_CONTEXT_LENGTH_EXCEEDED")
-        except ProviderContentRejectedError:
-            return self._fail_turn(turn_id, None, error_code="PROVIDER_CONTENT_REJECTED")
-        except ProviderNetworkError:
-            return self._fail_turn(turn_id, None, error_code="PROVIDER_NETWORK_ERROR")
-        except ProviderUnavailableError:
-            return self._fail_turn(turn_id, None, error_code="PROVIDER_UNAVAILABLE")
-        except EvidenceClassificationFailedError:
-            return self._fail_turn(turn_id, None, error_code="EVIDENCE_CLASSIFICATION_FAILED")
-        except ProviderError:
-            return self._fail_turn(turn_id, None, error_code="PROVIDER_ERROR")
-        except ValueError:
-            return self._fail_turn(turn_id, None, error_code="PROVIDER_PROTOCOL_ERROR")
-
-    def _prepare_turn(
-        self,
-        turn_id: UUID,
-        cancellation: CancellationToken,
-    ) -> AssistantTurn:
-        """Persist interpretation and routing before execution becomes claimable."""
-
-        turn = self._turns.get(turn_id)
-        if turn.is_terminal:
-            return turn
-        if (
-            turn.status is AssistantTurnStatus.WAITING_FOR_TOOL
-            and turn.budget_approval_run_id is not None
-        ):
-            budget_state = self._resume_budget_approval(turn_id, cancellation)
-            if budget_state == "waiting":
-                return self._turns.get(turn_id)
-            if budget_state == "rejected":
-                return self._fail_turn(
-                    turn_id,
-                    None,
-                    error_code="USER_REJECTED",
-                )
-            turn = self._turns.get(turn_id)
-        decision = self._ensure_routing(turn, cancellation)
-        if decision is None:
-            self._ensure_unrouted_interpretation(turn_id)
-        elif decision.approval_required and turn.budget_approval_run_id is None:
-            return self._request_budget_approval(turn_id, decision)
-        with self._unit_of_work_factory() as unit_of_work:
-            prepared = require_turn(unit_of_work, turn_id)
-            interpretation = unit_of_work.assistant.get_interpretation(
-                turn_id,
-                prepared.active_interpretation_revision,
-            )
-            if (
-                interpretation is not None
-                and interpretation.disposition
-                is InterpretationDisposition.CLARIFICATION_REQUIRED
-                and prepared.status is not AssistantTurnStatus.WAITING_FOR_INPUT
-            ):
-                expected_status = prepared.status
-                expected_revision = prepared.cancellation_revision
-                prepared.wait_for_input()
-                unit_of_work.assistant.update_turn(
-                    prepared,
-                    expected_status=expected_status,
-                    expected_cancellation_revision=expected_revision,
-                )
-                unit_of_work.commands.append_domain_event(
-                    event_type="assistant.turn.clarification_requested",
-                    visibility=EventVisibility.USER,
-                    message="Fairy needs clarification",
-                    payload={
-                        "turn_id": str(prepared.id),
-                        "interpretation_revision": interpretation.revision,
-                        "public_summary": interpretation.public_summary,
-                    },
-                    actor="assistant",
-                    conversation_id=prepared.conversation_id,
-                    task_id=prepared.task_id,
-                )
-                unit_of_work.commit()
-        return self._turns.get(turn_id)
 
     def _execute_candidate(
         self,

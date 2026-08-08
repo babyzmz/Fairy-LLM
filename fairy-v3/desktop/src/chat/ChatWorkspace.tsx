@@ -37,6 +37,7 @@ import type { AssistantDraft, OptimisticUserMessage } from "./useAssistantTurn";
 import type { TurnTraceQueryState } from "./useTurnTraces";
 import { parseSlashCommand, slashCommandHelp } from "./slashCommands";
 import "./streaming.css";
+import "./requestInterpretation.css";
 
 export interface ChatWorkspaceProps {
   conversationAvailable: boolean;
