@@ -56,6 +56,8 @@ SCENARIOS = (
         (
             "tests/assistant/test_workflow_controls.py::"
             "test_clarification_waits_and_resumes_the_same_turn_idempotently",
+            "tests/assistant/test_workflow_controls.py::"
+            "test_clarification_wait_survives_core_restart",
         ),
         recovery_required=True,
         safety_required=True,

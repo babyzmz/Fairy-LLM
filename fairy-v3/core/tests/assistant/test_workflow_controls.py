@@ -6,7 +6,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from threading import Event
 
+import pytest
+
 from fairy_core.assistant.routing import QWEN_FREE_MODEL_ID
+from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 from fairy_core.providers import (
     CancellationToken,
     ModelDelta,
@@ -41,6 +44,43 @@ class _BoundaryProvider(ScriptedProvider):
         else:
             yield ModelDelta.text(profile_id="scripted", sequence=1, text="Updated response")
         yield ModelDelta.done(profile_id="scripted", sequence=2, finish_reason="stop")
+
+
+def _clarification_classification(profile_id: str) -> tuple[ModelDelta, ...]:
+    return (
+        ModelDelta.text(
+            profile_id=profile_id,
+            sequence=1,
+            text=json.dumps(
+                {
+                    "evidence_requirements": [],
+                    "requires_workspace_changes": False,
+                    "public_summary": "Clarify the durable change target.",
+                    "interpretation": {
+                        "normalized_goal": "Update the requested project file.",
+                        "action": "change",
+                        "objectives": [
+                            {
+                                "goal": "Update the requested project file.",
+                                "action": "change",
+                                "depends_on": [],
+                            }
+                        ],
+                        "targets": [],
+                        "constraints": [],
+                        "deliverable": "Updated project file",
+                        "assumptions": [],
+                        "missing_information": ["target file"],
+                        "confidence": "low",
+                        "disposition": "clarification_required",
+                        "public_summary": "The target file is missing.",
+                        "clarification_question": "Which file should Fairy update?",
+                    },
+                }
+            ),
+        ),
+        ModelDelta.done(profile_id=profile_id, sequence=2, finish_reason="stop"),
+    )
 
 
 def _wait_for_workflow(service, turn_id: str, status: str) -> dict[str, object]:
@@ -238,8 +278,23 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
             "idempotency_key": "clarification:target",
         }
 
+        with pytest.raises(VersionConflictError):
+            service.invoke(
+                "assistant.turns.respond",
+                {
+                    **response,
+                    "expected_interpretation_revision": 2,
+                    "idempotency_key": "clarification:stale",
+                },
+            )
+
         resumed = service.invoke("assistant.turns.respond", response)
         replayed = service.invoke("assistant.turns.respond", response)
+        with pytest.raises(IdempotencyConflictError):
+            service.invoke(
+                "assistant.turns.respond",
+                {**response, "content": "Update a different file."},
+            )
         completed = wait_for_turn(service, turn["id"])
         messages = service.invoke(
             "messages.list",
@@ -265,3 +320,100 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
         assert len(provider.requests) == 2
     finally:
         service.close()
+
+
+def test_clarification_wait_survives_core_restart(tmp_path: Path) -> None:
+    profile_id = "openrouter-qwen-free"
+    first_provider = ScriptedProvider(
+        [_clarification_classification(profile_id)],
+        profile_id=profile_id,
+        model_id=QWEN_FREE_MODEL_ID,
+        capabilities=frozenset(
+            {
+                ProviderCapability.TEXT,
+                ProviderCapability.TOOLS,
+                ProviderCapability.STRUCTURED_OUTPUT,
+            }
+        ),
+    )
+    first_service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((first_provider,)),
+    )
+    try:
+        first_service.invoke(
+            "models.selection.update",
+            {
+                "mode": "manual",
+                "model_id": QWEN_FREE_MODEL_ID,
+                "allow_free_fallback": False,
+                "zero_data_retention": False,
+                "expected_revision": 0,
+                "idempotency_key": "selection:clarification-restart",
+            },
+        )
+        task = _scratch_task(first_service, "Update it after restart")
+        selection = first_service.invoke("models.selection.get", {})
+        turn = first_service.invoke(
+            "assistant.turns.create",
+            {
+                "task_id": task["id"],
+                "model_selection": {
+                    "mode": selection["mode"],
+                    "model_id": selection["model_id"],
+                    "revision": selection["revision"],
+                },
+                "idempotency_key": "turn:clarification-restart",
+            },
+        )
+        first_service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
+        _wait_for_workflow(first_service, turn["id"], "waiting_for_input")
+    finally:
+        first_service.close()
+
+    second_provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.text(
+                    profile_id=profile_id,
+                    sequence=1,
+                    text="Completed after clarification and restart.",
+                ),
+                ModelDelta.done(profile_id=profile_id, sequence=2, finish_reason="stop"),
+            )
+        ],
+        profile_id=profile_id,
+        model_id=QWEN_FREE_MODEL_ID,
+        capabilities=frozenset(
+            {
+                ProviderCapability.TEXT,
+                ProviderCapability.TOOLS,
+                ProviderCapability.STRUCTURED_OUTPUT,
+            }
+        ),
+    )
+    second_service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((second_provider,)),
+    )
+    try:
+        restored = second_service.invoke("assistant.turns.get", {"turn_id": turn["id"]})
+        assert restored["status"] == "waiting_for_input"
+        assert restored["workflow_summary"]["status"] == "waiting_for_input"
+
+        second_service.invoke(
+            "assistant.turns.respond",
+            {
+                "turn_id": turn["id"],
+                "content": "Use src/app.ts.",
+                "expected_interpretation_revision": 1,
+                "idempotency_key": "clarification:restart-target",
+            },
+        )
+        completed = wait_for_turn(second_service, turn["id"])
+
+        assert completed["status"] == "completed"
+        assert completed["active_interpretation_revision"] == 2
+        assert len(second_provider.requests) == 1
+    finally:
+        second_service.close()
