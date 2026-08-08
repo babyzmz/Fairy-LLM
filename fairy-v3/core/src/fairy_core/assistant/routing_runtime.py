@@ -7,6 +7,12 @@ from fairy_core.assistant import limits
 from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.context import bound_persona_instruction
 from fairy_core.assistant.events import append_message_created
+from fairy_core.assistant.interpretation import (
+    ClassifierInterpretationPayload,
+    RequestAction,
+    fallback_interpretation,
+    interpretation_from_classifier,
+)
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -69,6 +75,30 @@ from fairy_core.providers import (
 
 
 class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
+    def _ensure_unrouted_interpretation(self, turn_id: UUID) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            turn = require_turn(unit_of_work, turn_id)
+            if turn.active_interpretation_revision is not None:
+                return
+            source_message = unit_of_work.assistant.message_for_turn(
+                turn.id,
+                MessageRole.USER,
+            )
+            if source_message is None:
+                raise RuntimeError("Assistant Turn has no user message")
+            interpretation = fallback_interpretation(
+                turn_id=turn.id,
+                revision=1,
+                source_message_id=source_message.id,
+                source_message=source_message.content,
+                action=RequestAction.ANSWER,
+            )
+            unit_of_work.assistant.append_interpretation(
+                interpretation,
+                expected_revision=None,
+            )
+            unit_of_work.commit()
+
     def _ensure_routing(
         self,
         turn: AssistantTurn,
@@ -91,7 +121,13 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
                 user_request=user_request,
                 evidence=evidence,
             )
-            self._bind_routing(turn.id, decision, run=route_run, replace_evidence=True)
+            self._bind_routing(
+                turn.id,
+                decision,
+                run=route_run,
+                replace_evidence=True,
+                interpretation_payload=evidence.interpretation,
+            )
             return decision
         user_request, catalog = self._routing_inputs(turn.id)
         if turn.model_selection.mode is ModelSelectionMode.MANUAL:
@@ -122,7 +158,12 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
             )
             self._require_available_route(decision, catalog)
             self._require_selection_compatibility(turn.model_selection, decision)
-            self._bind_routing(turn.id, decision, run=route_run)
+            self._bind_routing(
+                turn.id,
+                decision,
+                run=route_run,
+                interpretation_payload=(evidence.interpretation if evidence is not None else None),
+            )
             return decision
         return self._run_auto_router(
             turn=turn,
@@ -160,6 +201,7 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
             request = build_router_request(
                 profile_id=primary.id,
                 user_request=user_request,
+                source_message_id=self._routing_source_message(turn.id).id,
                 attachment_count=len(self._image_attachments.for_turn(turn.id)),
                 selection=selection,
                 fallback_profile_ids=fallback_ids,
@@ -190,7 +232,12 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
             )
             self._require_available_route(decision, catalog)
             self._require_selection_compatibility(selection, decision)
-            self._bind_routing(turn.id, decision, run=run)
+            self._bind_routing(
+                turn.id,
+                decision,
+                run=run,
+                interpretation_payload=routed.interpretation,
+            )
             return decision
         except (ProviderCancelledError, McpCancelledError):
             if cancellation.is_interrupted:
@@ -209,11 +256,46 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
         *,
         run: CommandRun | None = None,
         replace_evidence: bool = False,
+        interpretation_payload: ClassifierInterpretationPayload | None = None,
     ) -> None:
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
             expected_status = turn.status
             expected_revision = turn.cancellation_revision
+            if turn.active_interpretation_revision is None and (
+                decision.evidence_classified or interpretation_payload is not None
+            ):
+                source_message = unit_of_work.assistant.message_for_turn(
+                    turn.id,
+                    MessageRole.USER,
+                )
+                if source_message is None:
+                    raise RuntimeError("Assistant Turn has no user message")
+                action = _request_action(decision)
+                interpretation = (
+                    interpretation_from_classifier(
+                        turn_id=turn.id,
+                        revision=1,
+                        source_message_id=source_message.id,
+                        source_message=source_message.content,
+                        payload=interpretation_payload,
+                        evidence_requirements=decision.evidence_requirements,
+                    )
+                    if interpretation_payload is not None
+                    else fallback_interpretation(
+                        turn_id=turn.id,
+                        revision=1,
+                        source_message_id=source_message.id,
+                        source_message=source_message.content,
+                        action=action,
+                        evidence_requirements=decision.evidence_requirements,
+                    )
+                )
+                unit_of_work.assistant.append_interpretation(
+                    interpretation,
+                    expected_revision=None,
+                )
+                turn.bind_interpretation(1, expected_revision=None)
             if replace_evidence:
                 turn.bind_routing_evidence(decision)
             else:
@@ -254,6 +336,13 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
                     lease_fence=run.lease_fence,
                 )
             unit_of_work.commit()
+
+    def _routing_source_message(self, turn_id: UUID):
+        with self._unit_of_work_factory() as unit_of_work:
+            message = unit_of_work.assistant.message_for_turn(turn_id, MessageRole.USER)
+        if message is None:
+            raise RuntimeError("Assistant Turn has no user message")
+        return message
 
     def _request_budget_approval(
         self,
@@ -458,6 +547,7 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
                 unit_of_work.state.save_task(task)
             unit_of_work.commit()
         return "approved"
+
 
     def _execution_profile(
         self,
@@ -1196,3 +1286,17 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin):
                 route_step,
             )
         return None
+
+
+def _request_action(decision: RoutingDecision) -> RequestAction:
+    if decision.task_kind is RoutingTaskKind.BROWSER:
+        return RequestAction.BROWSE
+    if decision.task_kind in {
+        RoutingTaskKind.IMAGE,
+        RoutingTaskKind.MUSIC,
+        RoutingTaskKind.VIDEO,
+    }:
+        return RequestAction.GENERATE
+    if decision.requires_workspace_changes:
+        return RequestAction.CHANGE
+    return RequestAction.ANSWER

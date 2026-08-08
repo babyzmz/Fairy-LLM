@@ -9,11 +9,13 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
 from fairy_core.assistant.evidence import EvidenceRequirementKind
 from fairy_core.domain.ids import new_id
 
 INTERPRETATION_SCHEMA_VERSION = 1
-INTERPRETATION_MAX_CLASSIFIER_CHARS = 48_000
+INTERPRETATION_MAX_CLASSIFIER_CHARS = 140_000
 
 
 class RequestAction(StrEnum):
@@ -45,6 +47,54 @@ class InputSegmentKind(StrEnum):
     TEXT = "text"
     QUOTE = "quote"
     CODE = "code"
+
+
+class ClassifierObjectivePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    goal: str = Field(min_length=1, max_length=2_000)
+    action: RequestAction
+    depends_on: tuple[int, ...] = Field(default=(), max_length=32)
+
+    @field_validator("depends_on")
+    @classmethod
+    def validate_dependencies(cls, value: tuple[int, ...]) -> tuple[int, ...]:
+        if any(index < 0 for index in value) or len(value) != len(set(value)):
+            raise ValueError("objective dependencies are invalid")
+        return value
+
+
+class ClassifierInterpretationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    normalized_goal: str = Field(min_length=1, max_length=4_000)
+    action: RequestAction
+    objectives: tuple[ClassifierObjectivePayload, ...] = Field(min_length=1, max_length=16)
+    targets: tuple[str, ...] = Field(default=(), max_length=64)
+    constraints: tuple[str, ...] = Field(default=(), max_length=64)
+    deliverable: str | None = Field(default=None, min_length=1, max_length=2_000)
+    assumptions: tuple[str, ...] = Field(default=(), max_length=32)
+    missing_information: tuple[str, ...] = Field(default=(), max_length=32)
+    confidence: InterpretationConfidence
+    disposition: InterpretationDisposition
+    public_summary: str = Field(min_length=1, max_length=240)
+    clarification_question: str | None = Field(default=None, min_length=1, max_length=1_000)
+
+    @field_validator("targets", "constraints", "assumptions", "missing_information")
+    @classmethod
+    def validate_unique_texts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)) or any(not item.strip() for item in value):
+            raise ValueError("interpretation text lists must contain unique nonblank values")
+        return value
+
+    @model_validator(mode="after")
+    def validate_clarification(self) -> ClassifierInterpretationPayload:
+        required = self.disposition is InterpretationDisposition.CLARIFICATION_REQUIRED
+        if required != (self.clarification_question is not None):
+            raise ValueError("clarification disposition and question must agree")
+        if required and not self.missing_information:
+            raise ValueError("clarification must identify missing information")
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +244,84 @@ def build_classifier_input_envelope(
     return encoded
 
 
+def interpretation_from_classifier(
+    *,
+    turn_id: UUID,
+    revision: int,
+    source_message_id: UUID,
+    source_message: str,
+    payload: ClassifierInterpretationPayload,
+    evidence_requirements: tuple[EvidenceRequirementKind, ...],
+) -> AssistantRequestInterpretationRevision:
+    disposition = payload.disposition
+    question = payload.clarification_question
+    high_impact = payload.action in {
+        RequestAction.CHANGE,
+        RequestAction.CREATE,
+        RequestAction.RUN,
+        RequestAction.SCHEDULE,
+        RequestAction.MANAGE,
+    }
+    if payload.missing_information and high_impact:
+        disposition = InterpretationDisposition.CLARIFICATION_REQUIRED
+        question = question or _clarification_question(payload.missing_information)
+    elif payload.assumptions and disposition is InterpretationDisposition.READY:
+        disposition = InterpretationDisposition.ASSUMED
+    return AssistantRequestInterpretationRevision.create(
+        turn_id=turn_id,
+        revision=revision,
+        source_message_id=source_message_id,
+        source_message=source_message,
+        normalized_goal=payload.normalized_goal,
+        action=payload.action,
+        objectives=tuple(
+            InterpretedObjective(
+                objective.goal,
+                objective.action,
+                objective.depends_on,
+            )
+            for objective in payload.objectives
+        ),
+        targets=payload.targets,
+        constraints=payload.constraints,
+        deliverable=payload.deliverable,
+        evidence_requirements=evidence_requirements,
+        assumptions=payload.assumptions,
+        missing_information=payload.missing_information,
+        confidence=payload.confidence,
+        disposition=disposition,
+        public_summary=payload.public_summary,
+        clarification_question=question,
+    )
+
+
+def fallback_interpretation(
+    *,
+    turn_id: UUID,
+    revision: int,
+    source_message_id: UUID,
+    source_message: str,
+    action: RequestAction,
+    evidence_requirements: tuple[EvidenceRequirementKind, ...] = (),
+) -> AssistantRequestInterpretationRevision:
+    normalized = " ".join(source_message.split())[:4_000]
+    if not normalized:
+        raise ValueError("user request is empty")
+    return AssistantRequestInterpretationRevision.create(
+        turn_id=turn_id,
+        revision=revision,
+        source_message_id=source_message_id,
+        source_message=source_message,
+        normalized_goal=normalized,
+        action=action,
+        objectives=(InterpretedObjective(normalized, action),),
+        evidence_requirements=evidence_requirements,
+        confidence=InterpretationConfidence.MEDIUM,
+        disposition=InterpretationDisposition.READY,
+        public_summary="Handle the request as stated",
+    )
+
+
 def segment_user_input(content: str) -> tuple[ClassifierInputSegment, ...]:
     if not content:
         return (ClassifierInputSegment(InputSegmentKind.TEXT, ""),)
@@ -255,16 +383,25 @@ def _digest(value: str) -> None:
         raise ValueError("source message digest is invalid")
 
 
+def _clarification_question(missing: tuple[str, ...]) -> str:
+    visible = ", ".join(missing[:3])
+    return f"Please clarify {visible} before Fairy continues."
+
+
 __all__ = [
     "INTERPRETATION_MAX_CLASSIFIER_CHARS",
     "INTERPRETATION_SCHEMA_VERSION",
     "AssistantRequestInterpretationRevision",
     "ClassifierInputSegment",
+    "ClassifierInterpretationPayload",
+    "ClassifierObjectivePayload",
     "InputSegmentKind",
     "InterpretationConfidence",
     "InterpretationDisposition",
     "InterpretedObjective",
     "RequestAction",
     "build_classifier_input_envelope",
+    "fallback_interpretation",
+    "interpretation_from_classifier",
     "segment_user_input",
 ]

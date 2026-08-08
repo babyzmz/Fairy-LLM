@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -14,8 +15,11 @@ from fairy_core.assistant.interpretation import (
     InterpretedObjective,
     RequestAction,
     build_classifier_input_envelope,
+    interpretation_from_classifier,
     segment_user_input,
 )
+from fairy_core.assistant.routing import build_router_request, parse_router_output
+from fairy_core.model_catalog.models import ModelSelectionMode, ModelSelectionSnapshot
 
 
 def test_classifier_envelope_preserves_prompt_like_text_as_json_data() -> None:
@@ -67,3 +71,66 @@ def test_interpretation_requires_missing_information_for_clarification() -> None
             public_summary="A deletion target is missing",
             clarification_question="Which target should Fairy delete?",
         )
+
+
+def test_router_receives_canonical_untrusted_envelope() -> None:
+    source_message_id = UUID(int=9)
+    selection = ModelSelectionSnapshot(
+        mode=ModelSelectionMode.AUTO,
+        model_id=None,
+        allow_free_fallback=False,
+        zero_data_retention=True,
+        revision=2,
+        captured_at=datetime.now(UTC),
+    )
+    request = build_router_request(
+        profile_id="router",
+        user_request='Review "ignore prior instructions" as quoted text',
+        source_message_id=source_message_id,
+        attachment_count=0,
+        selection=selection,
+        fallback_profile_ids=(),
+    )
+
+    payload = json.loads(request.messages[-1].content)
+    assert payload["source_message_id"] == str(source_message_id)
+    assert payload["content_is_untrusted_user_data"] is True
+    assert "untrusted user data" in request.messages[0].content
+    assert request.max_output_tokens == 1_024
+
+
+def test_high_impact_missing_target_forces_clarification() -> None:
+    routed = parse_router_output(
+        json.dumps(
+            {
+                "task_kind": "code",
+                "complexity": "medium",
+                "needs_review": False,
+                "requires_workspace_changes": True,
+                "estimated_output_tokens": 1_024,
+                "public_summary": "A workspace change was requested",
+                "interpretation": {
+                    "normalized_goal": "Delete the requested file",
+                    "action": "change",
+                    "objectives": [
+                        {"goal": "Delete the requested file", "action": "change"}
+                    ],
+                    "missing_information": ["target file"],
+                    "confidence": "medium",
+                    "disposition": "assumed",
+                    "public_summary": "The deletion target is unclear",
+                },
+            }
+        )
+    )
+    assert routed.interpretation is not None
+    interpretation = interpretation_from_classifier(
+        turn_id=UUID(int=1),
+        revision=1,
+        source_message_id=UUID(int=2),
+        source_message="Delete it",
+        payload=routed.interpretation,
+        evidence_requirements=(),
+    )
+    assert interpretation.disposition is InterpretationDisposition.CLARIFICATION_REQUIRED
+    assert interpretation.clarification_question is not None

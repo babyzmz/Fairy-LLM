@@ -97,6 +97,7 @@ class EvidenceRoutingRuntimeMixin:
             request = build_manual_evidence_request(
                 profile_id=profile.id,
                 user_request=user_request,
+                source_message_id=self._routing_source_message(turn.id).id,
                 selection=selection,
                 use_structured_output=structured,
             )

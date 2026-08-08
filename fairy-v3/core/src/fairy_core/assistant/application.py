@@ -172,6 +172,8 @@ class AssistantApplication(
 
             turn = self._turns.get(turn_id)
             decision = self._ensure_routing(turn, cancellation)
+            if decision is None:
+                self._ensure_unrouted_interpretation(turn_id)
             turn = self._turns.get(turn_id)
             workflow_budget = self._configure_workflow_budget(turn_id, decision)
             if decision is not None and decision.approval_required:
