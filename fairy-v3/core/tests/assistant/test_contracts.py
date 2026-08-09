@@ -86,11 +86,11 @@ def test_core_service_creates_idempotent_task_bound_turn_and_user_message(
         assert created["memory_snapshot_id"] == task["memory_snapshot_id"]
         assert created["memory_snapshot_hash"] == task["memory_snapshot_hash"]
         assert created["status"] == "created"
-        assert created["execution_engine_version"] == 2
+        assert created["execution_engine_version"] == 3
         assert created["workflow_run_id"] is not None
         assert created["workflow_summary"]["status"] == "paused"
-        assert created["workflow_summary"]["current_phase"] == "assistant.turn.prepare"
-        assert created["workflow_summary"]["total_nodes"] == 2
+        assert created["workflow_summary"]["current_phase"] == "assistant.request.interpret"
+        assert created["workflow_summary"]["total_nodes"] == 7
         assert [(message["role"], message["content"]) for message in messages["items"]] == [
             ("user", "Explain Fairy")
         ]

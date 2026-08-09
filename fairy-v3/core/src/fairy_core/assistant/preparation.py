@@ -27,9 +27,15 @@ class AssistantPreparationMixin:
         self,
         turn_id: UUID,
         cancellation: CancellationToken,
+        *,
+        allow_budget_approval: bool = True,
     ) -> AssistantTurn:
         try:
-            return self._prepare_turn(turn_id, cancellation)
+            return self._prepare_turn(
+                turn_id,
+                cancellation,
+                allow_budget_approval=allow_budget_approval,
+            )
         except (ProviderCancelledError, McpCancelledError):
             return self._cancel_turn(turn_id, None)
         except ProviderAuthenticationError:
@@ -57,6 +63,8 @@ class AssistantPreparationMixin:
         self,
         turn_id: UUID,
         cancellation: CancellationToken,
+        *,
+        allow_budget_approval: bool,
     ) -> AssistantTurn:
         """Persist interpretation and routing before execution becomes claimable."""
 
@@ -116,7 +124,8 @@ class AssistantPreparationMixin:
             return self._turns.get(turn_id)
         turn = self._turns.get(turn_id)
         if (
-            decision is not None
+            allow_budget_approval
+            and decision is not None
             and decision.approval_required
             and turn.budget_approval_run_id is None
         ):

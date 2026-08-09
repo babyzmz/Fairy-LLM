@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import pairwise
 from uuid import UUID
 
 from fairy_core.workflow.models import (
@@ -9,9 +10,26 @@ from fairy_core.workflow.models import (
     WorkflowPlanReason,
 )
 
-ASSISTANT_WORKFLOW_ENGINE_VERSION = 2
+ASSISTANT_WORKFLOW_ENGINE_VERSION = 3
+ASSISTANT_LEGACY_WORKFLOW_ENGINE_VERSION = 2
 ASSISTANT_WORKFLOW_NODE_KIND = "assistant.turn.execute"
 ASSISTANT_WORKFLOW_PREPARE_NODE_KIND = "assistant.turn.prepare"
+ASSISTANT_REQUEST_INTERPRET_NODE_KIND = "assistant.request.interpret"
+ASSISTANT_ROUTE_SELECT_NODE_KIND = "assistant.route.select"
+ASSISTANT_MODEL_ROUND_NODE_KIND = "assistant.model.round"
+ASSISTANT_TOOL_INVOKE_NODE_KIND = "assistant.tool.invoke"
+ASSISTANT_TOOL_JOIN_NODE_KIND = "assistant.tool.join"
+ASSISTANT_RESPONSE_VERIFY_NODE_KIND = "assistant.response.verify"
+ASSISTANT_RESPONSE_FINALIZE_NODE_KIND = "assistant.response.finalize"
+ASSISTANT_CONTINUATION_NODE_KINDS = (
+    ASSISTANT_REQUEST_INTERPRET_NODE_KIND,
+    ASSISTANT_ROUTE_SELECT_NODE_KIND,
+    ASSISTANT_MODEL_ROUND_NODE_KIND,
+    ASSISTANT_TOOL_INVOKE_NODE_KIND,
+    ASSISTANT_TOOL_JOIN_NODE_KIND,
+    ASSISTANT_RESPONSE_VERIFY_NODE_KIND,
+    ASSISTANT_RESPONSE_FINALIZE_NODE_KIND,
+)
 
 
 def assistant_workflow_node(
@@ -21,6 +39,8 @@ def assistant_workflow_node(
     turn_id: UUID,
     ready: bool = False,
 ) -> WorkflowNode:
+    """Build the engine-v2 execution node for already-bound legacy runs."""
+
     return WorkflowNode.create(
         run_id=run_id,
         plan_revision=revision,
@@ -37,6 +57,52 @@ def assistant_workflow_node(
 
 
 def assistant_workflow_plan(
+    *,
+    run_id: UUID,
+    revision: int,
+    turn_id: UUID,
+    ready: bool = False,
+) -> tuple[tuple[WorkflowNode, ...], tuple[WorkflowEdge, ...]]:
+    summaries = (
+        "Interpreting updated task requirements"
+        if revision > 1
+        else "Interpreting the request",
+        "Selecting the governed route",
+        "Running the model continuation",
+        "Reconciling durable tool invocations",
+        "Joining tool results in call order",
+        "Verifying the response contract",
+        "Finalizing the unique response",
+    )
+    nodes = tuple(
+        WorkflowNode.create(
+            run_id=run_id,
+            plan_revision=revision,
+            node_key=kind.removeprefix("assistant."),
+            kind=kind,
+            payload={"turn_id": str(turn_id)},
+            public_summary=summary,
+            ready=ready and index == 0,
+            resource_keys=(f"assistant-turn:{turn_id}",),
+            max_attempts=128 if kind == ASSISTANT_MODEL_ROUND_NODE_KIND else 16,
+        )
+        for index, (kind, summary) in enumerate(
+            zip(ASSISTANT_CONTINUATION_NODE_KINDS, summaries, strict=True)
+        )
+    )
+    edges = tuple(
+        WorkflowEdge(
+            run_id=run_id,
+            plan_revision=revision,
+            from_node_id=source.id,
+            to_node_id=target.id,
+        )
+        for source, target in pairwise(nodes)
+    )
+    return nodes, edges
+
+
+def legacy_assistant_workflow_plan(
     *,
     run_id: UUID,
     revision: int,
@@ -88,7 +154,12 @@ def apply_pending_assistant_steering(unit_of_work, run_id: UUID) -> bool:
         raise ValueError("Assistant Workflow has conflicting pending instructions")
     instruction = pending[0]
     next_revision = snapshot.run.active_plan_revision + 1
-    nodes, edges = assistant_workflow_plan(
+    planner = (
+        assistant_workflow_plan
+        if snapshot.run.engine_version >= ASSISTANT_WORKFLOW_ENGINE_VERSION
+        else legacy_assistant_workflow_plan
+    )
+    nodes, edges = planner(
         run_id=run_id,
         revision=next_revision,
         turn_id=UUID(snapshot.run.owner_id),
@@ -106,10 +177,20 @@ def apply_pending_assistant_steering(unit_of_work, run_id: UUID) -> bool:
 
 
 __all__ = [
+    "ASSISTANT_CONTINUATION_NODE_KINDS",
+    "ASSISTANT_LEGACY_WORKFLOW_ENGINE_VERSION",
+    "ASSISTANT_MODEL_ROUND_NODE_KIND",
+    "ASSISTANT_REQUEST_INTERPRET_NODE_KIND",
+    "ASSISTANT_RESPONSE_FINALIZE_NODE_KIND",
+    "ASSISTANT_RESPONSE_VERIFY_NODE_KIND",
+    "ASSISTANT_ROUTE_SELECT_NODE_KIND",
+    "ASSISTANT_TOOL_INVOKE_NODE_KIND",
+    "ASSISTANT_TOOL_JOIN_NODE_KIND",
     "ASSISTANT_WORKFLOW_ENGINE_VERSION",
     "ASSISTANT_WORKFLOW_NODE_KIND",
     "ASSISTANT_WORKFLOW_PREPARE_NODE_KIND",
     "apply_pending_assistant_steering",
     "assistant_workflow_node",
     "assistant_workflow_plan",
+    "legacy_assistant_workflow_plan",
 ]
