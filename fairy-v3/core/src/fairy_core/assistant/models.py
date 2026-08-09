@@ -506,6 +506,16 @@ class AssistantTurn:
             else AssistantTurnStatus.CREATED
         )
 
+    def reopen_routing_after_input(self) -> None:
+        if self.status is not AssistantTurnStatus.WAITING_FOR_INPUT:
+            raise InvalidTransitionError("Assistant Turn is not waiting for user input")
+        if self.budget_approval_run_id is not None:
+            raise InvalidTransitionError(
+                "Assistant Turn cannot reinterpret after budget approval started"
+            )
+        self.routing_decision = None
+        self.updated_at = _now()
+
     def resume(self) -> None:
         self._transition_to(AssistantTurnStatus.RUNNING)
 

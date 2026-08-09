@@ -6,7 +6,6 @@ from uuid import UUID
 
 from fairy_core.assistant.interpretation import (
     AssistantRequestInterpretationRevision,
-    InterpretationConfidence,
     InterpretationDisposition,
 )
 from fairy_core.assistant.models import (
@@ -295,17 +294,18 @@ class AssistantLedgerApplication:
                 normalized_goal=current.normalized_goal,
                 action=current.action,
                 objectives=current.objectives,
-                targets=tuple(dict.fromkeys((*current.targets, normalized_content[:1_000]))),
+                targets=current.targets,
                 constraints=tuple(
                     dict.fromkeys((*current.constraints, clarification_constraint))
                 ),
                 deliverable=current.deliverable,
                 evidence_requirements=current.evidence_requirements,
                 assumptions=current.assumptions,
-                missing_information=(),
-                confidence=InterpretationConfidence.HIGH,
-                disposition=InterpretationDisposition.READY,
-                public_summary=current.public_summary,
+                missing_information=current.missing_information,
+                confidence=current.confidence,
+                disposition=InterpretationDisposition.CLARIFICATION_REQUIRED,
+                public_summary="Clarification response received",
+                clarification_question=current.clarification_question,
             )
             unit_of_work.assistant.append_message(message)
             unit_of_work.assistant.append_interpretation(
@@ -318,6 +318,7 @@ class AssistantLedgerApplication:
                 next_revision,
                 expected_revision=expected_interpretation_revision,
             )
+            turn.reopen_routing_after_input()
             turn.resume_from_input()
             unit_of_work.assistant.update_turn(
                 turn,

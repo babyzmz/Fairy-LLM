@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fairy_core.assistant.candidates import ToolCandidate
 from fairy_core.assistant.evidence import EvidenceClassificationFailedError
+from fairy_core.assistant.interpretation import (
+    AssistantRequestInterpretationRevision,
+    InterpretationDisposition,
+)
 from fairy_core.assistant.models import AssistantTurn, MessageRole
 from fairy_core.assistant.routing import (
     EvidenceClassificationPayload,
@@ -35,6 +40,8 @@ from fairy_core.providers import (
     ProviderProtocolError,
 )
 
+_CLARIFICATION_CLASSIFIER_ROUND_BASE = 10_000
+
 
 def route_step_summary(decision: RoutingDecision) -> str:
     task_label = {
@@ -51,6 +58,15 @@ def route_step_summary(decision: RoutingDecision) -> str:
         return f"{task_label} task routed to {primary}"
     reviewer = MODEL_ALLOWLIST_BY_ID[decision.reviewer_model_id].display_name
     return f"{task_label} task routed to {primary}, reviewed by {reviewer}"
+
+
+@dataclass(frozen=True, slots=True)
+class RoutingClassifierInput:
+    user_request: str
+    source_message_id: UUID
+    catalog: ModelCatalogSnapshot
+    model_round: int
+    prior_interpretation: AssistantRequestInterpretationRevision | None = None
 
 
 def validate_router_attempt(deltas: tuple[ModelDelta, ...]) -> None:
@@ -75,7 +91,7 @@ class EvidenceRoutingRuntimeMixin:
         self,
         *,
         turn: AssistantTurn,
-        user_request: str,
+        classifier_input: RoutingClassifierInput,
         cancellation: CancellationToken,
     ) -> tuple[EvidenceClassificationPayload, CommandRun]:
         selection = turn.model_selection
@@ -89,17 +105,19 @@ class EvidenceRoutingRuntimeMixin:
             )
         _started_turn, run = self._start_model_round(
             turn.id,
-            1,
+            classifier_input.model_round,
             profile_id=profile.id,
             model_role=ModelExecutionRole.COORDINATOR,
         )
         try:
             request = build_manual_evidence_request(
                 profile_id=profile.id,
-                user_request=user_request,
-                source_message_id=self._routing_source_message(turn.id).id,
+                user_request=classifier_input.user_request,
+                source_message_id=classifier_input.source_message_id,
                 selection=selection,
                 use_structured_output=structured,
+                attachment_count=len(self._image_attachments.for_turn(turn.id)),
+                prior_interpretation=classifier_input.prior_interpretation,
             )
             chunks: list[str] = []
             candidates: dict[str, ToolCandidate] = {}
@@ -167,12 +185,23 @@ class EvidenceRoutingRuntimeMixin:
             self._fail_model_run(run, error_code="PROVIDER_ROUTING_FAILED")
             raise
 
-    def _routing_inputs(self, turn_id: UUID) -> tuple[str, ModelCatalogSnapshot]:
+    def _routing_inputs(self, turn_id: UUID) -> RoutingClassifierInput:
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
-            user_message = unit_of_work.assistant.message_for_turn(
+            interpretation = unit_of_work.assistant.get_interpretation(
                 turn.id,
-                MessageRole.USER,
+                turn.active_interpretation_revision,
+            )
+            refresh = (
+                interpretation is not None
+                and interpretation.revision > 1
+                and interpretation.disposition
+                is InterpretationDisposition.CLARIFICATION_REQUIRED
+            )
+            user_message = (
+                unit_of_work.assistant.get_message(interpretation.source_message_id)
+                if refresh and interpretation is not None
+                else unit_of_work.assistant.message_for_turn(turn.id, MessageRole.USER)
             )
             if user_message is None:
                 raise RuntimeError("Assistant Turn has no user message")
@@ -182,11 +211,22 @@ class EvidenceRoutingRuntimeMixin:
                 now=datetime.now(UTC),
                 credential_status=ProviderCredentialStatus.CONFIGURED,
             )
-        return user_message.content, catalog
+        return RoutingClassifierInput(
+            user_request=user_message.content,
+            source_message_id=user_message.id,
+            catalog=catalog,
+            model_round=(
+                _CLARIFICATION_CLASSIFIER_ROUND_BASE + interpretation.revision
+                if refresh and interpretation
+                else 1
+            ),
+            prior_interpretation=interpretation if refresh else None,
+        )
 
 
 __all__ = [
     "EvidenceRoutingRuntimeMixin",
+    "RoutingClassifierInput",
     "route_step_summary",
     "validate_router_attempt",
 ]

@@ -83,6 +83,46 @@ def _clarification_classification(profile_id: str) -> tuple[ModelDelta, ...]:
     )
 
 
+def _resolved_clarification_classification(
+    profile_id: str,
+    target: str,
+) -> tuple[ModelDelta, ...]:
+    return (
+        ModelDelta.text(
+            profile_id=profile_id,
+            sequence=1,
+            text=json.dumps(
+                {
+                    "evidence_requirements": [],
+                    "requires_workspace_changes": False,
+                    "public_summary": "The durable change target is resolved.",
+                    "interpretation": {
+                        "normalized_goal": f"Update {target}.",
+                        "action": "change",
+                        "objectives": [
+                            {
+                                "goal": f"Update {target}.",
+                                "action": "change",
+                                "depends_on": [],
+                            }
+                        ],
+                        "targets": [target],
+                        "constraints": [],
+                        "deliverable": "Updated project file",
+                        "assumptions": [],
+                        "missing_information": [],
+                        "confidence": "high",
+                        "disposition": "ready",
+                        "public_summary": f"Update {target}.",
+                        "clarification_question": None,
+                    },
+                }
+            ),
+        ),
+        ModelDelta.done(profile_id=profile_id, sequence=2, finish_reason="stop"),
+    )
+
+
 def _wait_for_workflow(service, turn_id: str, status: str) -> dict[str, object]:
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
@@ -178,40 +218,9 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
     profile_id = "openrouter-qwen-free"
     provider = ScriptedProvider(
         [
-            (
-                ModelDelta.text(
-                    profile_id=profile_id,
-                    sequence=1,
-                    text=json.dumps(
-                        {
-                            "evidence_requirements": [],
-                            "requires_workspace_changes": False,
-                            "public_summary": "Clarify the durable change target.",
-                            "interpretation": {
-                                "normalized_goal": "Update the requested project file.",
-                                "action": "change",
-                                "objectives": [
-                                    {
-                                        "goal": "Update the requested project file.",
-                                        "action": "change",
-                                        "depends_on": [],
-                                    }
-                                ],
-                                "targets": [],
-                                "constraints": [],
-                                "deliverable": "Updated project file",
-                                "assumptions": [],
-                                "missing_information": ["target file"],
-                                "confidence": "low",
-                                "disposition": "clarification_required",
-                                "public_summary": "The target file is missing.",
-                                "clarification_question": "Which file should Fairy update?",
-                            },
-                        }
-                    ),
-                ),
-                ModelDelta.done(profile_id=profile_id, sequence=2, finish_reason="stop"),
-            ),
+            _clarification_classification(profile_id),
+            _clarification_classification(profile_id),
+            _resolved_clarification_classification(profile_id, "src/app.ts"),
             (
                 ModelDelta.text(
                     profile_id=profile_id,
@@ -277,7 +286,7 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
         )
         response = {
             "turn_id": turn["id"],
-            "content": "Update src/app.ts.",
+            "content": "Maybe the app file.",
             "expected_interpretation_revision": 1,
             "idempotency_key": "clarification:target",
         }
@@ -299,6 +308,23 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
                 "assistant.turns.respond",
                 {**response, "content": "Update a different file."},
             )
+        wait_for_turn(service, turn["id"], status="waiting_for_input")
+        repeated = service.invoke(
+            "assistant.turns.interpretation.get",
+            {"turn_id": turn["id"]},
+        )
+        assert repeated["revision"] == 3
+        assert repeated["disposition"] == "clarification_required"
+
+        service.invoke(
+            "assistant.turns.respond",
+            {
+                "turn_id": turn["id"],
+                "content": "Update src/app.ts.",
+                "expected_interpretation_revision": 3,
+                "idempotency_key": "clarification:resolved-target",
+            },
+        )
         completed = wait_for_turn(service, turn["id"])
         messages = service.invoke(
             "messages.list",
@@ -319,14 +345,24 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
             for event in waiting_events
         )
         assert resumed["id"] == turn["id"] == replayed["id"]
-        assert completed["active_interpretation_revision"] == 2
+        assert completed["active_interpretation_revision"] == 5
         assert completed["interpretation_summary"]["disposition"] == "ready"
         assert [(message["role"], message["content"]) for message in messages] == [
             ("user", "Update it"),
+            ("user", "Maybe the app file."),
             ("user", "Update src/app.ts."),
             ("assistant", "Updated the clarified target."),
         ]
-        assert len(provider.requests) == 2
+        assert len(provider.requests) == 4
+        assert "PRIOR_INTERPRETATION" in provider.requests[1].messages[0].content
+        clarification_payload = json.loads(provider.requests[1].messages[-1].content)
+        assert "".join(
+            segment["text"] for segment in clarification_payload["segments"]
+        ) == "Maybe the app file."
+        resolved_payload = json.loads(provider.requests[2].messages[-1].content)
+        assert "".join(
+            segment["text"] for segment in resolved_payload["segments"]
+        ) == "Update src/app.ts."
     finally:
         service.close()
 
@@ -382,6 +418,7 @@ def test_clarification_wait_survives_core_restart(tmp_path: Path) -> None:
 
     second_provider = ScriptedProvider(
         [
+            _resolved_clarification_classification(profile_id, "src/app.ts"),
             (
                 ModelDelta.text(
                     profile_id=profile_id,
@@ -422,7 +459,7 @@ def test_clarification_wait_survives_core_restart(tmp_path: Path) -> None:
         completed = wait_for_turn(second_service, turn["id"])
 
         assert completed["status"] == "completed"
-        assert completed["active_interpretation_revision"] == 2
-        assert len(second_provider.requests) == 1
+        assert completed["active_interpretation_revision"] == 3
+        assert len(second_provider.requests) == 2
     finally:
         second_service.close()

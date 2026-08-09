@@ -76,8 +76,7 @@ class AssistantPreparationMixin:
         decision = self._ensure_routing(turn, cancellation)
         if decision is None:
             self._ensure_unrouted_interpretation(turn_id)
-        elif decision.approval_required and turn.budget_approval_run_id is None:
-            return self._request_budget_approval(turn_id, decision)
+        waiting_for_input = False
         with self._unit_of_work_factory() as unit_of_work:
             prepared = require_turn(unit_of_work, turn_id)
             interpretation = unit_of_work.assistant.get_interpretation(
@@ -112,7 +111,17 @@ class AssistantPreparationMixin:
                     task_id=prepared.task_id,
                 )
                 unit_of_work.commit()
-        return self._turns.get(turn_id)
+                waiting_for_input = True
+        if waiting_for_input:
+            return self._turns.get(turn_id)
+        turn = self._turns.get(turn_id)
+        if (
+            decision is not None
+            and decision.approval_required
+            and turn.budget_approval_run_id is None
+        ):
+            return self._request_budget_approval(turn_id, decision)
+        return turn
 
 
 __all__ = ["AssistantPreparationMixin"]
