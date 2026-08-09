@@ -7,6 +7,7 @@ from pathlib import Path
 from fairy_core.assistant.routing import (
     DEEPSEEK_MODEL_ID,
     GLM_MODEL_ID,
+    IMAGE_MODEL_ID,
     KIMI_MODEL_ID,
     QWEN_FREE_MODEL_ID,
     RoutingTaskKind,
@@ -349,7 +350,26 @@ def test_paid_model_budget_approval_emits_started_message_without_worker_lease(
     deepseek = _provider(
         profile_id="openrouter-deepseek-v4-pro",
         model_id=DEEPSEEK_MODEL_ID,
-        rounds=[],
+        rounds=[
+            (
+                ModelDelta.text(
+                    profile_id="openrouter-deepseek-v4-pro",
+                    sequence=1,
+                    text=json.dumps(
+                        {
+                            "evidence_requirements": [],
+                            "requires_workspace_changes": False,
+                            "public_summary": "Explain the request.",
+                        }
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="openrouter-deepseek-v4-pro",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            )
+        ],
     )
     service = build_local_service(
         tmp_path,
@@ -389,7 +409,8 @@ def test_paid_model_budget_approval_emits_started_message_without_worker_lease(
             and event["payload"].get("turn_id") == turn["id"]
             for event in events
         )
-        assert deepseek.requests == []
+        assert len(deepseek.requests) == 1
+        assert deepseek.requests[0].model_role is ModelExecutionRole.COORDINATOR
     finally:
         service.close()
 
@@ -473,6 +494,90 @@ def test_manual_model_classifies_evidence_and_rejects_uncited_plain_text(
         direct_answer_tool = qwen.requests[1].tools[0]
         assert direct_answer_tool.name == "direct_answer"
         assert "evidence_receipt_ids" in direct_answer_tool.input_schema["required"]
+    finally:
+        service.close()
+
+
+def test_manual_media_is_interpreted_before_generation(tmp_path: Path) -> None:
+    deepseek = _provider(
+        profile_id="openrouter-deepseek-v4-pro",
+        model_id=DEEPSEEK_MODEL_ID,
+        rounds=[
+            (
+                ModelDelta.text(
+                    profile_id="openrouter-deepseek-v4-pro",
+                    sequence=1,
+                    text=json.dumps(
+                        {
+                            "evidence_requirements": [],
+                            "requires_workspace_changes": False,
+                            "public_summary": "Clarify the requested image.",
+                            "interpretation": {
+                                "normalized_goal": "Generate an unspecified image",
+                                "action": "generate",
+                                "objectives": [
+                                    {
+                                        "goal": "Generate an unspecified image",
+                                        "action": "generate",
+                                    }
+                                ],
+                                "targets": [],
+                                "constraints": [],
+                                "deliverable": None,
+                                "assumptions": [],
+                                "missing_information": [],
+                                "confidence": "low",
+                                "disposition": "ready",
+                                "public_summary": "Clarify the requested image.",
+                                "clarification_question": None,
+                            },
+                        }
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="openrouter-deepseek-v4-pro",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            )
+        ],
+    )
+    image = _provider(
+        profile_id="openrouter-gemini-image",
+        model_id=IMAGE_MODEL_ID,
+        rounds=[],
+    )
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((deepseek, image)),
+        model_catalog_source=PricedCatalogSource(),
+    )
+    try:
+        service.invoke("models.catalog.refresh", {})
+        service.invoke(
+            "models.selection.update",
+            {
+                "mode": "manual",
+                "model_id": IMAGE_MODEL_ID,
+                "allow_free_fallback": False,
+                "zero_data_retention": False,
+                "expected_revision": 0,
+                "idempotency_key": "manual-image-selection",
+            },
+        )
+        task = _task(service, "Make it")
+        turn = _auto_turn(service, task, "turn:manual-image-clarification")
+
+        waiting = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+
+        assert waiting["status"] == "waiting_for_input"
+        assert waiting["interpretation_summary"]["action"] == "generate"
+        assert (
+            waiting["interpretation_summary"]["disposition"]
+            == "clarification_required"
+        )
+        assert len(deepseek.requests) == 1
+        assert image.requests == []
     finally:
         service.close()
 

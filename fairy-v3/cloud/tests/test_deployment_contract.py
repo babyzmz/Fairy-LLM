@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260808_0052"]
+    assert scripts.get_heads() == ["20260809_0053"]
+    assert scripts.get_revision("20260809_0053").down_revision == "20260808_0052"
     assert scripts.get_revision("20260807_0050").down_revision == "20260807_0049"
     assert scripts.get_revision("20260807_0049").down_revision == "20260807_0048"
     assert scripts.get_revision("20260807_0048").down_revision == "20260807_0047"
@@ -299,6 +300,27 @@ def test_assistant_schedule_operation_mode_migration_is_reversible() -> None:
 
     downgrade_ddl = " ".join(output.getvalue().upper().split())
     assert "DROP COLUMN OPERATION_MODE" in downgrade_ddl
+
+
+def test_assistant_schedule_interpretation_migration_is_reversible() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260808_0052:20260809_0053", sql=True)
+
+    upgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert "ADD COLUMN INTERPRETATION_ACTION VARCHAR(32)" in upgrade_ddl
+    assert "ADD COLUMN INTERPRETATION_SUMMARY VARCHAR(240)" in upgrade_ddl
+    assert "ADD COLUMN INSTRUCTION_SHA256 VARCHAR(64)" in upgrade_ddl
+    assert "CK_CORE_ASSISTANT_SCHEDULES_INTERPRETATION_PAIR" in upgrade_ddl
+
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260809_0053:20260808_0052", sql=True)
+
+    downgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert "DROP COLUMN INSTRUCTION_SHA256" in downgrade_ddl
+    assert "DROP COLUMN INTERPRETATION_SUMMARY" in downgrade_ddl
+    assert "DROP COLUMN INTERPRETATION_ACTION" in downgrade_ddl
 
 
 def test_media_generation_work_migration_has_reversible_fenced_tenant_ddl() -> None:

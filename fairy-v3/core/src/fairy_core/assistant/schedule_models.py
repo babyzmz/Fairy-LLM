@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
+from fairy_core.assistant.interpretation import RequestAction
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.contracts.common import ExecutionTarget
 from fairy_core.domain.ids import new_id
@@ -98,6 +99,9 @@ class AssistantSchedule:
     paused_at: datetime | None = None
     completed_at: datetime | None = None
     cancelled_at: datetime | None = None
+    interpretation_action: RequestAction | None = None
+    interpretation_summary: str | None = None
+    instruction_sha256: str | None = None
 
     def __post_init__(self) -> None:
         instruction = self.instruction.strip()
@@ -129,6 +133,19 @@ class AssistantSchedule:
             raise ValueError("Completed Assistant schedule requires completed_at")
         if self.status is AssistantScheduleStatus.CANCELLED and self.cancelled_at is None:
             raise ValueError("Cancelled Assistant schedule requires cancelled_at")
+        if (self.interpretation_action is None) != (self.interpretation_summary is None):
+            raise ValueError("Assistant schedule interpretation fields must be paired")
+        if (self.interpretation_action is None) != (self.instruction_sha256 is None):
+            raise ValueError("Assistant schedule interpretation digest must be paired")
+        if self.interpretation_summary is not None and (
+            not self.interpretation_summary.strip() or len(self.interpretation_summary) > 240
+        ):
+            raise ValueError("Assistant schedule interpretation summary is invalid")
+        if self.instruction_sha256 is not None and (
+            len(self.instruction_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.instruction_sha256)
+        ):
+            raise ValueError("Assistant schedule instruction digest is invalid")
         for name in (
             "next_fire_at",
             "created_at",
@@ -167,6 +184,9 @@ class AssistantSchedule:
         task_id: UUID | None = None,
         project_id: UUID | None = None,
         version_id: UUID | None = None,
+        interpretation_action: RequestAction | None = None,
+        interpretation_summary: str | None = None,
+        instruction_sha256: str | None = None,
         now: datetime | None = None,
     ) -> AssistantSchedule:
         created_at = now or datetime.now(UTC)
@@ -198,6 +218,9 @@ class AssistantSchedule:
             attention_code=None,
             created_at=created_at,
             updated_at=created_at,
+            interpretation_action=interpretation_action,
+            interpretation_summary=interpretation_summary,
+            instruction_sha256=instruction_sha256,
         )
 
     def pause(self, *, now: datetime, attention_code: str | None = None) -> AssistantSchedule:

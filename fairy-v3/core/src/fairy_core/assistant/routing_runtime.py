@@ -53,7 +53,6 @@ from fairy_core.model_catalog.models import (
     MODEL_ALLOWLIST_BY_ID,
     ModelAvailability,
     ModelCatalogSnapshot,
-    ModelEndpointKind,
     ModelSelectionMode,
     ModelSelectionSnapshot,
 )
@@ -135,7 +134,6 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
             return decision
         classifier_input = self._routing_inputs(turn.id)
         if turn.model_selection.mode is ModelSelectionMode.MANUAL:
-            selected = MODEL_ALLOWLIST_BY_ID.get(turn.model_selection.model_id or "")
             preliminary = manual_routing_decision(
                 selection=turn.model_selection,
                 catalog=classifier_input.catalog,
@@ -143,17 +141,11 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
             )
             self._require_available_route(preliminary, classifier_input.catalog)
             self._require_selection_compatibility(turn.model_selection, preliminary)
-            if preliminary.approval_required:
-                self._bind_routing(turn.id, preliminary)
-                return preliminary
-            evidence = None
-            route_run = None
-            if selected is not None and selected.endpoint_kind is ModelEndpointKind.CHAT:
-                evidence, route_run = self._run_manual_evidence_classifier(
-                    turn=turn,
-                    classifier_input=classifier_input,
-                    cancellation=cancellation,
-                )
+            evidence, route_run = self._run_manual_evidence_classifier(
+                turn=turn,
+                classifier_input=classifier_input,
+                cancellation=cancellation,
+            )
             decision = manual_routing_decision(
                 selection=turn.model_selection,
                 catalog=classifier_input.catalog,

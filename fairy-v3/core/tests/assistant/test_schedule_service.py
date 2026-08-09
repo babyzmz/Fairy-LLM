@@ -6,6 +6,8 @@ from pathlib import Path
 from threading import Event
 from uuid import UUID
 
+import pytest
+
 from fairy_core.assistant.schedule_models import AssistantOccurrenceStatus
 from fairy_core.providers import CancellationToken, ModelDelta, ModelRequest, ProviderRegistry
 from fairy_core.transports.stdio import build_local_service
@@ -69,6 +71,9 @@ def test_run_now_creates_one_normal_message_turn_and_workflow(tmp_path: Path) ->
                 "idempotency_key": "schedule:service:one",
             },
         )
+        assert schedule["interpretation_action"] == "answer"
+        assert schedule["interpretation_summary"] == "Report the scheduled status"
+        assert len(schedule["instruction_sha256"]) == 64
         assert (
             service.invoke(
                 "messages.list",
@@ -113,6 +118,35 @@ def test_run_now_creates_one_normal_message_turn_and_workflow(tmp_path: Path) ->
         )
         assert replay["id"] == occurrence["id"]
         assert len(provider.requests) == 1
+    finally:
+        service.close()
+
+
+def test_schedule_authoring_rejects_literal_only_or_vague_instructions(
+    tmp_path: Path,
+) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        task = _scratch_task(service, "Prepare schedule validation")
+        base = {
+            "conversation_id": task["conversation_id"],
+            "operation_mode": "answer",
+            "trigger_kind": "daily",
+            "trigger_rule": {"local_time": "09:00"},
+            "timezone": "Australia/Sydney",
+            "next_fire_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            "profile_id": "local-default",
+        }
+        for index, instruction in enumerate(('"run the deployment"', "handle this")):
+            with pytest.raises(ValueError, match="explicit task or outcome"):
+                service.invoke(
+                    "assistant.schedules.create",
+                    {
+                        **base,
+                        "instruction": instruction,
+                        "idempotency_key": f"schedule:ambiguous:{index}",
+                    },
+                )
     finally:
         service.close()
 

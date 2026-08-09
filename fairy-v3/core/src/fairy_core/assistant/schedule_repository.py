@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import and_, exists, insert, or_, select, update
 from sqlalchemy.engine import Connection
 
+from fairy_core.assistant.interpretation import RequestAction
 from fairy_core.assistant.schedule_models import (
     AssistantOccurrenceStatus,
     AssistantSchedule,
@@ -541,6 +542,13 @@ def _schedule_record(tenant_id: str, schedule: AssistantSchedule) -> dict[str, o
         "workspace_id": str(schedule.workspace_id),
         "version_id": str(schedule.version_id) if schedule.version_id else None,
         "instruction": schedule.instruction,
+        "interpretation_action": (
+            schedule.interpretation_action.value
+            if schedule.interpretation_action is not None
+            else None
+        ),
+        "interpretation_summary": schedule.interpretation_summary,
+        "instruction_sha256": schedule.instruction_sha256,
         "operation_mode": schedule.operation_mode.value,
         "trigger_kind": schedule.trigger_kind.value,
         "trigger_rule": dict(schedule.trigger_rule),
@@ -577,6 +585,21 @@ def _schedule_from_row(row: Mapping[str, Any]) -> AssistantSchedule:
         workspace_id=UUID(str(row["workspace_id"])),
         version_id=_uuid(row["version_id"]),
         instruction=str(row["instruction"]),
+        interpretation_action=(
+            RequestAction(str(row["interpretation_action"]))
+            if row["interpretation_action"] is not None
+            else None
+        ),
+        interpretation_summary=(
+            str(row["interpretation_summary"])
+            if row["interpretation_summary"] is not None
+            else None
+        ),
+        instruction_sha256=(
+            str(row["instruction_sha256"])
+            if row["instruction_sha256"] is not None
+            else None
+        ),
         operation_mode=OperationMode(str(row["operation_mode"])),
         trigger_kind=AssistantScheduleTriggerKind(str(row["trigger_kind"])),
         trigger_rule=dict(row["trigger_rule"]),

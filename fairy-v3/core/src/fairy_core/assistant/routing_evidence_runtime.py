@@ -14,6 +14,7 @@ from fairy_core.assistant.interpretation import (
 )
 from fairy_core.assistant.models import AssistantTurn, MessageRole
 from fairy_core.assistant.routing import (
+    DEEPSEEK_MODEL_ID,
     EvidenceClassificationPayload,
     RoutingDecision,
     RoutingTaskKind,
@@ -28,6 +29,7 @@ from fairy_core.mcp.ports import McpCancelledError
 from fairy_core.model_catalog.models import (
     MODEL_ALLOWLIST_BY_ID,
     ModelCatalogSnapshot,
+    ModelEndpointKind,
     ModelSelectionMode,
     ProviderCredentialStatus,
     baseline_catalog,
@@ -99,7 +101,17 @@ class EvidenceRoutingRuntimeMixin:
         selection = turn.model_selection
         if selection is None or selection.mode is not ModelSelectionMode.MANUAL:
             raise ValueError("manual evidence classifier requires Manual selection")
-        profile = self._providers.profile_for_model(selection.model_id or "")
+        selected = MODEL_ALLOWLIST_BY_ID.get(selection.model_id or "")
+        if selected is None:
+            raise EvidenceClassificationFailedError(
+                "selected model cannot be interpreted"
+            )
+        classifier_model_id = (
+            selection.model_id
+            if selected.endpoint_kind is ModelEndpointKind.CHAT
+            else DEEPSEEK_MODEL_ID
+        )
+        profile = self._providers.profile_for_model(classifier_model_id or "")
         structured = ProviderCapability.STRUCTURED_OUTPUT in profile.capabilities
         if not structured and ProviderCapability.TOOLS not in profile.capabilities:
             raise EvidenceClassificationFailedError(

@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
+from fairy_core.assistant.schedule_interpretation import interpret_scheduled_instruction
 from fairy_core.assistant.schedule_models import (
     AssistantSchedule,
     AssistantScheduleOccurrence,
@@ -39,6 +40,7 @@ class AssistantScheduleApplication:
         model_selection: ModelSelectionSnapshot | None,
     ) -> AssistantSchedule:
         now = datetime.now(UTC)
+        interpretation = interpret_scheduled_instruction(request.instruction)
         with self._unit_of_work_factory() as unit_of_work:
             conversation = unit_of_work.state.get_conversation(request.conversation_id)
             if conversation is None or conversation.workspace_id is None:
@@ -60,6 +62,9 @@ class AssistantScheduleApplication:
                 model_selection=model_selection,
                 timeline_sequence=unit_of_work.assistant.next_message_sequence(conversation.id),
                 idempotency_key=request.idempotency_key,
+                interpretation_action=interpretation.action,
+                interpretation_summary=interpretation.public_summary,
+                instruction_sha256=interpretation.instruction_sha256,
                 now=now,
             )
             validate_schedule_rule(schedule)
@@ -95,6 +100,7 @@ class AssistantScheduleApplication:
                 AssistantScheduleStatus.CANCELLED,
             }:
                 raise ValueError("Terminal Assistant schedule cannot be edited")
+            interpretation = interpret_scheduled_instruction(request.instruction)
             changed = replace(
                 current,
                 instruction=request.instruction,
@@ -106,6 +112,9 @@ class AssistantScheduleApplication:
                 active_revision=current.active_revision + 1,
                 attention_code=None,
                 updated_at=now,
+                interpretation_action=interpretation.action,
+                interpretation_summary=interpretation.public_summary,
+                instruction_sha256=interpretation.instruction_sha256,
             )
             validate_schedule_rule(changed)
             persisted = unit_of_work.assistant_schedules.save(

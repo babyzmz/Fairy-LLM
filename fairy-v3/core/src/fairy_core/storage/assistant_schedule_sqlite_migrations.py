@@ -6,6 +6,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 _REVISION = "20260807_assistant_schedule_operation_mode"
+_INTERPRETATION_REVISION = "20260809_assistant_schedule_interpretation"
 
 
 def migrate_assistant_schedule_operation_mode(engine: Engine) -> None:
@@ -58,4 +59,48 @@ def migrate_assistant_schedule_operation_mode(engine: Engine) -> None:
         )
 
 
-__all__ = ["migrate_assistant_schedule_operation_mode"]
+def migrate_assistant_schedule_interpretation(engine: Engine) -> None:
+    """Add the bounded authoring interpretation to existing local schedules."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _INTERPRETATION_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_assistant_schedules" in tables:
+            columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("core_assistant_schedules")
+            }
+            additions = {
+                "interpretation_action": "VARCHAR(32)",
+                "interpretation_summary": "VARCHAR(240)",
+                "instruction_sha256": "VARCHAR(64)",
+            }
+            for name, kind in additions.items():
+                if name not in columns:
+                    connection.exec_driver_sql(
+                        f'ALTER TABLE "core_assistant_schedules" ADD COLUMN "{name}" {kind}'
+                    )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _INTERPRETATION_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+__all__ = [
+    "migrate_assistant_schedule_interpretation",
+    "migrate_assistant_schedule_operation_mode",
+]

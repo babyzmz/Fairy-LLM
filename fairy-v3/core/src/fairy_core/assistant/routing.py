@@ -638,7 +638,10 @@ def manual_routing_decision(
             approval_required=approval_required,
             requires_workspace_changes=False,
             public_summary=(f"DeepSeek will prepare the specification for {allowed.display_name}."),
-            evidence_requirements=(),
+            evidence_requirements=(
+                evidence.evidence_requirements if evidence is not None else ()
+            ),
+            evidence_classified=evidence is not None,
         )
     task_kind = (
         RoutingTaskKind.CODE

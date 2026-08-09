@@ -44,6 +44,9 @@ def build_assistant_schedule_schema(
         Column("workspace_id", String(ID_LENGTH), nullable=False),
         Column("version_id", String(ID_LENGTH)),
         Column("instruction", Text, nullable=False),
+        Column("interpretation_action", String(32)),
+        Column("interpretation_summary", String(240)),
+        Column("instruction_sha256", String(64)),
         Column("operation_mode", String(32), nullable=False),
         Column("trigger_kind", String(32), nullable=False),
         Column("trigger_rule", JSON, nullable=False),
@@ -83,6 +86,17 @@ def build_assistant_schedule_schema(
         CheckConstraint(
             "trigger_kind IN ('once','daily','weekdays','weekly','interval')",
             name="ck_core_assistant_schedules_trigger",
+        ),
+        CheckConstraint(
+            "(interpretation_action IS NULL) = (interpretation_summary IS NULL) "
+            "AND (interpretation_action IS NULL) = (instruction_sha256 IS NULL)",
+            name="ck_core_assistant_schedules_interpretation_pair",
+        ),
+        CheckConstraint(
+            "interpretation_action IS NULL OR interpretation_action IN "
+            "('answer','explain','review','change','create','run','browse','generate',"
+            "'schedule','manage')",
+            name="ck_core_assistant_schedules_interpretation_action",
         ),
         CheckConstraint(
             "operation_mode IN ('answer','continue_current_chat_draft','create_new_version')",

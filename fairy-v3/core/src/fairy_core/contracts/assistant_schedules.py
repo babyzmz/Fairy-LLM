@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import Field, model_validator
 
+from fairy_core.assistant.interpretation import RequestAction
 from fairy_core.assistant.models import AssistantTurnStatus
 from fairy_core.assistant.schedule_models import (
     AssistantOccurrenceStatus,
@@ -117,6 +118,9 @@ class AssistantScheduleModel(ContractModel):
     workspace_id: UUID
     version_id: UUID | None
     instruction: str
+    interpretation_action: RequestAction | None
+    interpretation_summary: str | None
+    instruction_sha256: str | None
     operation_mode: OperationMode
     trigger_kind: AssistantScheduleTriggerKind
     trigger_rule: dict[str, JsonValue]
