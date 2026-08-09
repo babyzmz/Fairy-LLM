@@ -323,6 +323,22 @@ def test_assistant_schedule_interpretation_migration_is_reversible() -> None:
     assert "DROP COLUMN INTERPRETATION_ACTION" in downgrade_ddl
 
 
+def test_waiting_for_input_downgrade_blocks_active_clarification_work() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260808_0052:20260808_0051", sql=True)
+
+    downgrade_ddl = " ".join(output.getvalue().upper().split())
+    guard = (
+        "CANNOT DOWNGRADE WHILE ASSISTANT CLARIFICATION WORK IS WAITING_FOR_INPUT"
+    )
+    assert guard in downgrade_ddl
+    assert downgrade_ddl.index(guard) < downgrade_ddl.index(
+        "CK_CORE_ASSISTANT_TURNS_STATUS"
+    )
+
+
 def test_media_generation_work_migration_has_reversible_fenced_tenant_ddl() -> None:
     output = io.StringIO()
     config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)

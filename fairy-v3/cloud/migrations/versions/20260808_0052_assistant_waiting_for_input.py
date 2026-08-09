@@ -57,6 +57,24 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM core_assistant_turns WHERE status = 'waiting_for_input'
+          ) OR EXISTS (
+            SELECT 1 FROM core_workflow_runs WHERE status = 'waiting_for_input'
+          ) OR EXISTS (
+            SELECT 1 FROM core_workflow_nodes WHERE status = 'waiting_for_input'
+          ) THEN
+            RAISE EXCEPTION
+              'cannot downgrade while Assistant clarification work is waiting_for_input';
+          END IF;
+        END
+        $$
+        """
+    )
     _replace_check(
         "core_assistant_turns",
         "ck_core_assistant_turns_status",
