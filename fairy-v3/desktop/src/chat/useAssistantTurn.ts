@@ -47,6 +47,7 @@ export interface OptimisticUserMessage {
 interface UseAssistantTurnOptions {
   client: AssistantTurnClient;
   conversationId: string | null;
+  persistedTurnId?: string | null;
   profileId?: string | null;
   modelSelection?: ModelSelectionPreference | null;
   operationMode: TaskCreateInput["operation_mode"];
@@ -116,6 +117,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
   const busyRef = useRef(false);
   const turnRef = useRef<AssistantTurn | null>(null);
   const conversationRef = useRef(options.conversationId);
+  const hydratedTurnRef = useRef<string | null>(null);
   const statusEventCursorRef = useRef(0);
   const pendingDraftRef = useRef<AssistantDraft | null>(null);
 
@@ -134,6 +136,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     ++operationRef.current;
     busyRef.current = false;
     statusEventCursorRef.current = 0;
+    hydratedTurnRef.current = null;
     pendingDraftRef.current = null;
     setStateConversationId(options.conversationId);
     commitTurn(null);
@@ -141,6 +144,40 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     setError(null);
     setPendingUserMessage(null);
   }, [commitTurn, options.conversationId]);
+
+  useEffect(() => {
+    const conversationId = options.conversationId;
+    const persistedTurnId = options.persistedTurnId ?? null;
+    if (conversationId === null || persistedTurnId === null || turnRef.current !== null) return;
+    const hydrationKey = `${conversationId}:${persistedTurnId}`;
+    if (hydratedTurnRef.current === hydrationKey) return;
+    hydratedTurnRef.current = hydrationKey;
+    const operation = operationRef.current;
+    void options.client.assistant.turns
+      .get(persistedTurnId)
+      .then((current) => {
+        if (
+          operation !== operationRef.current ||
+          conversationRef.current !== conversationId ||
+          current.conversation_id !== conversationId ||
+          isTerminal(current)
+        ) {
+          return;
+        }
+        commitTurn(current);
+        const active = isActive(current);
+        busyRef.current = active;
+        setIsBusy(active);
+      })
+      .catch((caught) => {
+        if (
+          operation === operationRef.current &&
+          conversationRef.current === conversationId
+        ) {
+          setError(errorMessage(caught));
+        }
+      });
+  }, [commitTurn, options.client.assistant.turns, options.conversationId, options.persistedTurnId]);
 
   const executeDraft = useCallback(
     async (draft: AssistantDraft, conversationOverride?: string) => {

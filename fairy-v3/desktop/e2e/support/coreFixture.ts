@@ -477,6 +477,64 @@ async function installCoreFixture(page: Page) {
         status: "waiting_for_tool",
         completed_at: null,
       };
+      let clarificationActive = fixtureParams.get("clarification") === "1";
+      let clarificationRevision = 1;
+      const clarificationTurn = () => ({
+        ...completedTurn,
+        status: "waiting_for_input",
+        completed_at: null,
+        active_interpretation_revision: clarificationRevision,
+        interpretation_summary: {
+          id: clarificationRevision === 1
+            ? "0198f4de-0114-7000-8000-000000000090"
+            : "0198f4de-0114-7000-8000-000000000091",
+          turn_id: id.turn,
+          revision: clarificationRevision,
+          source_message_id: id.message,
+          source_message_sha256: "a".repeat(64),
+          schema_version: 1,
+          normalized_goal: "Update the requested workspace file",
+          action: "change",
+          objectives: [{
+            goal: "Update the requested workspace file",
+            action: "change",
+            depends_on: [],
+          }],
+          targets: clarificationRevision === 1 ? [] : ["src/main.ts"],
+          constraints: [],
+          deliverable: "Updated workspace file",
+          evidence_requirements: [],
+          assumptions: [],
+          missing_information: clarificationRevision === 1
+            ? ["target file"]
+            : ["requested behavior"],
+          confidence: "low",
+          disposition: "clarification_required",
+          public_summary: clarificationRevision === 1
+            ? "The target file is missing."
+            : "The requested behavior is missing.",
+          clarification_question: clarificationRevision === 1
+            ? "Which file should Fairy update?"
+            : "What should change in src/main.ts?",
+          created_at: timestamp,
+        },
+        workflow_summary: {
+          run_id: "0198f4de-0114-7000-8000-000000000092",
+          status: "waiting_for_input",
+          budget_tier: "normal",
+          active_plan_revision: clarificationRevision,
+          current_phase: "Clarification",
+          public_summary: "Waiting for one required detail",
+          completed_nodes: 0,
+          total_nodes: 7,
+          model_rounds_used: 0,
+          max_model_rounds: 12,
+          tool_invocations_used: 0,
+          max_tool_invocations: 32,
+          pause_requested: false,
+          updated_at: timestamp,
+        },
+      });
       const pendingApproval = {
         id: id.approval,
         task_id: id.scratchTask,
@@ -3026,7 +3084,52 @@ async function installCoreFixture(page: Page) {
                                                       };
                                                     })()
                                                   : request.method ===
-                                                      "assistant.turns.create"
+                                                    "assistant.turns.get"
+                                                  ? clarificationActive
+                                                    ? clarificationTurn()
+                                                    : completedTurn
+                                                  : request.method ===
+                                                      "assistant.turns.respond"
+                                                    ? (() => {
+                                                        if (!clarificationActive) {
+                                                          throw new Error(
+                                                            "Clarification is no longer active",
+                                                          );
+                                                        }
+                                                        if (
+                                                          request.params
+                                                            .expected_interpretation_revision !==
+                                                          clarificationRevision
+                                                        ) {
+                                                          throw new Error(
+                                                            "Clarification revision conflict",
+                                                          );
+                                                        }
+                                                        const content = String(
+                                                          request.params.content ?? "",
+                                                        );
+                                                        if (!content.trim()) {
+                                                          throw new Error(
+                                                            "Clarification cannot be empty",
+                                                          );
+                                                        }
+                                                        if (clarificationRevision === 1) {
+                                                          clarificationRevision = 2;
+                                                          return clarificationTurn();
+                                                        }
+                                                        clarificationActive = false;
+                                                        messages = [
+                                                          ...messages,
+                                                          {
+                                                            ...resumedMessage,
+                                                            content:
+                                                              "Clarification completed without creating another turn",
+                                                          },
+                                                        ];
+                                                        return completedTurn;
+                                                      })()
+                                                    : request.method ===
+                                                        "assistant.turns.create"
                                                     ? (() => {
                                                         messages = [
                                                           ...messages,

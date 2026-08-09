@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
-import type { EventEnvelope, Task } from "../core/client";
+import type { EventEnvelope, Message, Task } from "../core/client";
 import { runResilientEventDelivery } from "../core/eventStream";
 import {
   selectedProfileId as profileIdForSelection,
@@ -169,6 +169,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     staleTime: messageCacheStaleTime,
   });
   const messageItems = messagesQuery.data?.items ?? [];
+  const persistedChatTurnId = latestPersistedTurnId(messageItems);
   const messages = messageItems.filter(
     (message) => developerMode || message.visibility === "user",
   );
@@ -196,6 +197,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     staleTime: messageCacheStaleTime,
   });
   const projectMessageItems = projectMessagesQuery.data?.items ?? [];
+  const persistedProjectTurnId = latestPersistedTurnId(projectMessageItems);
   const prefetchConversation = useConversationPrefetch(client);
 
   const versionsQuery = useQuery({
@@ -364,6 +366,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const chatAssistant = useAssistantTurn({
     client,
     conversationId: selectedChatConversation?.id ?? null,
+    persistedTurnId: persistedChatTurnId,
     profileId: selectedProfileId,
     modelSelection: modelController.selection,
     operationMode: "answer",
@@ -379,6 +382,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const projectAssistant = useAssistantTurn({
     client,
     conversationId: selectedConversation?.id ?? null,
+    persistedTurnId: persistedProjectTurnId,
     profileId: selectedProfileId,
     modelSelection: modelController.selection,
     operationMode: "continue_current_chat_draft",
@@ -1178,4 +1182,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     },
     openSettings: (category) => client.desktop.openSettings(category),
   };
+}
+
+function latestPersistedTurnId(messages: Message[]): string | null {
+  return [...messages]
+    .sort((left, right) => right.sequence - left.sequence)
+    .find((message) => message.turn_id !== null)?.turn_id ?? null;
 }

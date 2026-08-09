@@ -259,7 +259,7 @@ describe("ChatWorkspace", () => {
     expect(props.onDecision).toHaveBeenCalledWith(pending.id, true);
   });
 
-  it("shows one clarification question and routes the Composer reply to the same turn", async () => {
+  it("routes repeated clarification questions to the same turn without adding outline entries", async () => {
     const user = userEvent.setup();
     const onRespondToClarification = vi.fn(async () => undefined);
     const props = workspaceProps({
@@ -293,7 +293,7 @@ describe("ChatWorkspace", () => {
       },
       onRespondToClarification,
     });
-    render(<ChatWorkspace {...props} />);
+    const view = render(<ChatWorkspace {...props} />);
 
     expect(screen.getByText("Which file should Fairy update?")).toBeVisible();
     const composer = screen.getByLabelText("Answer Fairy's clarification");
@@ -303,6 +303,58 @@ describe("ChatWorkspace", () => {
     expect(onRespondToClarification).toHaveBeenCalledWith("src/app.ts");
     expect(props.onSend).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Schedule message" })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "Conversation outline" })).getAllByRole(
+        "button",
+      ),
+    ).toHaveLength(1);
+
+    const repeated = workspaceProps({
+      ...props,
+      turn: {
+        ...TURN,
+        status: "waiting_for_input",
+        completed_at: null,
+        active_interpretation_revision: 2,
+        interpretation_summary: {
+          ...props.turn?.interpretation_summary,
+          id: "0198f4de-0114-7000-8000-000000000092",
+          turn_id: TURN.id,
+          revision: 2,
+          source_message_id: MESSAGES[0].id,
+          source_message_sha256: "b".repeat(64),
+          schema_version: 1,
+          normalized_goal: "Update the requested file",
+          action: "change",
+          objectives: [{ goal: "Update the requested file", action: "change", depends_on: [] }],
+          targets: ["src/app.ts"],
+          constraints: [],
+          deliverable: "Updated file",
+          evidence_requirements: [],
+          assumptions: [],
+          missing_information: ["requested behavior"],
+          confidence: "low",
+          disposition: "clarification_required",
+          public_summary: "The requested behavior is missing.",
+          clarification_question: "What should change in src/app.ts?",
+          created_at: "2026-07-11T00:00:01Z",
+        },
+      },
+      onRespondToClarification,
+    });
+    view.rerender(<ChatWorkspace {...repeated} />);
+
+    expect(screen.queryByText("Which file should Fairy update?")).not.toBeInTheDocument();
+    expect(screen.getByText("What should change in src/app.ts?")).toBeVisible();
+    await user.type(screen.getByLabelText("Answer Fairy's clarification"), "Add recovery");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(onRespondToClarification).toHaveBeenLastCalledWith("Add recovery");
+    expect(onRespondToClarification).toHaveBeenCalledTimes(2);
+    expect(
+      within(screen.getByRole("navigation", { name: "Conversation outline" })).getAllByRole(
+        "button",
+      ),
+    ).toHaveLength(1);
   });
 });
 

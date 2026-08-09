@@ -51,6 +51,88 @@ describe("assistantDeltaText", () => {
 });
 
 describe("useAssistantTurn", () => {
+  it("restores a persisted clarification turn and submits against its revision", async () => {
+    const waiting = assistantTurn({
+      status: "waiting_for_input",
+      active_interpretation_revision: 5,
+      workflow_summary: workflowSummary({ status: "waiting_for_input" }),
+    });
+    const resumed = assistantTurn({
+      status: "waiting_for_input",
+      active_interpretation_revision: 6,
+      workflow_summary: workflowSummary({ status: "waiting_for_input" }),
+    });
+    const getTurn = vi.fn(async () => waiting);
+    const respondTurn = vi.fn(async () => resumed);
+    const client = assistantClient({ getTurn, respondTurn });
+    const { result } = renderHook(() =>
+      useAssistantTurn({
+        client,
+        conversationId,
+        persistedTurnId: turnId,
+        profileId: "openrouter-free",
+        operationMode: "answer",
+        events: [],
+      }),
+    );
+
+    await waitFor(() => expect(result.current.turn).toEqual(waiting));
+    expect(result.current.isBusy).toBe(false);
+    await act(async () => result.current.respondToClarification("src/app.ts"));
+
+    expect(respondTurn).toHaveBeenCalledWith({
+      turn_id: turnId,
+      content: "src/app.ts",
+      expected_interpretation_revision: 5,
+      idempotency_key: expect.stringContaining("assistant-clarification"),
+    });
+    expect(result.current.turn).toEqual(resumed);
+  });
+
+  it("does not project late persisted-turn hydration into another conversation", async () => {
+    const conversationB = "00000000-0000-4000-8000-000000000011";
+    const turnB = "00000000-0000-4000-8000-000000000031";
+    let resolveTurnA!: (turn: AssistantTurn) => void;
+    const turnAPromise = new Promise<AssistantTurn>((resolve) => {
+      resolveTurnA = resolve;
+    });
+    const waitingB = assistantTurn({
+      id: turnB,
+      conversation_id: conversationB,
+      status: "waiting_for_input",
+      active_interpretation_revision: 1,
+      workflow_summary: workflowSummary({ status: "waiting_for_input" }),
+    });
+    const getTurn = vi.fn((requestedTurnId: string) =>
+      requestedTurnId === turnId ? turnAPromise : Promise.resolve(waitingB),
+    );
+    const client = assistantClient({ getTurn });
+    const { result, rerender } = renderHook(
+      ({ selectedConversation, persistedTurnId }) =>
+        useAssistantTurn({
+          client,
+          conversationId: selectedConversation,
+          persistedTurnId,
+          profileId: "openrouter-free",
+          operationMode: "answer",
+          events: [],
+        }),
+      {
+        initialProps: {
+          selectedConversation: conversationId,
+          persistedTurnId: turnId,
+        },
+      },
+    );
+
+    rerender({ selectedConversation: conversationB, persistedTurnId: turnB });
+    await waitFor(() => expect(result.current.turn).toEqual(waitingB));
+    resolveTurnA(assistantTurn({ status: "waiting_for_input" }));
+    await act(async () => turnAPromise);
+
+    expect(result.current.turn).toEqual(waitingB);
+  });
+
   it("does not project an active turn into a newly selected conversation", async () => {
     const running = assistantTurn({ status: "running" });
     const client = assistantClient({

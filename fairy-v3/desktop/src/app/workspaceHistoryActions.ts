@@ -58,7 +58,16 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
       void invalidateHistory();
     }
     setMode("chat");
-    if (chatConversationSelection === conversationId) return;
+    const effectiveSelection =
+      chatConversations.find((conversation) => conversation.id === chatConversationSelection)?.id ??
+      chatConversations.at(0)?.id ??
+      null;
+    if (effectiveSelection === conversationId) {
+      if (chatConversationSelection !== conversationId) {
+        setChatConversationSelection(conversationId);
+      }
+      return;
+    }
     setChatConversationSelection(conversationId);
     setChatTaskId(null);
     setPetTaskId(null);

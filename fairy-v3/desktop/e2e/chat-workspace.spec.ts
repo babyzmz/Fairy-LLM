@@ -618,6 +618,78 @@ test("approved assistant tools resume the durable turn exactly once", async ({ p
   expect(calls.filter((call) => call.method === "assistant.turns.start")).toHaveLength(1);
 });
 
+test("durable clarification survives reload and repeated answers stay on one turn", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 640, height: 700 });
+  await page.goto("/?clarification=1");
+  await openScratchChat(page);
+
+  await expect.poll(async () => page.evaluate(() =>
+    window.__FAIRY_FIXTURE_CALLS__.filter(
+      (call) => call.method === "assistant.turns.get" &&
+        call.params.turn_id === "0198f4de-0114-7000-8000-000000000012",
+    ).length,
+  )).toBeGreaterThan(0);
+  await expect(page.getByRole("status", { name: "Clarification required" })).toContainText(
+    "Which file should Fairy update?",
+  );
+  await expect(page.getByLabel("Answer Fairy's clarification")).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Conversation outline" }).getByRole("button"),
+  ).toHaveCount(1);
+
+  await page.reload();
+  await openScratchChat(page);
+  await expect(page.getByText("Which file should Fairy update?")).toBeVisible();
+
+  const composer = page.getByLabel("Answer Fairy's clarification");
+  await composer.fill("src/main.ts");
+  await composer.dispatchEvent("compositionstart", { data: "src/main.ts" });
+  await composer.dispatchEvent("keydown", {
+    key: "Enter",
+    code: "Enter",
+    isComposing: true,
+  });
+  expect(
+    await page.evaluate(() =>
+      window.__FAIRY_FIXTURE_CALLS__.filter(
+        (call) => call.method === "assistant.turns.respond",
+      ).length,
+    ),
+  ).toBe(0);
+  await composer.dispatchEvent("compositionend", { data: "src/main.ts" });
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  await expect(page.getByText("What should change in src/main.ts?")).toBeVisible();
+  await page.getByLabel("Answer Fairy's clarification").fill("Add recovery handling");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByLabel("Conversation messages").getByText(
+      "Clarification completed without creating another turn",
+    ),
+  ).toBeVisible();
+
+  const calls = await page.evaluate(() => window.__FAIRY_FIXTURE_CALLS__);
+  const responses = calls.filter((call) => call.method === "assistant.turns.respond");
+  expect(responses).toHaveLength(2);
+  expect(responses.map((call) => ({
+    turn_id: call.params.turn_id,
+    revision: call.params.expected_interpretation_revision,
+  }))).toEqual([
+    { turn_id: "0198f4de-0114-7000-8000-000000000012", revision: 1 },
+    { turn_id: "0198f4de-0114-7000-8000-000000000012", revision: 2 },
+  ]);
+  expect(calls.filter((call) => call.method === "tasks.create")).toHaveLength(0);
+  expect(calls.filter((call) => call.method === "assistant.turns.create")).toHaveLength(0);
+  expect(calls.filter((call) => call.method === "assistant.turns.start")).toHaveLength(0);
+  await expect(
+    page.getByRole("navigation", { name: "Conversation outline" }).getByRole("button"),
+  ).toHaveCount(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(640);
+});
+
 async function openScratchChat(page: import("@playwright/test").Page) {
   await page
     .getByLabel("History navigation")
