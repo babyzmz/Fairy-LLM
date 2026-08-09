@@ -70,6 +70,11 @@ def guarded_task_kind(
     if interpretation is not None:
         if interpretation.action is RequestAction.BROWSE:
             return RoutingTaskKind.BROWSER
+        if (
+            interpretation.action is RequestAction.CHANGE
+            and routed_kind is RoutingTaskKind.BROWSER
+        ):
+            return RoutingTaskKind.CODE
         if interpretation.action is RequestAction.GENERATE:
             return (
                 routed_kind
@@ -83,6 +88,9 @@ def guarded_task_kind(
             RoutingTaskKind.VIDEO,
         }:
             return RoutingTaskKind.GENERAL
+        if routed_kind is RoutingTaskKind.BROWSER:
+            return RoutingTaskKind.GENERAL
+        return routed_kind
 
     actionable_text = "".join(
         segment.text

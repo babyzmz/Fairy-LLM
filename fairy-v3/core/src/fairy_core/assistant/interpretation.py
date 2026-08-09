@@ -265,20 +265,9 @@ def interpretation_from_classifier(
     payload: ClassifierInterpretationPayload,
     evidence_requirements: tuple[EvidenceRequirementKind, ...],
 ) -> AssistantRequestInterpretationRevision:
-    disposition = payload.disposition
-    question = payload.clarification_question
-    high_impact = payload.action in {
-        RequestAction.CHANGE,
-        RequestAction.CREATE,
-        RequestAction.RUN,
-        RequestAction.SCHEDULE,
-        RequestAction.MANAGE,
-    }
-    if payload.missing_information and high_impact:
-        disposition = InterpretationDisposition.CLARIFICATION_REQUIRED
-        question = question or _clarification_question(payload.missing_information)
-    elif payload.assumptions and disposition is InterpretationDisposition.READY:
-        disposition = InterpretationDisposition.ASSUMED
+    from fairy_core.assistant.request_intent_policy import apply_request_intent_policy
+
+    policy = apply_request_intent_policy(payload)
     return AssistantRequestInterpretationRevision.create(
         turn_id=turn_id,
         revision=revision,
@@ -299,11 +288,11 @@ def interpretation_from_classifier(
         deliverable=payload.deliverable,
         evidence_requirements=evidence_requirements,
         assumptions=payload.assumptions,
-        missing_information=payload.missing_information,
+        missing_information=policy.missing_information,
         confidence=payload.confidence,
-        disposition=disposition,
+        disposition=policy.disposition,
         public_summary=payload.public_summary,
-        clarification_question=question,
+        clarification_question=policy.clarification_question,
     )
 
 
@@ -411,11 +400,6 @@ def _unique_texts(
 def _digest(value: str) -> None:
     if len(value) != 64 or value != value.lower() or re.fullmatch(r"[0-9a-f]{64}", value) is None:
         raise ValueError("source message digest is invalid")
-
-
-def _clarification_question(missing: tuple[str, ...]) -> str:
-    visible = ", ".join(missing[:3])
-    return f"Please clarify {visible} before Fairy continues."
 
 
 __all__ = [

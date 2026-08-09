@@ -253,3 +253,142 @@ def test_high_impact_missing_target_forces_clarification() -> None:
     )
     assert interpretation.disposition is InterpretationDisposition.CLARIFICATION_REQUIRED
     assert interpretation.clarification_question is not None
+
+
+@pytest.mark.parametrize("action", ["change", "run", "manage"])
+def test_core_policy_rejects_high_impact_ready_output_without_a_target(
+    action: str,
+) -> None:
+    routed = parse_router_output(
+        json.dumps(
+            {
+                "task_kind": "code",
+                "complexity": "medium",
+                "needs_review": False,
+                "requires_workspace_changes": action == "change",
+                "estimated_output_tokens": 1_024,
+                "public_summary": "A high-impact action was requested",
+                "interpretation": {
+                    "normalized_goal": "Apply the requested action",
+                    "action": action,
+                    "objectives": [
+                        {"goal": "Apply the requested action", "action": action}
+                    ],
+                    "confidence": "high",
+                    "disposition": "ready",
+                    "public_summary": "Apply the requested action",
+                },
+            }
+        )
+    )
+    assert routed.interpretation is not None
+
+    interpretation = interpretation_from_classifier(
+        turn_id=UUID(int=20),
+        revision=1,
+        source_message_id=UUID(int=21),
+        source_message="Do it",
+        payload=routed.interpretation,
+        evidence_requirements=(),
+    )
+
+    assert interpretation.disposition is InterpretationDisposition.CLARIFICATION_REQUIRED
+    assert interpretation.missing_information == ("an explicit target",)
+
+
+def test_core_policy_requires_a_create_deliverable_but_not_a_review_target() -> None:
+    create_payload = parse_router_output(
+        json.dumps(
+            {
+                "task_kind": "general",
+                "complexity": "medium",
+                "needs_review": False,
+                "requires_workspace_changes": False,
+                "estimated_output_tokens": 512,
+                "public_summary": "Create something",
+                "interpretation": {
+                    "normalized_goal": "Create something",
+                    "action": "create",
+                    "objectives": [{"goal": "Create something", "action": "create"}],
+                    "confidence": "high",
+                    "disposition": "ready",
+                    "public_summary": "Create something",
+                },
+            }
+        )
+    ).interpretation
+    review_payload = parse_router_output(
+        json.dumps(
+            {
+                "task_kind": "general",
+                "complexity": "low",
+                "needs_review": False,
+                "requires_workspace_changes": False,
+                "estimated_output_tokens": 256,
+                "public_summary": "Review the supplied text",
+                "interpretation": {
+                    "normalized_goal": "Review the supplied text",
+                    "action": "review",
+                    "objectives": [
+                        {"goal": "Review the supplied text", "action": "review"}
+                    ],
+                    "confidence": "high",
+                    "disposition": "ready",
+                    "public_summary": "Review the supplied text",
+                },
+            }
+        )
+    ).interpretation
+    assert create_payload is not None and review_payload is not None
+
+    created = interpretation_from_classifier(
+        turn_id=UUID(int=22),
+        revision=1,
+        source_message_id=UUID(int=23),
+        source_message="Create it",
+        payload=create_payload,
+        evidence_requirements=(),
+    )
+    reviewed = interpretation_from_classifier(
+        turn_id=UUID(int=24),
+        revision=1,
+        source_message_id=UUID(int=25),
+        source_message="Review this",
+        payload=review_payload,
+        evidence_requirements=(),
+    )
+
+    assert created.disposition is InterpretationDisposition.CLARIFICATION_REQUIRED
+    assert reviewed.disposition is InterpretationDisposition.READY
+
+
+def test_structured_review_cannot_be_broadened_to_browser_by_inline_quote() -> None:
+    payload = parse_router_output(
+        json.dumps(
+            {
+                "task_kind": "browser",
+                "complexity": "low",
+                "needs_review": False,
+                "requires_workspace_changes": False,
+                "estimated_output_tokens": 256,
+                "public_summary": "Review quoted text",
+                "interpretation": {
+                    "normalized_goal": "Review quoted text",
+                    "action": "review",
+                    "objectives": [
+                        {"goal": "Review quoted text", "action": "review"}
+                    ],
+                    "confidence": "high",
+                    "disposition": "ready",
+                    "public_summary": "Review quoted text",
+                },
+            }
+        )
+    ).interpretation
+    assert payload is not None
+
+    assert guarded_task_kind(
+        user_request='Review "click the browser preview"',
+        routed_kind=RoutingTaskKind.BROWSER,
+        interpretation=payload,
+    ) is RoutingTaskKind.GENERAL
