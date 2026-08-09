@@ -15,7 +15,20 @@ def _junit(path: Path, *, failing: str | None = None) -> None:
         for node_id in scenario.tests:
             name = node_id.rsplit("::", 1)[-1]
             failure = '<failure message="boom" />' if name == failing else ""
-            cases.append(f'<testcase name="{name}" time="0.25">{failure}</testcase>')
+            properties = ""
+            if name == "test_clarification_waits_and_resumes_the_same_turn_idempotently":
+                properties = (
+                    '<properties><property name="execution_nodes_started_before_clarification" '
+                    'value="0" /></properties>'
+                )
+            if name == "test_independent_read_tools_execute_in_parallel_and_join_in_call_order":
+                properties = (
+                    '<properties><property name="parallel_median_improvement" '
+                    'value="0.5" /></properties>'
+                )
+            cases.append(
+                f'<testcase name="{name}" time="0.25">{properties}{failure}</testcase>'
+            )
     path.write_text(f"<testsuite>{''.join(cases)}</testsuite>", encoding="utf-8")
 
 
@@ -35,13 +48,15 @@ def test_eval_report_is_machine_readable_and_marks_live_provider_unverified(
     persisted = json.loads(json_path.read_text(encoding="utf-8"))
     assert persisted["overall_status"] == "passed"
     assert persisted["deterministic"]["metrics"]["success_rate"] == 1.0
-    assert persisted["deterministic"]["metrics"]["intent_match_gate_rate"] == 1.0
-    assert persisted["deterministic"]["metrics"]["clarification_gate_rate"] == 1.0
-    assert persisted["deterministic"]["metrics"]["quoted_content_isolation_rate"] == 1.0
+    assert persisted["deterministic"]["metrics"]["intent_action_accuracy"] == 1.0
+    assert persisted["deterministic"]["metrics"]["clarification_precision"] == 1.0
+    assert persisted["deterministic"]["metrics"]["clarification_recall"] == 1.0
+    assert persisted["deterministic"]["metrics"]["literal_isolation_rate"] == 1.0
     assert persisted["deterministic"]["metrics"]["auto_manual_consistency_rate"] == 1.0
     assert persisted["deterministic"]["metrics"][
         "high_impact_unintended_execution_count"
     ] == 0
+    assert persisted["deterministic"]["metrics"]["parallel_median_improvement"] == 0.5
     assert persisted["live_provider"]["status"] == "unverified"
     assert {
         "scheduled_turn_boundary",

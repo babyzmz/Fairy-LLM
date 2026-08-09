@@ -41,6 +41,8 @@ def main() -> int:
                 "pytest",
                 *node_ids,
                 f"--junitxml={junit_path}",
+                "-o",
+                "junit_family=legacy",
                 "-q",
                 "-p",
                 "no:cacheprovider",

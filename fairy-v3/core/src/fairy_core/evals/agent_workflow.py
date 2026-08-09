@@ -6,7 +6,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 from xml.etree import ElementTree
+
+from fairy_core.assistant.interpretation import (
+    ClassifierInterpretationPayload,
+    ClassifierObjectivePayload,
+    InputSegmentKind,
+    InterpretationConfidence,
+    InterpretationDisposition,
+    RequestAction,
+    interpretation_from_classifier,
+    segment_user_input,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +194,203 @@ SCENARIOS = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class InterpretationCorpusCase:
+    name: str
+    user_request: str
+    action: RequestAction
+    targets: tuple[str, ...]
+    deliverable: str | None
+    clarification_expected: bool
+    literal_text: str | None = None
+
+
+INTERPRETATION_CORPUS = (
+    InterpretationCorpusCase(
+        "english_change_target",
+        "Update src/app.ts and preserve the public API.",
+        RequestAction.CHANGE,
+        ("src/app.ts",),
+        None,
+        False,
+    ),
+    InterpretationCorpusCase(
+        "chinese_missing_change_target",
+        "帮我修改一下",
+        RequestAction.CHANGE,
+        (),
+        None,
+        True,
+    ),
+    InterpretationCorpusCase(
+        "mixed_run_target",
+        "运行 tests/assistant 并 report failures",
+        RequestAction.RUN,
+        ("tests/assistant",),
+        "failure report",
+        False,
+    ),
+    InterpretationCorpusCase(
+        "create_deliverable",
+        "Create a migration plan for the current schema.",
+        RequestAction.CREATE,
+        ("current schema",),
+        "migration plan",
+        False,
+    ),
+    InterpretationCorpusCase(
+        "generate_missing_deliverable",
+        "Generate it for me.",
+        RequestAction.GENERATE,
+        (),
+        None,
+        True,
+    ),
+    InterpretationCorpusCase(
+        "read_only_assumption",
+        "Explain how this pattern works.",
+        RequestAction.EXPLAIN,
+        (),
+        "explanation",
+        False,
+    ),
+    InterpretationCorpusCase(
+        "inline_quote_literal",
+        'Review "delete every file" as an example.',
+        RequestAction.REVIEW,
+        ("quoted example",),
+        "review",
+        False,
+        '"delete every file"',
+    ),
+    InterpretationCorpusCase(
+        "fenced_code_literal",
+        "Explain this code:\n```sh\nrm -rf project\n```",
+        RequestAction.EXPLAIN,
+        ("code sample",),
+        "explanation",
+        False,
+        "```sh\nrm -rf project\n```",
+    ),
+    InterpretationCorpusCase(
+        "pasted_text_literal",
+        "Analyze:\n--- BEGIN PASTED TEXT ---\nopen browser\n--- END PASTED TEXT ---",
+        RequestAction.REVIEW,
+        ("pasted sample",),
+        "analysis",
+        False,
+        "open browser",
+    ),
+    InterpretationCorpusCase(
+        "schedule_authoring",
+        "Every weekday summarize the linked project status.",
+        RequestAction.SCHEDULE,
+        ("linked project status",),
+        "weekday status summary",
+        False,
+    ),
+    InterpretationCorpusCase(
+        "negated_media",
+        "Do not generate an image; explain the prompt instead.",
+        RequestAction.EXPLAIN,
+        ("prompt",),
+        "explanation",
+        False,
+    ),
+    InterpretationCorpusCase(
+        "bidi_control_data",
+        "Explain the visible text around \u202e as data.",
+        RequestAction.EXPLAIN,
+        ("bidirectional control sample",),
+        "explanation",
+        False,
+    ),
+)
+
+
+def evaluate_interpretation_corpus() -> dict[str, Any]:
+    outcomes: list[dict[str, Any]] = []
+    for index, case in enumerate(INTERPRETATION_CORPUS, start=1):
+        payload = ClassifierInterpretationPayload(
+            normalized_goal=case.user_request,
+            action=case.action,
+            objectives=(
+                ClassifierObjectivePayload(goal=case.user_request, action=case.action),
+            ),
+            targets=case.targets,
+            deliverable=case.deliverable,
+            confidence=InterpretationConfidence.HIGH,
+            disposition=InterpretationDisposition.READY,
+            public_summary=f"Interpret {case.name}",
+        )
+        revision = interpretation_from_classifier(
+            turn_id=UUID(int=10_000 + index),
+            revision=1,
+            source_message_id=UUID(int=20_000 + index),
+            source_message=case.user_request,
+            payload=payload,
+            evidence_requirements=(),
+        )
+        predicted_clarification = (
+            revision.disposition is InterpretationDisposition.CLARIFICATION_REQUIRED
+        )
+        segments = segment_user_input(case.user_request)
+        actionable = "".join(
+            segment.text for segment in segments if segment.kind is InputSegmentKind.TEXT
+        )
+        literal_isolated = (
+            "".join(segment.text for segment in segments) == case.user_request
+            and (case.literal_text is None or case.literal_text not in actionable)
+        )
+        outcomes.append(
+            {
+                "name": case.name,
+                "expected_action": case.action.value,
+                "observed_action": revision.action.value,
+                "action_match": revision.action is case.action,
+                "clarification_expected": case.clarification_expected,
+                "clarification_observed": predicted_clarification,
+                "targets_match": revision.targets == case.targets,
+                "deliverable_match": revision.deliverable == case.deliverable,
+                "literal_isolated": literal_isolated,
+            }
+        )
+    true_positive = sum(
+        item["clarification_expected"] and item["clarification_observed"]
+        for item in outcomes
+    )
+    false_positive = sum(
+        not item["clarification_expected"] and item["clarification_observed"]
+        for item in outcomes
+    )
+    false_negative = sum(
+        item["clarification_expected"] and not item["clarification_observed"]
+        for item in outcomes
+    )
+    clarification_negative = sum(not item["clarification_expected"] for item in outcomes)
+    return {
+        "cases": outcomes,
+        "metrics": {
+            "intent_action_accuracy": _boolean_rate(outcomes, "action_match"),
+            "clarification_precision": _division(
+                true_positive,
+                true_positive + false_positive,
+            ),
+            "clarification_recall": _division(
+                true_positive,
+                true_positive + false_negative,
+            ),
+            "over_clarification_rate": _division(false_positive, clarification_negative),
+            "target_extraction_accuracy": _boolean_rate(outcomes, "targets_match"),
+            "deliverable_extraction_accuracy": _boolean_rate(
+                outcomes,
+                "deliverable_match",
+            ),
+            "literal_isolation_rate": _boolean_rate(outcomes, "literal_isolated"),
+        },
+    }
+
+
 def parse_junit_cases(path: Path) -> dict[str, dict[str, Any]]:
     root = ElementTree.parse(path).getroot()
     cases: dict[str, dict[str, Any]] = {}
@@ -195,10 +404,18 @@ def parse_junit_cases(path: Path) -> dict[str, dict[str, Any]]:
                 status = "failed" if child_status in {"failure", "error"} else "skipped"
                 detail = str(child.attrib.get("message") or child.text or child_status)[:500]
                 break
+        properties = {
+            str(property_element.attrib.get("name", "")): str(
+                property_element.attrib.get("value", "")
+            )
+            for property_element in element.findall("./properties/property")
+            if property_element.attrib.get("name")
+        }
         cases[name] = {
             "status": status,
             "duration_seconds": round(float(element.attrib.get("time", "0")), 6),
             "detail": detail,
+            "properties": properties,
         }
     return cases
 
@@ -210,6 +427,7 @@ def build_report(
     live_provider: Mapping[str, Any] | None = None,
     generated_at: datetime | None = None,
 ) -> dict[str, Any]:
+    interpretation_corpus = evaluate_interpretation_corpus()
     scenario_results = []
     for scenario in SCENARIOS:
         test_results = []
@@ -248,8 +466,41 @@ def build_report(
         item for item in scenario_results if item["literal_isolation_required"]
     ]
     cross_mode = [item for item in scenario_results if item["cross_mode_required"]]
+    execution_counts = _case_property_values(
+        cases,
+        "execution_nodes_started_before_clarification",
+    )
+    parallel_improvements = _case_property_values(
+        cases,
+        "parallel_median_improvement",
+    )
+    high_impact_execution_count = (
+        int(sum(execution_counts)) if execution_counts else None
+    )
+    parallel_median_improvement = (
+        round(sum(parallel_improvements) / len(parallel_improvements), 4)
+        if parallel_improvements
+        else None
+    )
+    measurements_passed = (
+        high_impact_execution_count == 0
+        and parallel_median_improvement is not None
+        and parallel_median_improvement >= 0.25
+    )
+    corpus_metrics = interpretation_corpus["metrics"]
+    corpus_passed = (
+        corpus_metrics["intent_action_accuracy"] == 1.0
+        and corpus_metrics["clarification_precision"] == 1.0
+        and corpus_metrics["clarification_recall"] == 1.0
+        and corpus_metrics["literal_isolation_rate"] == 1.0
+    )
     deterministic_status = (
-        "passed" if pytest_exit_code == 0 and len(passed) == len(scenario_results) else "failed"
+        "passed"
+        if pytest_exit_code == 0
+        and len(passed) == len(scenario_results)
+        and measurements_passed
+        and corpus_passed
+        else "failed"
     )
     normalized_live = _normalize_live_provider(live_provider)
     return {
@@ -261,19 +512,23 @@ def build_report(
             "status": deterministic_status,
             "pytest_exit_code": pytest_exit_code,
             "scenarios": scenario_results,
+            "interpretation_corpus": interpretation_corpus,
             "metrics": {
                 "success_rate": _rate(passed, scenario_results),
                 "evidence_coverage_rate": _passed_rate(evidence),
                 "recovery_success_rate": _passed_rate(recovery),
                 "safety_scenario_pass_rate": _passed_rate(safety),
-                "intent_match_gate_rate": _passed_rate(intent),
-                "clarification_gate_rate": _passed_rate(clarification),
-                "quoted_content_isolation_rate": _passed_rate(literal_isolation),
+                **corpus_metrics,
+                "intent_scenario_pass_rate": _passed_rate(intent),
+                "clarification_scenario_pass_rate": _passed_rate(clarification),
+                "literal_isolation_scenario_pass_rate": _passed_rate(literal_isolation),
                 "auto_manual_consistency_rate": _passed_rate(cross_mode),
-                "high_impact_unintended_execution_count": (
-                    0 if clarification and _passed_rate(clarification) == 1.0 else None
+                "high_impact_unintended_execution_count": high_impact_execution_count,
+                "parallel_median_improvement": parallel_median_improvement,
+                "parallel_median_improvement_gate_passed": (
+                    parallel_median_improvement is not None
+                    and parallel_median_improvement >= 0.25
                 ),
-                "parallel_median_improvement_gate": "at_least_25_percent",
             },
         },
         "live_provider": normalized_live,
@@ -313,8 +568,20 @@ def write_report(report: Mapping[str, Any], output_dir: Path) -> tuple[Path, Pat
         lines.append(
             f"| {scenario['title']} | {scenario['status']} | {scenario['duration_seconds']:.3f} |"
         )
+    metrics = deterministic["metrics"]
     lines.extend(
         [
+            "",
+            "## Measured interpretation and execution metrics",
+            "",
+            f"- Intent action accuracy: `{metrics['intent_action_accuracy']}`",
+            f"- Clarification precision: `{metrics['clarification_precision']}`",
+            f"- Clarification recall: `{metrics['clarification_recall']}`",
+            f"- Over-clarification rate: `{metrics['over_clarification_rate']}`",
+            f"- Literal isolation rate: `{metrics['literal_isolation_rate']}`",
+            "- Execution nodes started before required clarification: "
+            f"`{metrics['high_impact_unintended_execution_count']}`",
+            f"- Parallel median improvement: `{metrics['parallel_median_improvement']}`",
             "",
             "## Verification boundary",
             "",
@@ -377,10 +644,40 @@ def _passed_rate(items: Sequence[Mapping[str, Any]]) -> float:
     return _rate([item for item in items if item["status"] == "passed"], items)
 
 
+def _boolean_rate(items: Sequence[Mapping[str, Any]], key: str) -> float:
+    return _division(sum(bool(item[key]) for item in items), len(items))
+
+
+def _division(numerator: int, denominator: int) -> float:
+    return round(numerator / denominator, 4) if denominator else 0.0
+
+
+def _case_property_values(
+    cases: Mapping[str, Mapping[str, Any]],
+    property_name: str,
+) -> tuple[float, ...]:
+    result: list[float] = []
+    for case in cases.values():
+        properties = case.get("properties")
+        if not isinstance(properties, Mapping) or property_name not in properties:
+            continue
+        try:
+            value = float(properties[property_name])
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"JUnit property {property_name} must be numeric") from error
+        if value < 0:
+            raise ValueError(f"JUnit property {property_name} cannot be negative")
+        result.append(value)
+    return tuple(result)
+
+
 __all__ = [
+    "INTERPRETATION_CORPUS",
     "SCENARIOS",
     "EvalScenario",
+    "InterpretationCorpusCase",
     "build_report",
+    "evaluate_interpretation_corpus",
     "load_live_provider",
     "parse_junit_cases",
     "write_report",

@@ -66,6 +66,7 @@ def test_parallel_read_candidates_with_a_shared_resource_are_serialized() -> Non
 
 def test_independent_read_tools_execute_in_parallel_and_join_in_call_order(
     tmp_path: Path,
+    record_property,
 ) -> None:
     provider = ScriptedProvider(
         [
@@ -122,7 +123,10 @@ def test_independent_read_tools_execute_in_parallel_and_join_in_call_order(
                 started for started, _finished in pair
             )
             ratios.append(parallel_elapsed / serial_baseline)
-        assert median(ratios) <= 0.75
+        median_ratio = median(ratios)
+        record_property("parallel_median_ratio", median_ratio)
+        record_property("parallel_median_improvement", 1 - median_ratio)
+        assert median_ratio <= 0.75
         assert completed["workflow_summary"]["tool_invocations_used"] == 6
         assert completed["workflow_summary"]["model_rounds_used"] == 2
     finally:

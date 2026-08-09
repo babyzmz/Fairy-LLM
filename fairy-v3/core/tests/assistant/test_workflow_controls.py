@@ -5,6 +5,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from threading import Event
+from uuid import UUID
 
 import pytest
 
@@ -214,7 +215,10 @@ def test_steering_revises_one_turn_and_replays_idempotently(tmp_path: Path) -> N
         service.close()
 
 
-def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Path) -> None:
+def test_clarification_waits_and_resumes_the_same_turn_idempotently(
+    tmp_path: Path,
+    record_property,
+) -> None:
     profile_id = "openrouter-qwen-free"
     provider = ScriptedProvider(
         [
@@ -275,6 +279,18 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(tmp_path: Pa
         wait_for_turn(service, turn["id"], status="waiting_for_input")
         _wait_for_workflow(service, turn["id"], "waiting_for_input")
         waiting = service.invoke("assistant.turns.get", {"turn_id": turn["id"]})
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            workflow = unit_of_work.workflows.get(UUID(waiting["workflow_run_id"]))
+        assert workflow is not None
+        execution_nodes_started = sum(
+            node.attempt_count
+            for node in workflow.nodes
+            if node.kind in {"assistant.model.round", "assistant.tool.invoke"}
+        )
+        record_property(
+            "execution_nodes_started_before_clarification",
+            execution_nodes_started,
+        )
         interpretation = service.invoke(
             "assistant.turns.interpretation.get",
             {"turn_id": turn["id"]},
