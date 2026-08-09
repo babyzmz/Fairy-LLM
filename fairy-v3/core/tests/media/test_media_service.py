@@ -34,6 +34,43 @@ from tests.assistant.support import ScriptedProvider
 from tests.assistant.test_model_routing import PricedCatalogSource
 
 
+def _media_interpretation(profile_id: str, goal: str) -> tuple[ModelDelta, ...]:
+    return (
+        ModelDelta.text(
+            profile_id=profile_id,
+            sequence=1,
+            text=json.dumps(
+                {
+                    "evidence_requirements": [],
+                    "requires_workspace_changes": False,
+                    "public_summary": goal,
+                    "interpretation": {
+                        "normalized_goal": goal,
+                        "action": "generate",
+                        "objectives": [
+                            {
+                                "goal": goal,
+                                "action": "generate",
+                                "depends_on": [],
+                            }
+                        ],
+                        "targets": [],
+                        "constraints": [],
+                        "deliverable": "Generated image",
+                        "assumptions": [],
+                        "missing_information": [],
+                        "confidence": "high",
+                        "disposition": "ready",
+                        "public_summary": goal,
+                        "clarification_question": None,
+                    },
+                }
+            ),
+        ),
+        ModelDelta.done(profile_id=profile_id, sequence=2, finish_reason="stop"),
+    )
+
+
 class RecordingMediaProvider:
     def __init__(self) -> None:
         self.image_requests: list[ImageGenerationRequest] = []
@@ -793,6 +830,7 @@ def test_manual_image_model_uses_deepseek_coordinator_and_one_assistant_message(
     profile_id = "openrouter-deepseek-v4-pro"
     coordinator = ScriptedProvider(
         [
+            _media_interpretation(profile_id, "Create a Fairy image"),
             (
                 ModelDelta.tool_call(
                     profile_id=profile_id,
@@ -885,12 +923,13 @@ def test_manual_image_model_uses_deepseek_coordinator_and_one_assistant_message(
             ("assistant", "The image is ready in your Workspace."),
         ]
         assert len(media.image_requests) == 1
-        assert len(coordinator.requests) == 2
-        assert [tool.name for tool in coordinator.requests[0].tools] == ["media.images.generate"]
-        assert coordinator.requests[1].tools == ()
+        assert len(coordinator.requests) == 3
+        assert coordinator.requests[0].tools == ()
+        assert [tool.name for tool in coordinator.requests[1].tools] == ["media.images.generate"]
+        assert coordinator.requests[2].tools == ()
         assert any(
             "routed to image generation" in message.content
-            for message in coordinator.requests[0].messages
+            for message in coordinator.requests[1].messages
         )
         with sqlite3.connect(tmp_path / "data" / "core.db") as connection:
             workflow_links = connection.execute(
@@ -913,6 +952,7 @@ def test_assistant_stops_after_the_first_media_provider_failure(tmp_path: Path) 
     profile_id = "openrouter-deepseek-v4-pro"
     coordinator = ScriptedProvider(
         [
+            _media_interpretation(profile_id, "Generate one Fairy image"),
             (
                 ModelDelta.tool_call(
                     profile_id=profile_id,
@@ -980,7 +1020,7 @@ def test_assistant_stops_after_the_first_media_provider_failure(tmp_path: Path) 
 
         assert failed["status"] == "failed"
         assert failed["error_code"] == "PROVIDER_PROTOCOL_ERROR"
-        assert len(coordinator.requests) == 1
+        assert len(coordinator.requests) == 2
         assert len(media.image_requests) == 1
         assert len(jobs) == 1
         assert jobs[0]["status"] == "failed"
@@ -992,6 +1032,7 @@ def test_assistant_does_not_reexpose_media_tool_after_success(tmp_path: Path) ->
     profile_id = "openrouter-deepseek-v4-pro"
     coordinator = ScriptedProvider(
         [
+            _media_interpretation(profile_id, "Generate exactly one Fairy image"),
             (
                 ModelDelta.tool_call(
                     profile_id=profile_id,
@@ -1063,9 +1104,10 @@ def test_assistant_does_not_reexpose_media_tool_after_success(tmp_path: Path) ->
 
         assert failed["status"] == "failed"
         assert failed["error_code"] == "PROVIDER_PROTOCOL_ERROR"
-        assert len(coordinator.requests) == 2
-        assert [tool.name for tool in coordinator.requests[0].tools] == ["media.images.generate"]
-        assert coordinator.requests[1].tools == ()
+        assert len(coordinator.requests) == 3
+        assert coordinator.requests[0].tools == ()
+        assert [tool.name for tool in coordinator.requests[1].tools] == ["media.images.generate"]
+        assert coordinator.requests[2].tools == ()
         assert len(media.image_requests) == 1
         assert len(jobs) == 1
         assert jobs[0]["status"] == "completed"

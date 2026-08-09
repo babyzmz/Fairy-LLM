@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 
 from fairy_core.assistant.models import ToolInvocationStatus
+from fairy_core.assistant.workflow_plan import ASSISTANT_MODEL_ROUND_NODE_KIND
 from fairy_core.commanding.models import CommandStatus
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.models import TaskStatus
@@ -181,15 +182,11 @@ def test_approval_queued_before_prior_background_runner_exits_resumes_once(
     )
     execution_finish_reached = Event()
     release_execution_finish = Event()
-    finish_calls = 0
     scheduler = service._workflow_scheduler  # type: ignore[attr-defined]
     original_finish = scheduler._finish_active  # type: ignore[attr-defined]
 
     def delayed_first_finish(active) -> None:
-        nonlocal finish_calls
-        finish_calls += 1
-        # The durable interpretation node now completes before the execution node.
-        if finish_calls == 2:
+        if active.kind == ASSISTANT_MODEL_ROUND_NODE_KIND:
             execution_finish_reached.set()
             assert release_execution_finish.wait(timeout=5)
         original_finish(active)
