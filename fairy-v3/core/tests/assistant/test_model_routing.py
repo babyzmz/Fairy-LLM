@@ -613,6 +613,74 @@ def test_auto_router_is_durable_and_never_projects_router_text(tmp_path: Path) -
         service.close()
 
 
+def test_auto_router_classifies_long_requests_with_bounded_attempts(tmp_path: Path) -> None:
+    deepseek = _provider(
+        profile_id="openrouter-deepseek-v4-pro",
+        model_id=DEEPSEEK_MODEL_ID,
+        rounds=[
+            _route_delta(profile_id="openrouter-deepseek-v4-pro"),
+            _route_delta(
+                profile_id="openrouter-deepseek-v4-pro",
+                complexity="medium",
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="openrouter-deepseek-v4-pro",
+                    sequence=1,
+                    text="Long request handled.",
+                ),
+                ModelDelta.done(
+                    profile_id="openrouter-deepseek-v4-pro",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ],
+    )
+    glm = _provider(
+        profile_id="openrouter-glm-5-2",
+        model_id=GLM_MODEL_ID,
+        rounds=[],
+    )
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((deepseek, glm)),
+        model_catalog_source=PricedCatalogSource(),
+    )
+    request_text = "Explain this request.\n" + " ".join("context" for _ in range(9_000))
+    try:
+        service.invoke("models.catalog.refresh", {})
+        task = _task(service, request_text)
+        turn = _auto_turn(service, task, "turn:auto-long-router")
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+
+        assert completed["status"] == "completed", (
+            completed["error_code"],
+            [(item.model_role, item.response_schema_name) for item in deepseek.requests],
+        )
+        assert completed["routing_decision"]["complexity"] == "medium"
+        coordinator_requests = [
+            item
+            for item in deepseek.requests
+            if item.model_role is ModelExecutionRole.COORDINATOR
+        ]
+        assert len(coordinator_requests) == 2
+        payloads = [json.loads(item.messages[-1].content) for item in coordinator_requests]
+        assert [payload["attempt_index"] for payload in payloads] == [0, 1]
+        assert {payload["attempt_count"] for payload in payloads} == {2}
+        assert (
+            "".join(
+                segment["text"]
+                for payload in payloads
+                for segment in payload["segments"]
+            )
+            == request_text
+        )
+    finally:
+        service.close()
+
+
 def test_auto_router_retries_invalid_buffered_output_before_execution(tmp_path: Path) -> None:
     deepseek = _provider(
         profile_id="openrouter-deepseek-v4-pro",

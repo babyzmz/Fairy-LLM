@@ -106,6 +106,8 @@ def guarded_task_kind(
             if _WORKSPACE_MUTATION.search(actionable_text)
             else RoutingTaskKind.BROWSER
         )
+    if routed_kind is RoutingTaskKind.BROWSER:
+        return RoutingTaskKind.GENERAL
     media_pattern = _MEDIA_GENERATION.get(routed_kind)
     if media_pattern is not None and media_pattern.search(actionable_text) is None:
         return RoutingTaskKind.GENERAL

@@ -11,6 +11,7 @@ from fairy_core.assistant.interpretation import (
     ClassifierInterpretationPayload,
     InterpretationDisposition,
     RequestAction,
+    build_classifier_input_envelopes,
     fallback_interpretation,
     interpretation_from_classifier,
 )
@@ -32,6 +33,7 @@ from fairy_core.assistant.routing import (
     auto_routing_decision,
     build_router_request,
     manual_routing_decision,
+    merge_router_outputs,
     parse_router_output,
 )
 from fairy_core.assistant.routing_budget_runtime import RoutingBudgetRuntimeMixin
@@ -198,37 +200,51 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
             model_role=ModelExecutionRole.COORDINATOR,
         )
         try:
-            request = build_router_request(
-                profile_id=primary.id,
-                user_request=classifier_input.user_request,
+            attachment_count = len(self._image_attachments.for_turn(turn.id))
+            envelopes = build_classifier_input_envelopes(
                 source_message_id=classifier_input.source_message_id,
-                attachment_count=len(self._image_attachments.for_turn(turn.id)),
-                selection=selection,
-                fallback_profile_ids=fallback_ids,
-                prior_interpretation=classifier_input.prior_interpretation,
+                content=classifier_input.user_request,
+                attachment_count=attachment_count,
             )
-            chunks: list[str] = []
-            for delta in self._providers.stream(
-                request,
-                cancellation,
-                on_attempt=self._provider_attempts.observer(turn.id, 1, run=run),
-                attempt_validator=validate_router_attempt,
-            ):
-                cancellation.raise_if_cancelled()
-                self._turns.require_active(turn.id)
-                if delta.kind is ModelDeltaKind.TEXT:
-                    assert delta.text is not None
-                    chunks.append(delta.text)
-                    if sum(map(len, chunks)) > 16_384:
-                        raise ProviderProtocolError("router response is too large")
-                elif delta.kind is ModelDeltaKind.TOOL_CALL:
-                    raise ProviderProtocolError("router cannot call tools")
-            routed = parse_router_output("".join(chunks))
+            routed_outputs = []
+            for envelope in envelopes:
+                request = build_router_request(
+                    profile_id=primary.id,
+                    user_request=classifier_input.user_request,
+                    source_message_id=classifier_input.source_message_id,
+                    attachment_count=attachment_count,
+                    selection=selection,
+                    fallback_profile_ids=fallback_ids,
+                    prior_interpretation=classifier_input.prior_interpretation,
+                    classifier_envelope=envelope,
+                )
+                chunks: list[str] = []
+                for delta in self._providers.stream(
+                    request,
+                    cancellation,
+                    on_attempt=self._provider_attempts.observer(
+                        turn.id,
+                        classifier_input.model_round,
+                        run=run,
+                    ),
+                    attempt_validator=validate_router_attempt,
+                ):
+                    cancellation.raise_if_cancelled()
+                    self._turns.require_active(turn.id)
+                    if delta.kind is ModelDeltaKind.TEXT:
+                        assert delta.text is not None
+                        chunks.append(delta.text)
+                        if sum(map(len, chunks)) > 16_384:
+                            raise ProviderProtocolError("router response is too large")
+                    elif delta.kind is ModelDeltaKind.TOOL_CALL:
+                        raise ProviderProtocolError("router cannot call tools")
+                routed_outputs.append(parse_router_output("".join(chunks)))
+            routed = merge_router_outputs(tuple(routed_outputs))
             decision = auto_routing_decision(
                 routed=routed,
                 catalog=classifier_input.catalog,
                 user_request=classifier_input.user_request,
-                attachment_count=len(self._image_attachments.for_turn(turn.id)),
+                attachment_count=attachment_count,
                 allow_free_fallback=selection.allow_free_fallback,
             )
             self._require_available_route(decision, classifier_input.catalog)

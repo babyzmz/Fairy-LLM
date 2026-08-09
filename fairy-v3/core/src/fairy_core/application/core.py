@@ -587,7 +587,7 @@ class CoreApplication(CoreContextMixin, CoreSupportMixin):
                 )
                 built_snapshot = self._snapshot_builder_factory(unit_of_work).build(
                     scope=unbound_context.scope,
-                    query=task.user_request,
+                    query=_memory_snapshot_query(task.user_request),
                     source_watermark_cursor=source_watermark_cursor,
                 )
                 persisted_snapshot = unit_of_work.snapshots.append(
@@ -1178,3 +1178,10 @@ class CoreApplication(CoreContextMixin, CoreSupportMixin):
             )
             unit_of_work.commit()
         return persisted_task
+
+
+def _memory_snapshot_query(user_request: str) -> str:
+    normalized = user_request.strip()
+    if len(normalized) <= 10_000:
+        return normalized
+    return f"{normalized[:6_000]}\n...\n{normalized[-3_995:]}"

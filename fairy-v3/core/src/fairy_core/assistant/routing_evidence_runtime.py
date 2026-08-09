@@ -10,6 +10,7 @@ from fairy_core.assistant.evidence import EvidenceClassificationFailedError
 from fairy_core.assistant.interpretation import (
     AssistantRequestInterpretationRevision,
     InterpretationDisposition,
+    build_classifier_input_envelopes,
 )
 from fairy_core.assistant.models import AssistantTurn, MessageRole
 from fairy_core.assistant.routing import (
@@ -17,6 +18,7 @@ from fairy_core.assistant.routing import (
     RoutingDecision,
     RoutingTaskKind,
     build_manual_evidence_request,
+    merge_evidence_outputs,
     parse_evidence_classification,
     parse_router_output,
 )
@@ -110,67 +112,84 @@ class EvidenceRoutingRuntimeMixin:
             model_role=ModelExecutionRole.COORDINATOR,
         )
         try:
-            request = build_manual_evidence_request(
-                profile_id=profile.id,
-                user_request=classifier_input.user_request,
+            attachment_count = len(self._image_attachments.for_turn(turn.id))
+            envelopes = build_classifier_input_envelopes(
                 source_message_id=classifier_input.source_message_id,
-                selection=selection,
-                use_structured_output=structured,
-                attachment_count=len(self._image_attachments.for_turn(turn.id)),
-                prior_interpretation=classifier_input.prior_interpretation,
+                content=classifier_input.user_request,
+                attachment_count=attachment_count,
             )
-            chunks: list[str] = []
-            candidates: dict[str, ToolCandidate] = {}
-            for delta in self._providers.stream(
-                request,
-                cancellation,
-                on_attempt=self._provider_attempts.observer(turn.id, 1, run=run),
-            ):
-                cancellation.raise_if_cancelled()
-                self._turns.require_active(turn.id)
-                if delta.kind is ModelDeltaKind.TEXT:
-                    if delta.text is None:
-                        raise EvidenceClassificationFailedError(
-                            "evidence classifier returned empty text"
+            outputs: list[EvidenceClassificationPayload] = []
+            for envelope in envelopes:
+                request = build_manual_evidence_request(
+                    profile_id=profile.id,
+                    user_request=classifier_input.user_request,
+                    source_message_id=classifier_input.source_message_id,
+                    selection=selection,
+                    use_structured_output=structured,
+                    attachment_count=attachment_count,
+                    prior_interpretation=classifier_input.prior_interpretation,
+                    classifier_envelope=envelope,
+                )
+                chunks: list[str] = []
+                candidates: dict[str, ToolCandidate] = {}
+                for delta in self._providers.stream(
+                    request,
+                    cancellation,
+                    on_attempt=self._provider_attempts.observer(
+                        turn.id,
+                        classifier_input.model_round,
+                        run=run,
+                    ),
+                ):
+                    cancellation.raise_if_cancelled()
+                    self._turns.require_active(turn.id)
+                    if delta.kind is ModelDeltaKind.TEXT:
+                        if delta.text is None:
+                            raise EvidenceClassificationFailedError(
+                                "evidence classifier returned empty text"
+                            )
+                        chunks.append(delta.text)
+                        if sum(map(len, chunks)) > 16_384:
+                            raise EvidenceClassificationFailedError(
+                                "evidence classifier response is too large"
+                            )
+                    elif delta.kind is ModelDeltaKind.TOOL_CALL:
+                        if delta.tool_call_id is None:
+                            raise EvidenceClassificationFailedError(
+                                "evidence classifier tool call has no id"
+                            )
+                        candidate = candidates.setdefault(
+                            delta.tool_call_id,
+                            ToolCandidate(call_id=delta.tool_call_id),
                         )
-                    chunks.append(delta.text)
-                    if sum(map(len, chunks)) > 16_384:
-                        raise EvidenceClassificationFailedError(
-                            "evidence classifier response is too large"
+                        candidate.append(delta)
+                try:
+                    if structured:
+                        if candidates:
+                            raise ValueError("structured evidence classifier called a tool")
+                        classified = parse_evidence_classification("".join(chunks))
+                    else:
+                        if len(candidates) != 1 or (chunks and "".join(chunks).strip()):
+                            raise ValueError(
+                                "tool evidence classifier returned an invalid response"
+                            )
+                        candidate = next(iter(candidates.values()))
+                        if candidate.name != "evidence.classify":
+                            raise ValueError("evidence classifier called an unknown tool")
+                        classified = parse_evidence_classification(
+                            json.dumps(
+                                candidate.arguments(),
+                                ensure_ascii=True,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            )
                         )
-                elif delta.kind is ModelDeltaKind.TOOL_CALL:
-                    if delta.tool_call_id is None:
-                        raise EvidenceClassificationFailedError(
-                            "evidence classifier tool call has no id"
-                        )
-                    candidate = candidates.setdefault(
-                        delta.tool_call_id,
-                        ToolCandidate(call_id=delta.tool_call_id),
-                    )
-                    candidate.append(delta)
-            try:
-                if structured:
-                    if candidates:
-                        raise ValueError("structured evidence classifier called a tool")
-                    classified = parse_evidence_classification("".join(chunks))
-                else:
-                    if len(candidates) != 1 or (chunks and "".join(chunks).strip()):
-                        raise ValueError("tool evidence classifier returned an invalid response")
-                    candidate = next(iter(candidates.values()))
-                    if candidate.name != "evidence.classify":
-                        raise ValueError("evidence classifier called an unknown tool")
-                    classified = parse_evidence_classification(
-                        json.dumps(
-                            candidate.arguments(),
-                            ensure_ascii=True,
-                            separators=(",", ":"),
-                            sort_keys=True,
-                        )
-                    )
-            except ValueError as error:
-                raise EvidenceClassificationFailedError(
-                    "evidence classifier returned invalid structured output"
-                ) from error
+                except ValueError as error:
+                    raise EvidenceClassificationFailedError(
+                        "evidence classifier returned invalid structured output"
+                    ) from error
+                outputs.append(classified)
+            classified = merge_evidence_outputs(tuple(outputs))
             return classified, run
         except (ProviderCancelledError, McpCancelledError):
             if cancellation.is_interrupted:

@@ -16,6 +16,8 @@ from fairy_core.domain.ids import new_id
 
 INTERPRETATION_SCHEMA_VERSION = 1
 INTERPRETATION_SEGMENT_CHARS = 16_384
+INTERPRETATION_ATTEMPT_CHARS = 65_536
+INTERPRETATION_MAX_ATTEMPTS = 16
 
 
 class RequestAction(StrEnum):
@@ -256,6 +258,57 @@ def build_classifier_input_envelope(
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+def build_classifier_input_envelopes(
+    *,
+    source_message_id: UUID,
+    content: str,
+    attachment_count: int,
+) -> tuple[str, ...]:
+    """Build bounded classifier attempts that cover the source exactly once."""
+
+    if attachment_count < 0:
+        raise ValueError("attachment count cannot be negative")
+    segments = _chunk_classifier_segments(segment_user_input(content))
+    attempts: list[list[ClassifierInputSegment]] = [[]]
+    attempt_characters = 0
+    for segment in segments:
+        if attempts[-1] and attempt_characters + len(segment.text) > INTERPRETATION_ATTEMPT_CHARS:
+            attempts.append([])
+            attempt_characters = 0
+        attempts[-1].append(segment)
+        attempt_characters += len(segment.text)
+    if len(attempts) > INTERPRETATION_MAX_ATTEMPTS:
+        raise ValueError("user request exceeds bounded classifier capacity")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    attempt_count = len(attempts)
+    segment_index = 0
+    envelopes: list[str] = []
+    for attempt_index, attempt in enumerate(attempts):
+        attempt_text = "".join(segment.text for segment in attempt)
+        payload: dict[str, Any] = {
+            "schema_version": INTERPRETATION_SCHEMA_VERSION,
+            "source_message_id": str(source_message_id),
+            "content_sha256": digest,
+            "content_characters": len(content),
+            "attachment_count": attachment_count,
+            "content_is_untrusted_user_data": True,
+            "attempt_index": attempt_index,
+            "attempt_count": attempt_count,
+            "attempt_sha256": hashlib.sha256(attempt_text.encode("utf-8")).hexdigest(),
+            "segments": [
+                {
+                    "index": segment_index + index,
+                    "kind": segment.kind.value,
+                    "text": segment.text,
+                }
+                for index, segment in enumerate(attempt)
+            ],
+        }
+        segment_index += len(attempt)
+        envelopes.append(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    return tuple(envelopes)
+
+
 def interpretation_from_classifier(
     *,
     turn_id: UUID,
@@ -308,6 +361,7 @@ def fallback_interpretation(
     normalized = " ".join(source_message.split())[:4_000]
     if not normalized:
         raise ValueError("user request is empty")
+    objective_goal = normalized[:2_000]
     return AssistantRequestInterpretationRevision.create(
         turn_id=turn_id,
         revision=revision,
@@ -315,7 +369,7 @@ def fallback_interpretation(
         source_message=source_message,
         normalized_goal=normalized,
         action=action,
-        objectives=(InterpretedObjective(normalized, action),),
+        objectives=(InterpretedObjective(objective_goal, action),),
         evidence_requirements=evidence_requirements,
         confidence=InterpretationConfidence.MEDIUM,
         disposition=InterpretationDisposition.READY,
@@ -327,38 +381,151 @@ def segment_user_input(content: str) -> tuple[ClassifierInputSegment, ...]:
     if not content:
         return (ClassifierInputSegment(InputSegmentKind.TEXT, ""),)
     result: list[ClassifierInputSegment] = []
-    cursor = 0
-    fenced = re.compile(
-        r"(^|\n)(?P<fence>`{3,}|~{3,})[^\n]*\n.*?(?:\n(?P=fence)(?=\n|$)|$)",
-        re.DOTALL,
-    )
-    for match in fenced.finditer(content):
-        if match.start() > cursor:
-            result.extend(_split_quotes(content[cursor : match.start()]))
-        result.append(ClassifierInputSegment(InputSegmentKind.CODE, match.group(0)))
-        cursor = match.end()
-    if cursor < len(content):
-        result.extend(_split_quotes(content[cursor:]))
+    lines = content.splitlines(keepends=True)
+    index = 0
+    plain: list[str] = []
+
+    def flush_plain() -> None:
+        if plain:
+            result.extend(_split_inline_literals("".join(plain)))
+            plain.clear()
+
+    while index < len(lines):
+        line = lines[index]
+        fence = re.match(r"^\s{0,3}(?P<fence>`{3,}|~{3,})", line)
+        if fence is not None:
+            flush_plain()
+            block = [line]
+            index += 1
+            delimiter = fence.group("fence")
+            closing = re.compile(
+                rf"^\s{{0,3}}{re.escape(delimiter[0])}{{{len(delimiter)},}}\s*(?:\r?\n)?$"
+            )
+            while index < len(lines):
+                block.append(lines[index])
+                candidate = lines[index]
+                index += 1
+                if closing.match(candidate):
+                    break
+            result.append(ClassifierInputSegment(InputSegmentKind.CODE, "".join(block)))
+            continue
+        if _PASTED_TEXT_START.match(line):
+            flush_plain()
+            block = [line]
+            index += 1
+            while index < len(lines):
+                block.append(lines[index])
+                candidate = lines[index]
+                index += 1
+                if _PASTED_TEXT_END.match(candidate):
+                    break
+            result.append(ClassifierInputSegment(InputSegmentKind.QUOTE, "".join(block)))
+            continue
+        if re.match(r"^(?: {4}|\t)", line):
+            flush_plain()
+            block = [line]
+            index += 1
+            while index < len(lines) and (
+                re.match(r"^(?: {4}|\t)", lines[index])
+                or not lines[index].strip()
+            ):
+                block.append(lines[index])
+                index += 1
+            result.append(ClassifierInputSegment(InputSegmentKind.CODE, "".join(block)))
+            continue
+        if re.match(r"^\s{0,3}>\s?", line):
+            flush_plain()
+            block = [line]
+            index += 1
+            while index < len(lines) and re.match(r"^\s{0,3}>\s?", lines[index]):
+                block.append(lines[index])
+                index += 1
+            result.append(ClassifierInputSegment(InputSegmentKind.QUOTE, "".join(block)))
+            continue
+        plain.append(line)
+        index += 1
+    flush_plain()
     return tuple(result) or (ClassifierInputSegment(InputSegmentKind.TEXT, content),)
 
 
-def _split_quotes(content: str) -> list[ClassifierInputSegment]:
+_PASTED_TEXT_START = re.compile(
+    r"^\s*(?:---+\s*)?(?:\[|<)?(?:begin|start)[ _-]+pasted[ _-]+text(?:\]|>)?"
+    r"(?:\s*---+)?\s*(?:\r?\n)?$",
+    re.IGNORECASE,
+)
+_PASTED_TEXT_END = re.compile(
+    r"^\s*(?:---+\s*)?(?:\[|<)?(?:end|stop)[ _-]+pasted[ _-]+text(?:\]|>)?"
+    r"(?:\s*---+)?\s*(?:\r?\n)?$",
+    re.IGNORECASE,
+)
+_QUOTE_PAIRS = {
+    '"': '"',
+    "“": "”",
+    "\u2018": "\u2019",
+    "「": "」",
+    "『": "』",
+}
+
+
+def _split_inline_literals(content: str) -> list[ClassifierInputSegment]:
     if not content:
         return []
     result: list[ClassifierInputSegment] = []
-    lines = content.splitlines(keepends=True)
-    pending_kind: InputSegmentKind | None = None
-    pending: list[str] = []
-    for line in lines:
-        kind = InputSegmentKind.QUOTE if re.match(r"^\s*>\s?", line) else InputSegmentKind.TEXT
-        if pending_kind is not None and kind is not pending_kind:
-            result.append(ClassifierInputSegment(pending_kind, "".join(pending)))
-            pending = []
-        pending_kind = kind
-        pending.append(line)
-    if pending_kind is not None:
-        result.append(ClassifierInputSegment(pending_kind, "".join(pending)))
+    cursor = 0
+    text_start = 0
+    while cursor < len(content):
+        character = content[cursor]
+        if character == "`":
+            delimiter_end = cursor + 1
+            while delimiter_end < len(content) and content[delimiter_end] == "`":
+                delimiter_end += 1
+            delimiter = content[cursor:delimiter_end]
+            closing = content.find(delimiter, delimiter_end)
+            literal_end = len(content) if closing < 0 else closing + len(delimiter)
+            if text_start < cursor:
+                result.append(
+                    ClassifierInputSegment(InputSegmentKind.TEXT, content[text_start:cursor])
+                )
+            result.append(
+                ClassifierInputSegment(InputSegmentKind.CODE, content[cursor:literal_end])
+            )
+            cursor = literal_end
+            text_start = cursor
+            continue
+        closing_quote = _QUOTE_PAIRS.get(character)
+        if closing_quote is not None and (cursor == 0 or content[cursor - 1] != "\\"):
+            closing = _find_unescaped(content, closing_quote, cursor + 1)
+            literal_end = len(content) if closing < 0 else closing + 1
+            if text_start < cursor:
+                result.append(
+                    ClassifierInputSegment(InputSegmentKind.TEXT, content[text_start:cursor])
+                )
+            result.append(
+                ClassifierInputSegment(InputSegmentKind.QUOTE, content[cursor:literal_end])
+            )
+            cursor = literal_end
+            text_start = cursor
+            continue
+        cursor += 1
+    if text_start < len(content):
+        result.append(ClassifierInputSegment(InputSegmentKind.TEXT, content[text_start:]))
     return result
+
+
+def _find_unescaped(content: str, needle: str, start: int) -> int:
+    cursor = start
+    while True:
+        cursor = content.find(needle, cursor)
+        if cursor < 0:
+            return -1
+        backslashes = 0
+        previous = cursor - 1
+        while previous >= 0 and content[previous] == "\\":
+            backslashes += 1
+            previous -= 1
+        if backslashes % 2 == 0:
+            return cursor
+        cursor += 1
 
 
 def _chunk_classifier_segments(
@@ -403,6 +570,8 @@ def _digest(value: str) -> None:
 
 
 __all__ = [
+    "INTERPRETATION_ATTEMPT_CHARS",
+    "INTERPRETATION_MAX_ATTEMPTS",
     "INTERPRETATION_SCHEMA_VERSION",
     "INTERPRETATION_SEGMENT_CHARS",
     "AssistantRequestInterpretationRevision",
@@ -415,6 +584,7 @@ __all__ = [
     "InterpretedObjective",
     "RequestAction",
     "build_classifier_input_envelope",
+    "build_classifier_input_envelopes",
     "fallback_interpretation",
     "interpretation_from_classifier",
     "segment_user_input",
