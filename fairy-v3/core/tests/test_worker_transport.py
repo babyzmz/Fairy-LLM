@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from time import monotonic
 
 import pytest
 
@@ -29,6 +32,69 @@ class InterruptingTransport(RecordingTransport):
     def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
         self.calls.append((method, params))
         raise WorkerRpcError("worker stopped")
+
+
+def test_close_interrupts_an_unresponsive_worker_even_through_restart_wrapper():
+    entered = Event()
+
+    class ObservedTransport(SubprocessWorkerTransport):
+        def _drain_stderr(self, source):
+            for line in source:
+                if line.strip() == "entered":
+                    entered.set()
+
+    script = """
+import json, sys, time
+for line in sys.stdin:
+    request = json.loads(line)
+    print("entered", file=sys.stderr, flush=True)
+    time.sleep(3)
+    print(json.dumps({"id": request["id"], "result": {"done": True}}), flush=True)
+"""
+    child = ObservedTransport(program=sys.executable, args=("-u", "-c", script), environment={})
+    created = []
+
+    def factory():
+        created.append(child)
+        return child
+
+    transport = RestartingWorkerTransport(factory)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(transport.call, "browser.actions.execute", {})
+        try:
+            assert entered.wait(2)
+            started = monotonic()
+            transport.close()
+            elapsed = monotonic() - started
+            assert elapsed < 2.8, f"close waited for the blocked request: {elapsed:.2f}s"
+            with pytest.raises(WorkerRpcError):
+                pending.result(timeout=1)
+            assert len(created) == 1, "closing must not restart the Worker"
+        finally:
+            transport.close()
+
+
+def test_worker_request_deadline_is_public_and_does_not_replay_side_effects():
+    script = """
+import sys, time
+for line in sys.stdin:
+    time.sleep(3)
+"""
+    transport = SubprocessWorkerTransport(
+        program=sys.executable,
+        args=("-u", "-c", script),
+        environment={},
+        request_timeout_seconds=0.1,
+    )
+    try:
+        with pytest.raises(WorkerRpcError) as error:
+            transport.call("browser.actions.execute", {"idempotency_key": "once"})
+        assert error.value.error_code == "WORKER_TIMEOUT"
+        assert "unknown" in str(error.value).lower()
+        with pytest.raises(WorkerRpcError):
+            transport.call("browser.actions.execute", {"idempotency_key": "once"})
+    finally:
+        transport.close()
 
 
 def test_subprocess_transport_keeps_one_worker_and_matches_response_ids() -> None:

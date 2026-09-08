@@ -224,6 +224,7 @@ def build_local_service(
                 lambda: SubprocessWorkerTransport(
                     program=browser_worker_program,
                     args=browser_worker_args,
+                    request_timeout_seconds=120,
                     environment={"FAIRY_BROWSER_DATA_DIR": str(data_dir / "browser")},
                     current_directory=(
                         Path(browser_worker_args[0]).parent if browser_worker_args else None

@@ -8,6 +8,7 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
+from queue import Empty, Full, Queue
 from typing import Any, ClassVar, Protocol, TextIO
 
 from fairy_core.system_actions.models import SystemActionWorkerResult
@@ -98,7 +99,10 @@ class SubprocessWorkerTransport:
         args: Sequence[str],
         environment: Mapping[str, str],
         current_directory: Path | None = None,
+        request_timeout_seconds: float | None = None,
     ) -> None:
+        if request_timeout_seconds is not None and request_timeout_seconds <= 0:
+            raise ValueError("Worker request timeout must be positive")
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         self._process = subprocess.Popen(
             [program, *args],
@@ -119,19 +123,32 @@ class SubprocessWorkerTransport:
         self._stdin: TextIO = self._process.stdin
         self._stdout: TextIO = self._process.stdout
         self._lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._closed = threading.Event()
+        self._timeout = request_timeout_seconds
+        self._responses: Queue[str] = Queue(maxsize=2)
+        self._reader_failed = threading.Event()
         self._request_id = 0
         self._stderr: deque[str] = deque(maxlen=50)
+        self._reader = threading.Thread(
+            target=self._read_stdout,
+            daemon=True,
+            name="fairy-worker-stdout",
+        )
+        self._reader.start()
+        self._stderr_reader: threading.Thread | None = None
         if self._process.stderr is not None:
-            threading.Thread(
+            self._stderr_reader = threading.Thread(
                 target=self._drain_stderr,
                 args=(self._process.stderr,),
                 daemon=True,
                 name="fairy-worker-stderr",
-            ).start()
+            )
+            self._stderr_reader.start()
 
     def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
         with self._lock:
-            if self._process.poll() is not None:
+            if self._closed.is_set() or self._process.poll() is not None:
                 raise WorkerRpcError(self._interrupted_message())
             self._request_id += 1
             request = {
@@ -144,10 +161,16 @@ class SubprocessWorkerTransport:
                 self._stdin.write(json.dumps(request, ensure_ascii=False, separators=(",", ":")))
                 self._stdin.write("\n")
                 self._stdin.flush()
-                line = self._stdout.readline()
+                line = self._responses.get(timeout=self._timeout)
+            except Empty as error:
+                self.close()
+                raise WorkerRpcError(
+                    "Worker request timed out; operation result is unknown and was not retried.",
+                    error_code="WORKER_TIMEOUT",
+                ) from error
             except (BrokenPipeError, OSError) as error:
                 raise WorkerRpcError(self._interrupted_message()) from error
-            if not line:
+            if not line or self._closed.is_set() or self._reader_failed.is_set():
                 raise WorkerRpcError(self._interrupted_message())
             try:
                 response: dict[str, Any] = json.loads(line)
@@ -169,19 +192,46 @@ class SubprocessWorkerTransport:
             return result
 
     def close(self) -> None:
-        with self._lock:
-            if self._process.poll() is not None:
-                return
-            self._stdin.close()
+        # Do not wait for the request lock: its owner may be waiting for this process.
+        with self._close_lock:
+            self._closed.set()
+            idle = self._lock.acquire(blocking=False)
             try:
-                self._process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._process.terminate()
+                if self._process.poll() is None:
+                    if idle:
+                        self._stdin.close()
+                    else:
+                        self._process.terminate()
+                    try:
+                        self._process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self._process.kill()
+                        self._process.wait(timeout=2)
+            finally:
+                if idle:
+                    self._lock.release()
+            self._reader.join(timeout=2)
+            if self._stderr_reader is not None:
+                self._stderr_reader.join(timeout=2)
+            for stream in (self._stdin, self._stdout, self._process.stderr):
+                if stream is not None:
+                    stream.close()
+
+    def _read_stdout(self) -> None:
+        try:
+            for line in self._stdout:
                 try:
-                    self._process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    self._process.kill()
-                    self._process.wait(timeout=2)
+                    self._responses.put_nowait(line)
+                except Full:
+                    self._reader_failed.set()
+                    with suppress(OSError):
+                        self._process.kill()
+                    return
+        except (OSError, UnicodeError):
+            self._reader_failed.set()
+        finally:
+            with suppress(Full):
+                self._responses.put_nowait("")
 
     def _drain_stderr(self, source: TextIO) -> None:
         for line in source:
@@ -199,19 +249,25 @@ class RestartingWorkerTransport:
         self._factory = factory
         self._transport = factory()
         self._lock = threading.RLock()
+        self._state_lock = threading.RLock()
+        self._closed = False
         self._generation = 0
 
     @property
     def generation(self) -> int:
-        with self._lock:
+        with self._state_lock:
             return self._generation
 
     def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
         with self._lock:
+            with self._state_lock:
+                if self._closed:
+                    raise WorkerRpcError("Browser Worker is closed")
+                transport = self._transport
             try:
-                return self._transport.call(method, params)
+                return transport.call(method, params)
             except WorkerRpcError as error:
-                if error.error_code != "WORKER_INTERRUPTED":
+                if error.error_code not in {"WORKER_INTERRUPTED", "WORKER_TIMEOUT"}:
                     raise
                 self._restart(error)
                 if method == "browser.health":
@@ -219,20 +275,25 @@ class RestartingWorkerTransport:
                 raise
 
     def close(self) -> None:
-        with self._lock:
-            self._transport.close()
+        with self._state_lock:
+            self._closed = True
+            transport = self._transport
+        transport.close()
 
     def _restart(self, original_error: WorkerRpcError) -> None:
-        previous = self._transport
-        with suppress(Exception):
-            previous.close()
-        self._generation += 1
-        try:
-            self._transport = self._factory()
-        except Exception as restart_error:
-            raise WorkerRpcError(
-                f"{original_error}; worker restart failed: {restart_error}"
-            ) from original_error
+        with self._state_lock:
+            if self._closed:
+                raise original_error
+            previous = self._transport
+            with suppress(Exception):
+                previous.close()
+            self._generation += 1
+            try:
+                self._transport = self._factory()
+            except Exception as restart_error:
+                raise WorkerRpcError(
+                    f"{original_error}; worker restart failed: {restart_error}"
+                ) from original_error
 
 
 def _worker_environment(overrides: Mapping[str, str]) -> dict[str, str]:
