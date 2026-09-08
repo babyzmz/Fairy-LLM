@@ -308,16 +308,23 @@ async function stopSession(params) {
 
 async function openTab(params) {
   const session = requiredSession(params.session_id);
+  const previousActiveTabId = session.activeTabId;
   const page = await session.context.newPage();
-  const tab = attachPage(session, page);
-  session.activeTabId = tab.id;
-  if (params.url !== "about:blank") {
-    await authorizeNavigation(tab, params.url);
-    await tab.websocketBoundaryReady;
-    await page.goto(params.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  try {
+    const tab = attachPage(session, page);
+    session.activeTabId = tab.id;
+    if (params.url !== "about:blank") {
+      await authorizeNavigation(tab, params.url);
+      await tab.websocketBoundaryReady;
+      await page.goto(params.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    }
+    await synchronizePageRevision(tab);
+    return sessionResult(session);
+  } catch (error) {
+    await page.close().catch(() => undefined);
+    if (session.tabs.has(previousActiveTabId)) session.activeTabId = previousActiveTabId;
+    throw error;
   }
-  await synchronizePageRevision(tab);
-  return sessionResult(session);
 }
 
 async function selectTab(params) {

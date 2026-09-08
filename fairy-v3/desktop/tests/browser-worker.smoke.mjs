@@ -270,6 +270,17 @@ try {
   assert.equal(firstReload.replayed, false);
   assert.equal(secondReload.replayed, false);
 
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await assert.rejects(call("browser.tabs.open", {
+      session_id: persistentSessionId,
+      url: "file:///blocked-by-browser-policy",
+    }), /blocked/);
+  }
+  const afterRejectedTabs = await call("browser.tabs.select", {
+    session_id: persistentSessionId, tab_id: firstPersistent.active_tab_id,
+  });
+  assert.equal(afterRejectedTabs.tabs.length, 1, "Rejected tab opens must not leak pages");
+
   await assert.rejects(
     call("browser.actions.execute", {
       session_id: sessionId,
@@ -289,5 +300,7 @@ try {
   await Promise.race([once(worker, "exit"), new Promise((resolve) => setTimeout(resolve, 5_000))]);
   if (worker.exitCode === null) worker.kill();
   server.close();
+  assert.equal(path.dirname(path.resolve(profileRoot)), path.resolve(os.tmpdir()));
+  assert.equal(path.basename(profileRoot), `fairy-browser-smoke-${process.pid}`);
   await rm(profileRoot, { recursive: true, force: true });
 }

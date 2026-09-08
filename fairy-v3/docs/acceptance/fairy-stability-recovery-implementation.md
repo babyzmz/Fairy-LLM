@@ -274,6 +274,13 @@
 - 已使用独立Metadata类型并持久化UTF-8字节数；数MB正文场景先复现3次目录/概览/Graph查询都读取全文，修复后不选择content/frontmatter/provenance。22项Knowledge/Obsidian/Harness回归通过（12.30秒），包含旧Snapshot、改名、删除和同步；41项Cloud部署契约通过（3.68秒），相关Ruff通过。
 - SQLite升级/重开/Unicode及中断回滚已验。故障注入曾复现DDL已提交但回填失败，现显式事务保护并在锁内再次检查，避免半迁移和并发启动重复加列。Cloud新增0058，原单head断言随已批准增量迁移更新，保留全部历史链断言；实际PostgreSQL未运行，用户数据库尚未迁移。
 
+### Phase 5F：Browser驻留资源与失败清理
+
+- Worker先做硬上限（4 Session/12 Tab，弹窗计入），容量失败不驱逐活动任务。Core随后负责活跃Task固定、空闲LRU/5分钟释放、保留恢复元数据和公开容量状态；Worker不复制业务Scheduler。
+- 先检查失败动作是否遗留页面：受阻新Tab必须关闭并恢复原活动Tab，连续20次失败不能累积页面；已有Session、下载策略和引用版本不变。真实Edge Worker与本机HTTP测试端点验收，不连接用户账号或访问用户页面。
+- 真实headless Edge失败复现：20次受阻file导航后1页增长到21页。openTab现于失败后关闭新页并恢复先前活动Tab；相同20次循环保持1页，完整Worker smoke通过（8.90秒），含网络隔离、秘密字段/危险动作拒绝、动态引用失效及多Session。Core Browser14项通过（0.72秒），Node语法检查通过；尚不代表Tauri可见Browser面板硬件验收。测试临时目录清理增加绝对父目录和命名检查。
+- 资源回收和新操作由同一所有者串行确认，释放失败不假报容量已空闲；恢复创建新Session/Tab身份，旧Element Ref永久失效。Native用户操作与真实Agent长任务固定留到联合门禁。
+
 ### Phase 3B：事件提交唤醒与推送验收契约
 
 - 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。
