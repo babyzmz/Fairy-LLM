@@ -42,6 +42,7 @@ from fairy_core.domain.models import ScopeContract, Task
 from fairy_core.knowledge.harness import HarnessManifestBuilder, KnowledgeSnapshotBuilder
 from fairy_core.model_catalog.models import ModelSelectionSnapshot
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
+from fairy_core.providers import ProviderErrorCategory
 from fairy_core.storage.pagination import StatePage
 from fairy_core.storage.ports import StateStore
 from fairy_core.workflow.models import (
@@ -558,6 +559,45 @@ class AssistantLedgerApplication:
                 cursor=cursor,
                 allowed_visibilities=frozenset({MessageVisibility.USER}),
             )
+
+    def recover_local_cancelled_model_streams(self) -> int:
+        """Only called by the exclusive local startup owner, never ordinary recovery.
+
+        No tool result is inferred and no model request is replayed. Provider billing
+        may still be unknown even though the previous local stream no longer exists.
+        """
+        if self._execution_target is not ExecutionTarget.LOCAL:
+            raise RuntimeError("Exclusive model stream recovery is local-only")
+        recovered = 0
+        while True:
+            with self._unit_of_work_factory() as unit:
+                attempts = unit.assistant.cancelled_provider_attempts()
+                if not attempts:
+                    return recovered
+                turn_ids = {attempt.turn_id for attempt in attempts}
+                for attempt in attempts:
+                    attempt.fail(
+                        error_category=ProviderErrorCategory.UNKNOWN,
+                        usage=dict(attempt.usage), usage_cost=attempt.usage_cost,
+                    )
+                    unit.assistant.update_provider_attempt(attempt)
+                for turn_id in turn_ids:
+                    turn = require_turn(unit, turn_id)
+                    pending = turn.cancellation_pending
+                    unit.commands.append_domain_event(
+                        event_type=("assistant.turn.recovery_required" if pending
+                                    else "assistant.turn.cancelled"),
+                        visibility=EventVisibility.USER,
+                        message=(
+                            "Cancelled task still has an operation with an unknown outcome"
+                            if pending else "Cancelled model stream ended with the previous Core"
+                        ),
+                        payload={"turn_id": str(turn_id), "error_code": "CORE_STREAM_INTERRUPTED"},
+                        actor="core:recovery", conversation_id=turn.conversation_id,
+                        task_id=turn.task_id,
+                    )
+                unit.commit()
+                recovered += len(attempts)
 
     def recover_orphaned_turns(self) -> tuple[AssistantTurn, ...]:
         with self._unit_of_work_factory() as unit_of_work:

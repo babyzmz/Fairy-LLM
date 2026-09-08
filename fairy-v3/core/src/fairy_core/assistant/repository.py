@@ -70,6 +70,7 @@ from fairy_core.storage.schema import (
     assistant_tool_invocations,
     assistant_turns,
     conversation_moves,
+    tasks,
     workflow_runs,
 )
 from fairy_core.workflow.models import WorkflowRunStatus
@@ -325,6 +326,30 @@ class SqlAlchemyAssistantRepository(
             )
         if result.rowcount != 1:
             raise InvalidTransitionError("Provider Attempt changed concurrently")
+
+    def cancelled_provider_attempts(self, *, limit: int = 100) -> tuple[ProviderAttempt, ...]:
+        if not 1 <= limit <= 100:
+            raise ValueError("cancelled Provider Attempt batch must be between 1 and 100")
+        with self._session.read() as connection:
+            rows = connection.execute(
+                select(assistant_provider_attempts).where(
+                    assistant_provider_attempts.c.tenant_id == self._tenant_id,
+                    assistant_provider_attempts.c.status == "started",
+                    assistant_provider_attempts.c.turn_id.in_(
+                        select(assistant_turns.c.id).where(
+                            assistant_turns.c.tenant_id == self._tenant_id,
+                            assistant_turns.c.status == AssistantTurnStatus.CANCELLED.value,
+                            assistant_turns.c.task_id.in_(
+                                select(tasks.c.id).where(
+                                    tasks.c.tenant_id == self._tenant_id,
+                                    tasks.c.execution_target == "local",
+                                )
+                            ),
+                        )
+                    ),
+                ).order_by(assistant_provider_attempts.c.id).limit(limit)
+            ).mappings().all()
+        return tuple(self._provider_attempt_from_row(row) for row in rows)
 
     def list_provider_attempts(self, turn_id: UUID) -> tuple[ProviderAttempt, ...]:
         with self._session.read() as connection:

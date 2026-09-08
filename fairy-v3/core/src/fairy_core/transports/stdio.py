@@ -283,6 +283,8 @@ def build_local_service(
             default_execution_target="local",
             on_close=resources.close,
         )
+        # DataDirectoryLock above proves the previous local stream owner has exited.
+        service._assistant_ledger.recover_local_cancelled_model_streams()
         service.recover_interrupted_work(verify_running_previews=True)
         return service
     except BaseException:
