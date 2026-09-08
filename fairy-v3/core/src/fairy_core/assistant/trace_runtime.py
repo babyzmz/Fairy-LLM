@@ -162,8 +162,9 @@ class TurnTraceRuntime:
         self._append_step_event(unit_of_work, run=run, step=step, event_type="created")
         return step
 
+    @classmethod
     def transition_step_in_unit(
-        self,
+        cls,
         unit_of_work,
         *,
         step_id: UUID,
@@ -192,11 +193,12 @@ class TurnTraceRuntime:
             TraceStepStatus.SUCCEEDED: "completed",
             TraceStepStatus.FAILED: "failed",
         }.get(step.status, "updated")
-        self._append_step_event(unit_of_work, run=run, step=step, event_type=event_type)
+        cls._append_step_event(unit_of_work, run=run, step=step, event_type=event_type)
         return step
 
+    @classmethod
     def transition_command_step_in_unit(
-        self,
+        cls,
         unit_of_work,
         *,
         run: CommandRun,
@@ -212,7 +214,7 @@ class TurnTraceRuntime:
         )
         if step is None or step.is_terminal:
             return step
-        return self.transition_step_in_unit(
+        return cls.transition_step_in_unit(
             unit_of_work,
             step_id=step.id,
             run=run,

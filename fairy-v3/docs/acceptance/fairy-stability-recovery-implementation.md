@@ -38,6 +38,7 @@
 
 ### Phase 6：领域结果与中途修订边界
 
+- 尚未执行的工具审批允许被新任务要求替代：关闭旧待定审批、保留已有批准事实并取消旧命令，同轮未派发项一并拒绝；与新计划在同一事务保存。8个双会话/单与多调用/重启与重放组合通过，相关审批、Steering、媒体与Trace合计33项通过（53.04秒）。见[专项证据](steering-pending-approvals.md)。预算/Changeset审批不由此自动放开。
 - 模型Command失败收尾只重新领取已过期租约，不借用仍有效的新持有者身份，也不重放Provider；提交`d1039e1af`，16项定向回归通过，见[专项证据](workflow-model-failure-settlement.md)。仍活跃的外部命令保留原所有者，不宣称物理停止。
 - Deadline维护与Turn/Task/Trace失败投影在同一事务中结算；空闲领取、心跳、Adapter入口均接线。旧失败Run的残留非终态Turn在启动时每批64条恢复；超时SQL过滤、分批和独立续租期限检查防止积压任务越期执行。11项定向通过；完整Assistant＋Workflow397项通过（312.26秒）。见[专项证据](workflow-deadline-projection.md)。真实PostgreSQL锁竞争未验收；普通重试/等待预算耗尽及审批Steering仍需后续门禁。
 - Trace失败事件不再借用其他Worker的Command租约，提交`0509bc79c`；Assistant完整回归320项通过（250.44秒），见[专项证据](workflow-trace-failure-authority.md)。

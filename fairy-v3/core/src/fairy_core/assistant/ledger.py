@@ -30,6 +30,7 @@ from fairy_core.assistant.workflow_plan import (
     assistant_step_workflow_plan,
     assistant_workflow_plan,
 )
+from fairy_core.assistant.workflow_supersession import can_supersede_tool_approval
 from fairy_core.commanding.models import CommandStatus, EventVisibility
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
@@ -672,7 +673,10 @@ class AssistantLedgerApplication:
                 value.status is WorkflowInstructionStatus.PENDING for value in snapshot.instructions
             ):
                 raise InvalidTransitionError("Assistant Workflow already has a pending update")
-            if replay is None and snapshot.run.status is WorkflowRunStatus.WAITING_FOR_APPROVAL:
+            if (
+                replay is None and snapshot.run.status is WorkflowRunStatus.WAITING_FOR_APPROVAL
+                and not can_supersede_tool_approval(unit_of_work, snapshot, turn)
+            ):
                 raise InvalidTransitionError(
                     "Resolve the current approval before updating this task"
                 )
