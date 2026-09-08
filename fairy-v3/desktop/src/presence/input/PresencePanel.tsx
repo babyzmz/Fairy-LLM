@@ -67,6 +67,8 @@ export interface PresenceSubmissionCard {
 }
 
 interface PresencePanelProps {
+  canCancelTurn?: boolean;
+  stopping?: boolean;
   actions: PresencePanelActions;
   alwaysOnTop: boolean;
   autoPlay: boolean;
@@ -94,6 +96,8 @@ const PRESENCE_COMPACT_INPUT_CHROME_WIDTH = 104;
 const PRESENCE_COMPACT_INPUT_LINE_HEIGHT = 20;
 
 export function PresencePanel({
+  canCancelTurn = false,
+  stopping = false,
   actions,
   alwaysOnTop,
   autoPlay,
@@ -174,7 +178,7 @@ export function PresencePanel({
     const duplicate =
       lastSubmission.current?.text === value &&
       now - lastSubmission.current.submittedAt < 1_000;
-    if (value.length === 0 || composing.current || submitting || !interactive || duplicate) {
+    if (canCancelTurn || value.length === 0 || composing.current || submitting || !interactive || duplicate) {
       return;
     }
     lastSubmission.current = { text: value, submittedAt: now };
@@ -391,7 +395,14 @@ export function PresencePanel({
               value={draft}
             />
           </div>
-          <button
+          {canCancelTurn ? <button
+            aria-label={stopping ? "Stopping current task" : "Stop current task"}
+            className="presence-send-button"
+            disabled={!interactive || stopping}
+            onClick={actions.cancelTurn}
+            title="Stop current task"
+            type="button"
+          ><Square size={15} /></button> : <button
             aria-label="Send quick message"
             className="presence-send-button"
             disabled={!interactive || draft.trim() === "" || submitting}
@@ -399,7 +410,7 @@ export function PresencePanel({
             type="submit"
           >
             <Send size={15} />
-          </button>
+          </button>}
         </m.form>
       ) : null}
 

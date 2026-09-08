@@ -14,11 +14,11 @@ export type PresenceRequest =
   | { kind: "input.state"; open: boolean; focused: boolean }
   | { kind: "voice.stop" };
 
-export type PresenceSubmissionFailure = "offline" | "busy" | "unavailable";
+export type PresenceSubmissionFailure = "offline" | "busy" | "unavailable" | "uncertain";
 
 export interface PresenceSubmissionUpdate {
   submission_id: string;
-  status: "accepted" | "failed" | "cancelled";
+  status: "accepted" | "failed" | "cancelled" | "cancelling";
   failure: PresenceSubmissionFailure | null;
 }
 
@@ -80,8 +80,8 @@ const requestSchema = z.discriminatedUnion("kind", [
 const submissionSchema = z
   .object({
     submission_id: submissionIdSchema,
-    status: z.enum(["accepted", "failed", "cancelled"]),
-    failure: z.enum(["offline", "busy", "unavailable"]).nullable(),
+    status: z.enum(["accepted", "failed", "cancelled", "cancelling"]),
+    failure: z.enum(["offline", "busy", "unavailable", "uncertain"]).nullable(),
   })
   .strict()
   .refine(

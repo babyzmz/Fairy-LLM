@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { createPetChatTransport, type PetChatTransport } from "./petChat";
 
 import type {
   DesktopPreferences,
@@ -18,6 +19,7 @@ export interface PetPreferencePatch {
 }
 
 export interface PetHost {
+  chat?: PetChatTransport;
   getPreferences(): Promise<DesktopPreferences>;
   updatePreferences(input: PetPreferencePatch): Promise<DesktopPreferences>;
   onPreferences(listener: (preferences: DesktopPreferences) => void): Promise<() => void>;
@@ -69,6 +71,7 @@ export interface PetInputPresentationCommit {
 export function createDefaultPetHost(): PetHost {
   if (!isTauri()) return createBrowserPetHost();
   return {
+    chat: createPetChatTransport() ?? undefined,
     getPreferences: () => invoke("desktop_preferences_get"),
     updatePreferences: (input) => invoke("pet_preferences_update", { input }),
     async onPreferences(listener) {

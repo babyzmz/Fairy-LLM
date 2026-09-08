@@ -52,6 +52,7 @@ export interface PresenceAmbientDialogue {
 }
 
 export interface PresenceProjectionState {
+  realtime_active?: boolean;
   activity: PresenceActivity;
   work_state: PresenceWorkState;
   status_text: string;
@@ -99,6 +100,8 @@ const PRESENCE_STATUS_TEXTS = [
   "Realtime privacy pause is active",
   "Realtime resources are limited",
   "Realtime companion needs attention",
+  "Stopping current task",
+  "Core connection unavailable",
 ] as const;
 const PRESENCE_NOTICE_TEXTS = [
   "Preview is ready",
@@ -112,6 +115,7 @@ const PRESENCE_NOTICE_TEXTS = [
 
 export const presenceProjectionStateSchema = z
   .object({
+    realtime_active: z.boolean().optional(),
     activity: z.enum([
       "ambient",
       "attending",

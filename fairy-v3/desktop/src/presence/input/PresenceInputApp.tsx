@@ -8,6 +8,8 @@ import {
   useState,
 } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import { mergePetChatProjection, type PetChatContext } from "../host/petChat";
+import { PetChatController } from "../host/petChatController";
 
 import {
   type DesktopPreferences,
@@ -141,9 +143,19 @@ export function PresenceInputApp({
   const latestInputPresentation = useRef<PresenceInputPresentation>(
     DEFAULT_INPUT_PRESENTATION,
   );
-  const [projection, setProjection] = useState<PresenceProjectionState>(() =>
+  const [baseProjection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
   );
+  const [hostChat, setHostChat] = useState<{ context: PetChatContext; updatedAt: number } | null>(null);
+  const chatController = useRef<PetChatController | null>(null);
+  const lastNewChatRequestId = useRef<string | null>(null);
+  const requestNewChat = useCallback(() => {
+    if (!host.chat) { channel.requestNewChat(); return; }
+    const id = createPresenceSubmissionId();
+    lastNewChatRequestId.current = id;
+    chatController.current?.newChat(id);
+  }, [host, channel]);
+  const projection = mergePetChatProjection(baseProjection, hostChat?.context ?? null, hostChat?.updatedAt ?? 0);
   const motionSnapshot = useRef<FairyMotionSnapshot>(
     DEFAULT_FAIRY_MOTION_SNAPSHOT,
   );
@@ -273,10 +285,6 @@ export function PresenceInputApp({
   useEffect(() => {
     const stop = channel.onProjection((next) => {
       setProjection(next);
-      setClosedReplyId((current) => (current === next.reply?.id ? current : null));
-      setClosedAmbientId((current) =>
-        current === next.ambient_dialogue?.presentation_id ? current : null,
-      );
       setClock(now());
     });
     channel.requestProjection();
@@ -284,11 +292,34 @@ export function PresenceInputApp({
   }, [channel, now]);
 
   useEffect(() => {
+    setClosedReplyId((current) => current === projection.reply?.id ? current : null);
+    setClosedAmbientId((current) => current === projection.ambient_dialogue?.presentation_id ? current : null);
+  }, [projection.reply?.id, projection.ambient_dialogue?.presentation_id]);
+
+  useEffect(() => {
+    if (!host.chat) return;
+    const controller = new PetChatController(host.chat, (context) => {
+      const updatedAt = now();
+      setHostChat({ context, updatedAt });
+      setClock(updatedAt);
+    }, (update) => setSubmission((current) => {
+      if (update.submission_id === lastNewChatRequestId.current && update.status === "failed") {
+        return { id: update.submission_id, text: "", phase: "failed", failure: update.failure };
+      }
+      return applySubmissionUpdate(current, update);
+    }));
+    chatController.current = controller;
+    controller.start();
+    return () => { controller.close(); chatController.current = null; };
+  }, [host, now]);
+
+  useEffect(() => {
+    if (host.chat) return;
     const stop = channel.onSubmission((update) => {
       setSubmission((current) => applySubmissionUpdate(current, update));
     });
     return stop;
-  }, [channel]);
+  }, [channel, host]);
 
   useDeferredChannelClose(channel, suppliedChannel === undefined);
 
@@ -394,7 +425,7 @@ export function PresenceInputApp({
     });
     void host.onNewChatRequested(() => {
       if (disposed) return;
-      channel.requestNewChat();
+      requestNewChat();
       setMenuOpen(false);
       transitionInputIntent(true, { type: "open" }, true);
     }).then((stop) => {
@@ -411,7 +442,7 @@ export function PresenceInputApp({
       stopMenu?.();
       stopNewChat?.();
     };
-  }, [channel, host, transitionInputIntent]);
+  }, [channel, host, requestNewChat, transitionInputIntent]);
 
   useEffect(() => {
     if (preferences === null || legacyPositionMigrationAttempted.current) return;
@@ -548,6 +579,13 @@ export function PresenceInputApp({
       ? null
       : view.ambient_dialogue;
   const submissionCard = toSubmissionCard(submission);
+  const canCancelHostTurn = !!host.chat && (
+    hostChat?.context.submission != null ||
+    (hostChat?.context.turn != null && (
+      hostChat.context.turn.cancellation_pending ||
+      !["completed", "cancelled", "failed"].includes(hostChat.context.turn.status)
+    )) || submission?.phase === "sending" || submission?.phase === "cancelling"
+  );
   const menuBlocked =
     view.notice !== null ||
     reply !== null ||
@@ -596,6 +634,7 @@ export function PresenceInputApp({
       input_content_visible: hoverGate.content_visible,
       input_interactive: hoverGate.interactive,
       manual_input_open: manualInputOpen,
+      allow_work_input: canCancelHostTurn,
       menu_open: effectiveMenuOpen,
       reply,
       ambient_dialogue: ambientDialogue !== null,
@@ -688,6 +727,13 @@ export function PresenceInputApp({
       setSubmission(null);
     }
   }, [reply?.id, reply?.streaming, view.notice?.id]);
+
+  useEffect(() => {
+    const context = hostChat?.context;
+    if (context?.submission !== null || !context?.turn || context.turn.cancellation_pending ||
+      !["completed", "cancelled", "failed"].includes(context.turn.status)) return;
+    setSubmission((current) => current?.phase === "accepted" || current?.phase === "cancelling" ? null : current);
+  }, [hostChat]);
 
   useEffect(() => {
     if (inputPresentationSessionId === null) return;
@@ -956,7 +1002,8 @@ export function PresenceInputApp({
   function sendMessage(text: string) {
     const id = createPresenceSubmissionId();
     setSubmission({ id, text, phase: "sending", failure: null });
-    channel.requestChatSend(text, id);
+    if (host.chat) chatController.current?.send(id, text);
+    else channel.requestChatSend(text, id);
   }
 
   function cancelTurn() {
@@ -967,7 +1014,8 @@ export function PresenceInputApp({
       phase: "cancelling",
       failure: null,
     }));
-    channel.requestChatCancel(id);
+    if (host.chat) chatController.current?.cancel(id);
+    else channel.requestChatCancel(id);
   }
 
   function retrySubmission() {
@@ -1074,7 +1122,7 @@ export function PresenceInputApp({
           },
           dismissNotice,
           exit: () => void host.exit(),
-          newChat: () => channel.requestNewChat(),
+          newChat: requestNewChat,
           openMain: () => {
             channel.requestWorkspaceOpen();
             void host.openMain().catch(() => undefined);
@@ -1114,6 +1162,8 @@ export function PresenceInputApp({
           stopVoice: () => channel.requestVoiceStop(),
         }}
         alwaysOnTop={alwaysOnTop}
+        canCancelTurn={canCancelHostTurn}
+        stopping={submission?.phase === "cancelling" || hostChat?.context.turn?.cancellation_pending === true}
         autoPlay={autoPlay}
         voiceStatus={voiceStatus}
         focusRequest={focusRequest}

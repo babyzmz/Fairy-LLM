@@ -48,6 +48,13 @@ pub struct PetChatContext {
     pub turn: Option<PetTurnProjection>,
     pub reply: Option<PetReplyProjection>,
     pub connection_available: bool,
+    pub submission: Option<PetSubmissionProjection>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PetSubmissionProjection {
+    pub id: String,
+    pub revision: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -130,6 +137,11 @@ impl PetChatBroker {
             conversation_id,
         });
         state.active_submission = Some(id.into());
+        advance_projection(&mut state.context)?;
+        state.context.submission = Some(PetSubmissionProjection {
+            id: id.into(),
+            revision,
+        });
         Ok(())
     }
 
@@ -137,6 +149,8 @@ impl PetChatBroker {
         if let Ok(mut state) = self.state.lock() {
             if state.active_submission.as_deref() == Some(id) {
                 state.active_submission = None;
+                state.context.submission = None;
+                let _ = advance_projection(&mut state.context);
             }
         }
     }
@@ -537,6 +551,10 @@ mod tests {
         assert!(broker.submission_cancel_request(0, "invented").is_err());
         broker.begin_submission(0, "before-chat", "Hello").unwrap();
         assert_eq!(
+            broker.context().unwrap().submission.unwrap().id,
+            "before-chat"
+        );
+        assert_eq!(
             broker.submission_cancel_request(0, "before-chat").unwrap(),
             json!({"idempotency_key": "pet:before-chat", "conversation_id": null})
         );
@@ -550,6 +568,7 @@ mod tests {
             .submission_cancel_request(bound.revision, "before-chat")
             .is_err());
         broker.end_submission("before-chat");
+        assert!(broker.context().unwrap().submission.is_none());
         broker
             .begin_submission(bound.revision, "bound-send", "Hello")
             .unwrap();

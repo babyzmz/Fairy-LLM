@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPetChatTransport, mergePetChatProjection, observePetChat, type PetChatContext, type PetChatTransport } from "../host/petChat";
 
 import {
   resolvePresenceExperimentMode,
@@ -70,6 +71,7 @@ import "../presence.css";
 import "./presence-render.css";
 
 interface PresenceRenderAppProps {
+  chatTransport?: PetChatTransport | null;
   channel?: PresenceChannel;
   interactionSource?: PresenceInteractionSource;
   inputPresentationChannel?: PresenceInputPresentationChannel;
@@ -85,6 +87,7 @@ interface PresenceRenderAppProps {
 }
 
 export function PresenceRenderApp({
+  chatTransport: suppliedChatTransport,
   channel: suppliedChannel,
   interactionSource: suppliedInteractionSource,
   inputPresentationChannel: suppliedInputPresentationChannel,
@@ -118,10 +121,21 @@ export function PresenceRenderApp({
   const [rendererHealthHost] = useState(
     () => suppliedRendererHealthHost ?? createPresenceRendererHealthHost(),
   );
-  const [projection, setProjection] = useState<PresenceProjectionState>(() =>
+  const [baseProjection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
   );
+  const [chatTransport] = useState(() => suppliedChatTransport === undefined ? createPetChatTransport() : suppliedChatTransport);
+  const [hostChat, setHostChat] = useState<{ context: PetChatContext; updatedAt: number } | null>(null);
+  const projection = mergePetChatProjection(baseProjection, hostChat?.context ?? null, hostChat?.updatedAt ?? 0);
   const [clock, setClock] = useState(() => now());
+  useEffect(() => {
+    if (chatTransport === null) return;
+    return observePetChat(chatTransport, (context) => {
+      const updatedAt = now();
+      setHostChat({ context, updatedAt });
+      setClock(updatedAt);
+    });
+  }, [chatTransport, now]);
   const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
   const [interactionReady, setInteractionReady] = useState(false);
   const [inputPresentation, setInputPresentation] = useState(

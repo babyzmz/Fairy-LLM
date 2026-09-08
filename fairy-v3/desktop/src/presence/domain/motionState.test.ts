@@ -9,6 +9,11 @@ import {
 } from "./motionState";
 
 describe("Fairy motion state", () => {
+  it("allows an explicit native work-control input without creating a status bubble", () => {
+    expect(advance({ allow_work_input: true, manual_input_open: true, work_state: "analyzing" }, 100))
+      .toEqual(expect.objectContaining({ surface: "input", state: "thinking" }));
+    expect(advance({ allow_work_input: true, manual_input_open: false, work_state: "analyzing" }, 100).surface).toBe("core");
+  });
   it("keeps error and approval above voice while preserving one surface", () => {
     const error = advance({ work_state: "error", speaking: true }, 100);
     expect(error.state).toBe("error");

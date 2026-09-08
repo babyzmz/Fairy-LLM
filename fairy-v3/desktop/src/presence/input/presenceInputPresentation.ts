@@ -25,6 +25,10 @@ export function toSubmissionCard(
   submission: PresenceSubmissionState | null,
 ): PresenceSubmissionCard | null {
   if (submission?.phase !== "failed") return null;
+  if (submission.failure === "uncertain") {
+    if (submission.text === "") return card(submission, "Chat creation is not confirmed", "Check the chat list before trying again", false);
+    return card(submission, "Delivery is not confirmed", "Check the chat before sending again, or stop this request", true);
+  }
   return {
     ...card(submission, failureTitle(submission.failure), "Your message was not started", false),
     canRetry: submission.text !== "",

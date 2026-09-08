@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 
 import type { EventEnvelope } from "../core/contracts";
 
@@ -69,6 +70,9 @@ export function PresenceBridge({
     };
     channelRef.current = channel;
     const stopRequests = channel.onRequest((request) => {
+      // Native pet-input uses its restricted Rust channel. Never execute a second
+      // copy through the main React lifecycle, including stale Broadcast messages.
+      if (isTauri() && ["chat.new", "chat.send", "chat.cancel"].includes(request.kind)) return;
       handleRequest(
         request,
         channel,
@@ -123,6 +127,7 @@ function withEphemeralPresence(
     !["idle", "ready"].includes(projection.work_state);
   return {
     ...projection,
+    realtime_active: realtimeWorkState !== null,
     reply: effectiveReply,
     ambient_dialogue: ambientBlocked ? null : ambientDialogue,
     work_state: realtimeWorkState ?? projection.work_state,

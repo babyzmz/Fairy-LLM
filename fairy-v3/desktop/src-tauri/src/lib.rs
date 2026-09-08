@@ -367,6 +367,14 @@ pub fn authorize_pet_input_window(label: &str) -> Result<(), WindowScopeError> {
     }
 }
 
+pub fn authorize_pet_chat_reader(label: &str) -> Result<(), WindowScopeError> {
+    if ["main", PET_INPUT_LABEL, PET_RENDER_LABEL].contains(&label) {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
+}
+
 pub fn authorize_pet_render_window(label: &str) -> Result<(), WindowScopeError> {
     if label == PET_RENDER_LABEL {
         Ok(())
@@ -1452,9 +1460,7 @@ fn pet_chat_context_get(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<pet_chat_broker::PetChatContext, String> {
-    if window.label() != "main" {
-        authorize_pet_input_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
-    }
+    authorize_pet_chat_reader(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
     state.pet_chat.context()
 }
 
@@ -1471,8 +1477,10 @@ async fn pet_chat_submit(
     state
         .pet_chat
         .begin_submission(revision, &submission_id, &text)?;
+    publish_pet_chat_context(&app, &state);
     let result = submit_pet_chat(&app, &state, revision, &submission_id, &text).await;
     state.pet_chat.end_submission(&submission_id);
+    publish_pet_chat_context(&app, &state);
     result
 }
 
@@ -6355,6 +6363,19 @@ mod companion_window_scope_tests {
         assert!(authorize_companion_window("companion").is_ok());
         assert!(authorize_companion_window("main").is_err());
         assert!(authorize_core_rpc_window("companion").is_err());
+    }
+
+    #[test]
+    fn pet_display_access_does_not_grant_submission_or_general_rpc_access() {
+        for label in ["main", "pet-input", "pet-render"] {
+            assert!(super::authorize_pet_chat_reader(label).is_ok());
+        }
+        for label in ["companion", "unknown", "pet"] {
+            assert!(super::authorize_pet_chat_reader(label).is_err());
+        }
+        assert!(super::authorize_pet_input_window("pet-render").is_err());
+        assert!(super::authorize_core_rpc_window("pet-render").is_err());
+        assert!(super::authorize_core_rpc_window("pet-input").is_err());
     }
 
     #[test]

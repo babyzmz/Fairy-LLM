@@ -8,6 +8,7 @@ import type { DesktopPreferences } from "../settings/client";
 import type { PresenceInteractionSnapshot } from "./domain/interaction";
 import type { PresenceProjectionState } from "./domain/projection";
 import type { PetHost } from "./host/petHost";
+import type { PetChatContext } from "./host/petChat";
 import type { StorageLike } from "./host/persistence";
 import { PresenceInputApp } from "./input/PresenceInputApp";
 import { NativePresenceRendererHost } from "./render/NativePresenceRendererHost";
@@ -1202,6 +1203,64 @@ describe("dual presence surfaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop reply" }));
     expect(channel.channel.requestChatCancel).toHaveBeenCalledWith(submissionId);
     expect(screen.getByRole("button", { name: "Open reply in Fairy" })).toBeInTheDocument();
+  });
+
+  it("uses the native chat owner and exposes Stop while its submit call is still pending", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    let receive!: (context: unknown) => void;
+    let rejectSubmit!: (error: unknown) => void;
+    const initial: PetChatContext = { revision: 0, projection_revision: 0, conversation_id: null,
+      connection_available: false, turn: null, reply: null, submission: null };
+    host.host.chat = {
+      getContext: vi.fn(async () => initial),
+      onContext: vi.fn(async (listener) => { receive = listener; return () => undefined; }),
+      submit: vi.fn(() => new Promise<{ binding_revision: number; turn_id: string }>((_resolve, reject) => { rejectSubmit = reject; })),
+      cancelSubmission: vi.fn(async () => ({ accepted: true, cancellation_pending: null })),
+      cancel: vi.fn(async () => ({ accepted: true, cancellation_pending: false })),
+      newChat: vi.fn(async () => initial),
+    };
+    render(<PresenceInputApp channel={channel.channel} host={host.host} storage={storage} />);
+    await waitFor(() => expect(host.host.chat?.getContext).toHaveBeenCalled());
+    act(() => host.requestInput());
+    const input = await screen.findByLabelText("Quick message to Fairy");
+    fireEvent.change(input, { target: { value: "Native message" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(host.host.chat?.submit).toHaveBeenCalled());
+    const id = vi.mocked(host.host.chat!.submit).mock.calls[0][1];
+    act(() => receive({ ...initial, projection_revision: 1, submission: { id, revision: 0 } }));
+    expect(channel.channel.requestChatSend).not.toHaveBeenCalled();
+    act(() => host.requestInput());
+    const stop = await screen.findByRole("button", { name: "Stop current task" });
+    expect(stop).toBeEnabled();
+    fireEvent.click(stop);
+    await waitFor(() => expect(host.host.chat?.cancelSubmission).toHaveBeenCalledWith(0, id));
+    expect(channel.channel.requestChatCancel).not.toHaveBeenCalled();
+    act(() => rejectSubmit(new Error("PROVIDER_CANCELLED")));
+    await waitFor(() => expect(screen.queryByText("Message could not be sent")).toBeNull());
+  });
+
+  it("shows uncertain delivery without a retry button after a native timeout", async () => {
+    const channel = channelHarness(); const host = hostHarness();
+    host.host.chat = {
+      getContext: vi.fn(async () => ({ revision: 0, projection_revision: 0, conversation_id: null,
+        connection_available: false, turn: null, reply: null, submission: null })),
+      onContext: vi.fn(async () => () => undefined),
+      submit: vi.fn(async () => { throw new Error("CORE_RPC_TIMEOUT"); }),
+      cancelSubmission: vi.fn(async () => ({ accepted: true, cancellation_pending: null })),
+      cancel: vi.fn(async () => ({ accepted: true, cancellation_pending: false })), newChat: vi.fn(),
+    };
+    render(<PresenceInputApp channel={channel.channel} host={host.host} storage={storage} />);
+    await waitFor(() => expect(host.host.chat?.getContext).toHaveBeenCalled());
+    act(() => host.requestInput());
+    const input = await screen.findByLabelText("Quick message to Fairy");
+    fireEvent.change(input, { target: { value: "Do not duplicate" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("Delivery is not confirmed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry request" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel request" }));
+    await waitFor(() => expect(host.host.chat?.cancelSubmission).toHaveBeenCalledOnce());
+    expect(host.host.chat.submit).toHaveBeenCalledOnce();
   });
 
   it("shows offline failure without duplicating a reply and retries the same text", async () => {

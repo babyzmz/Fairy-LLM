@@ -71,6 +71,7 @@ export type FairySubmissionPhase =
   | "failed";
 
 export interface FairyMotionFacts {
+  allow_work_input?: boolean;
   interaction: PresenceInteractionSnapshot | null;
   input_window_visible: boolean;
   input_content_visible: boolean;
@@ -185,6 +186,7 @@ function isLiquidTransitionPhase(
 
 function resolveSurface(facts: FairyMotionFacts, state: FairyState): FairySurface {
   if (facts.submission_phase === "failed") return "submission";
+  if (facts.allow_work_input && facts.manual_input_open && ["submitting", "thinking"].includes(state)) return "input";
   if (
     state === "submitting" ||
     state === "thinking" ||
