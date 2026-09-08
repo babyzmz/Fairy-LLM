@@ -281,6 +281,36 @@ try {
   });
   assert.equal(afterRejectedTabs.tabs.length, 1, "Rejected tab opens must not leak pages");
 
+  const fourthSessionId = crypto.randomUUID();
+  const fifthSessionId = crypto.randomUUID();
+  const startBudgetSession = (id) => call("browser.sessions.start", {
+    session_id: id, profile_kind: "persistent", profile_root: profileRoot,
+    initial_url: "about:blank",
+  });
+  let fourth = await startBudgetSession(fourthSessionId);
+  await assert.rejects(startBudgetSession(fifthSessionId),
+    (error) => error.error_code === "BROWSER_CAPACITY_EXCEEDED");
+  const mainBeforeBudget = await call("browser.tabs.select", { session_id: sessionId, tab_id: tabId });
+  const otherTabCount = mainBeforeBudget.tabs.length + afterRejectedTabs.tabs.length + secondReload.session.tabs.length;
+  while (fourth.tabs.length + otherTabCount < 12) {
+    fourth = await call("browser.tabs.open", { session_id: fourthSessionId, url: "about:blank" });
+  }
+  await assert.rejects(call("browser.tabs.open", { session_id: fourthSessionId, url: "about:blank" }),
+    (error) => error.error_code === "BROWSER_CAPACITY_EXCEEDED");
+  const popupAtCapacity = await call("browser.snapshots.get", {
+    session_id: sessionId, tab_id: tabId, include_screenshot: false,
+  });
+  const rejectedPopup = await call("browser.actions.execute", {
+    session_id: sessionId, tab_id: tabId, kind: "click", selector: "#popup",
+    expected_page_revision: popupAtCapacity.page_revision, idempotency_key: "popup-at-capacity",
+  });
+  assert.equal(rejectedPopup.session.tabs.length, mainBeforeBudget.tabs.length,
+    "Automatic popups must obey the global tab budget");
+  await call("browser.sessions.stop", { session_id: fourthSessionId });
+  const afterRelease = await startBudgetSession(fifthSessionId);
+  assert.equal(afterRelease.status, "active");
+  await call("browser.sessions.stop", { session_id: fifthSessionId });
+
   await assert.rejects(
     call("browser.actions.execute", {
       session_id: sessionId,

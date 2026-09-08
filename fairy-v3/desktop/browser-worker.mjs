@@ -15,6 +15,19 @@ let persistentProfileDir = null;
 const persistentSessionIds = new Set();
 const MAX_ELEMENT_REFS = 200;
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+const MAX_SESSIONS = 4;
+const MAX_TABS = 12;
+
+function requireCapacity({ session = false } = {}) {
+  const tabCount = [...sessions.values()].reduce(
+    (count, item) => count + item.tabs.size + item.pendingPageClosures.size, 0,
+  );
+  if ((session && sessions.size >= MAX_SESSIONS) || tabCount >= MAX_TABS) {
+    throw Object.assign(new Error("Browser capacity reached; close an idle session or tab and retry."), {
+      code: "BROWSER_CAPACITY_EXCEEDED",
+    });
+  }
+}
 const SECRET_FIELD_PATTERN = /(?:pass(?:word|code)?|secret|token|api[ _-]?key|otp|one[ _-]?time|verification[ _-]?code|2fa|cvv|cvc|card[ _-]?number|密码|验证码|令牌)/i;
 const SECRET_QUERY_KEY_PATTERN = /(?:auth|credential|key|pass|secret|session|signature|sig|token)/i;
 const DANGEROUS_ACTION_PATTERN = /(?:buy|purchase|checkout|place order|confirm order|pay now|publish|post now|send (?:message|email|invite)|create account|delete account|close account|change password|grant access|revoke access|make admin|permission|购买|付款|结账|发布|发送|创建账户|删除账户|权限|管理员)/i;
@@ -165,6 +178,7 @@ function invalidateElementRefs(tab) {
 }
 
 async function sessionResult(session, status = "active") {
+  await Promise.all(session.pendingPageClosures.values());
   return {
     status,
     active_tab_id: session.activeTabId,
@@ -175,6 +189,7 @@ async function sessionResult(session, status = "active") {
 function attachPage(session, page, id = randomUUID(), allowedLoopbackOrigin = null) {
   const attached = [...session.tabs.values()].find((candidate) => candidate.page === page);
   if (attached) return attached;
+  requireCapacity();
   const tab = {
     id,
     page,
@@ -213,9 +228,17 @@ function attachPage(session, page, id = randomUUID(), allowedLoopbackOrigin = nu
     if (tab.authorizedDownloads < 1) void download.cancel().catch(() => undefined);
   });
   page.on("popup", (popup) => {
-    const popupTab = attachPage(session, popup, randomUUID(), tab.allowedLoopbackOrigin);
-    session.activeTabId = popupTab.id;
-    void synchronizePageRevision(popupTab).catch(() => undefined);
+    try {
+      const popupTab = attachPage(session, popup, randomUUID(), tab.allowedLoopbackOrigin);
+      session.activeTabId = popupTab.id;
+      void synchronizePageRevision(popupTab).catch(() => undefined);
+    } catch {
+      // A browser-created popup cannot be reserved before Chromium creates it.
+      // Reject it immediately and wait for closure before completing the action.
+      const closing = popup.close().then(() => session.pendingPageClosures.delete(popup));
+      session.pendingPageClosures.set(popup, closing);
+      void closing.catch(() => undefined);
+    }
   });
   return tab;
 }
@@ -253,6 +276,7 @@ async function acquireContext(params) {
 
 async function startSession(params) {
   if (sessions.has(params.session_id)) return sessionResult(sessions.get(params.session_id));
+  requireCapacity({ session: true });
   let session;
   try {
     const acquired = await acquireContext(params);
@@ -262,6 +286,7 @@ async function startSession(params) {
       persistent: acquired.persistent,
       tabs: new Map(),
       activeTabId: null,
+      pendingPageClosures: new Map(),
     };
     sessions.set(session.id, session);
     if (session.persistent) persistentSessionIds.add(session.id);
@@ -282,21 +307,24 @@ async function startSession(params) {
 }
 
 async function disposeSession(session) {
-  sessions.delete(session.id);
-  for (const key of actionResults.keys()) {
-    if (key.startsWith(`${session.id}:`)) actionResults.delete(key);
-  }
-  await Promise.all([...session.tabs.values()].map((tab) => tab.page.close().catch(() => undefined)));
+  // Keep failed closures counted and retryable. Never report a free slot while
+  // a page or its context may still be resident.
+  await Promise.all([
+    ...[...session.tabs.values()].map((tab) => tab.page.close()),
+    ...[...session.pendingPageClosures.keys()].map((page) => page.close()),
+  ]);
+  session.pendingPageClosures.clear();
   if (!session.persistent) {
-    await session.context.close().catch(() => undefined);
-    return;
-  }
-  persistentSessionIds.delete(session.id);
-  if (persistentSessionIds.size === 0 && persistentContext) {
-    const context = persistentContext;
+    await session.context.close();
+  } else if (persistentSessionIds.size === 1 && persistentContext) {
+    await persistentContext.close();
     persistentContext = null;
     persistentProfileDir = null;
-    await context.close().catch(() => undefined);
+  }
+  sessions.delete(session.id);
+  persistentSessionIds.delete(session.id);
+  for (const key of actionResults.keys()) {
+    if (key.startsWith(`${session.id}:`)) actionResults.delete(key);
   }
 }
 
@@ -308,6 +336,7 @@ async function stopSession(params) {
 
 async function openTab(params) {
   const session = requiredSession(params.session_id);
+  requireCapacity();
   const previousActiveTabId = session.activeTabId;
   const page = await session.context.newPage();
   try {
