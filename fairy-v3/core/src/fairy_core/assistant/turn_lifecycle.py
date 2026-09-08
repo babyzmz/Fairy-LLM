@@ -54,6 +54,16 @@ class AssistantTurnLifecycleMixin:
                 return evidence_issue
             intent = unit_of_work.assistant.get_execution_intent(turn.id)
             if readonly_intent_issue(intent, self._registry.get("edit.propose_changeset")):
+                from fairy_core.assistant.workflow_objectives import READ_ACTIONS
+
+                if intent is not None and intent.active_objective_index is not None and (
+                    intent.objectives[intent.active_objective_index].action in READ_ACTIONS
+                ):
+                    from fairy_core.assistant.workflow_objective_evidence import (
+                        read_objective_issue,
+                    )
+
+                    return read_objective_issue(unit_of_work, turn, intent, plan, invocations)
                 if (
                     turn.routing_decision is not None
                     and turn.routing_decision.requires_workspace_changes

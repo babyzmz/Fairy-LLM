@@ -278,6 +278,13 @@ class AssistantContextBuilder:
             evidence_requirements=evidence_requirements,
             interpretation=interpretation,
         )
+        from fairy_core.assistant.workflow_objectives import objective_instruction
+
+        objective_context = objective_instruction(execution_intent)
+        if objective_context:
+            system = ModelMessage.create(
+                role=system.role, content=system.content + objective_context,
+            )
         bounded_history = self._bounded_history(
             system,
             bounded_source,

@@ -74,6 +74,29 @@ def test_direct_notification_does_not_authorize_other_management_actions():
     assert readonly_intent_issue(intent, registry.get("system.copy_text")) is not None
 
 
+@pytest.mark.parametrize("root_action,index,allowed", [
+    (RequestAction.CHANGE, 0, False),
+    (RequestAction.CHANGE, 1, True),
+    (RequestAction.REVIEW, 0, False),
+    (RequestAction.REVIEW, 1, False),
+    (RequestAction.CHANGE, 99, False),
+])
+def test_active_objective_can_only_narrow_the_original_action(root_action, index, allowed):
+    intent = _intent(root_action).model_copy(update={
+        "objectives": (
+            InterpretedObjective("Read and explain the existing files", RequestAction.REVIEW),
+            InterpretedObjective("Apply the requested fix", RequestAction.CHANGE, (0,)),
+        ),
+        "active_objective_index": index,
+    })
+    registry = build_default_registry()
+    issue = readonly_intent_issue(intent, registry.get("edit.propose_changeset"))
+    assert (issue is None) is allowed
+    assert readonly_intent_issue(intent, registry.get("project.read")) is None
+    assert readonly_intent_issue(intent, registry.get("execution.plan")) is None
+    assert readonly_intent_issue(intent, registry.get("media.images.generate")) is not None
+
+
 def test_extension_cannot_impersonate_internal_evidence_cache():
     original = build_default_registry().get("research.build")
     extension = replace(original, source="mcp", origin_id="untrusted-server")

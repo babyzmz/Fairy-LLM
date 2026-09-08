@@ -7,6 +7,7 @@ from uuid import UUID, uuid5
 
 from fairy_core.assistant.models import AssistantTurn, ToolInvocation, ToolInvocationStatus
 from fairy_core.assistant.tools import DEFERRED_MEDIA_TOOLS
+from fairy_core.assistant.workflow_objectives import objective_payload
 from fairy_core.commanding.registry import ToolConcurrency, ToolDefinition
 from fairy_core.workflow.models import WorkflowConcurrencyPolicy, WorkflowEdge, WorkflowNode
 
@@ -125,7 +126,8 @@ def _node(
 ) -> WorkflowNode:
     node = WorkflowNode.create(
         run_id=source.run_id, plan_revision=source.plan_revision,
-        node_key=f"{source.id}:{key}", kind=kind, payload=payload,
+        node_key=f"{source.id}:{key}", kind=kind,
+        payload={**objective_payload(source), **payload},
         public_summary=summary, concurrency_policy=policy, resource_keys=resources,
         max_attempts=128,
     )

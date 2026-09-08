@@ -108,6 +108,22 @@ def readonly_intent_issue(
         return None
     if intent is None:
         return "EXECUTION_INTENT_UNAVAILABLE"
+    if intent.active_objective_index is not None:
+        index = intent.active_objective_index
+        if (
+            isinstance(index, bool) or not isinstance(index, int)
+            or not 0 <= index < len(intent.objectives)
+        ):
+            return "EXECUTION_INTENT_OBJECTIVE_UNAVAILABLE"
+        objective_issue = readonly_intent_issue(
+            intent.model_copy(update={
+                "action": intent.objectives[index].action,
+                "active_objective_index": None,
+            }),
+            definition,
+        )
+        if objective_issue is not None:
+            return objective_issue
     prohibitions = set(intent.source_prohibitions)
     for constraint in intent.user_constraints:
         prohibitions.update(intent_prohibitions(constraint))

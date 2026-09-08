@@ -42,6 +42,8 @@ class ExecutionIntentSnapshot(BaseModel):
     source_message_id: UUID
     source_message_sha256: Digest
     action: RequestAction
+    # Trusted transient Workflow projection, never part of persisted interpretation JSON.
+    active_objective_index: int | None = Field(default=None, ge=0, lt=16, exclude=True)
     objectives: tuple[InterpretedObjective, ...] = Field(min_length=1, max_length=16)
     target_descriptions: tuple[TargetDescription, ...] = Field(max_length=64)
     user_constraints: tuple[UserConstraint, ...] = Field(max_length=64)
@@ -53,6 +55,11 @@ class ExecutionIntentSnapshot(BaseModel):
 
     @model_validator(mode="after")
     def validate_objective_dependencies(self) -> ExecutionIntentSnapshot:
+        if (
+            self.active_objective_index is not None
+            and self.active_objective_index >= len(self.objectives)
+        ):
+            raise ValueError("active objective is outside the declared intent")
         for index, objective in enumerate(self.objectives):
             if any(dependency >= index for dependency in objective.depends_on):
                 raise ValueError("intent dependencies must reference earlier objectives")

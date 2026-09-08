@@ -37,7 +37,7 @@ def _call(name, arguments, *, suffix=""):
     )
 
 
-def _classification(action):
+def _classification(action, *, objectives=None):
     goal = "Update README.md" if action == "change" else _INSTRUCTION
     return (
         ModelDelta.text(
@@ -51,7 +51,9 @@ def _classification(action):
                     "interpretation": {
                         "normalized_goal": goal,
                         "action": action,
-                        "objectives": [{"goal": goal, "action": action, "depends_on": []}],
+                        "objectives": objectives or [
+                            {"goal": goal, "action": action, "depends_on": []},
+                        ],
                         "targets": ["README.md"],
                         "constraints": [],
                         "deliverable": "README explanation",

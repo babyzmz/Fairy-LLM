@@ -7,6 +7,7 @@ from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.model_boundary import AssistantModelYield
 from fairy_core.assistant.models import AssistantTurnStatus
 from fairy_core.assistant.tools import DuplicateToolCandidateError, ToolCandidateError
+from fairy_core.assistant.workflow_objectives import OBJECTIVE_BEGIN, OBJECTIVE_COMPLETE
 from fairy_core.assistant.workflow_step_nodes import (
     STEP_FINALIZE,
     STEP_MODEL,
@@ -186,6 +187,14 @@ class AssistantStepWorkflowAdapter:
                 or claim.run_id != node.run_id
             ):
                 raise WorkflowFenceError("Model step does not belong to this Workflow Turn")
+            if "objective_index" in node.payload and node.kind != OBJECTIVE_BEGIN:
+                intent = unit.assistant.get_execution_intent(turn_id)
+                if (
+                    intent is None
+                    or intent.active_objective_index != node.payload["objective_index"]
+                    or intent.interpretation_revision != node.payload.get("interpretation_revision")
+                ):
+                    raise WorkflowFenceError("Step belongs to an inactive objective")
             renewed = unit.workflows.renew(
                 claim, lease_until=assistant_command_lease_until(),
                 on_failed=lambda run: self._failure_handler(unit, run),
@@ -200,12 +209,23 @@ class AssistantStepWorkflowAdapter:
 
         if not can_reconcile_while_paused(self, node, turn):
             self._application._raise_if_workflow_paused(turn_id)
+        if node.kind in {OBJECTIVE_BEGIN, OBJECTIVE_COMPLETE}:
+            from fairy_core.assistant.workflow_objective_steps import execute_objective_step
+
+            return execute_objective_step(self, node, turn)
         if node.kind == STEP_ROUTE:
             prepared = self._application.prepare_turn(turn_id, cancellation)
             self._preparation._raise_preparation_boundary(prepared)
             with self._factory() as unit:
                 run = unit.workflows.get_run(node.run_id)
-            child = step_node(node, STEP_MODEL, model_round=run.model_rounds_used + 1)
+                intent = unit.assistant.get_execution_intent(turn_id)
+            child = (
+                step_node(
+                    node, OBJECTIVE_BEGIN, objective_index=0,
+                    interpretation_revision=intent.interpretation_revision,
+                ) if intent is not None and intent.active_objective_index is not None else
+                step_node(node, STEP_MODEL, model_round=run.model_rounds_used + 1)
+            )
             return WorkflowNodeResult(
                 output={"turn_id": str(turn_id)},
                 next_nodes=(child,),
@@ -370,8 +390,10 @@ class AssistantStepWorkflowAdapter:
                 next_nodes=(
                     step_node(
                         node,
-                        STEP_FINALIZE,
+                        OBJECTIVE_COMPLETE if "objective_index" in node.payload else STEP_FINALIZE,
                         model_node_id=node.payload["model_node_id"],
+                        **({"verify_node_id": str(node.id)}
+                           if "objective_index" in node.payload else {}),
                     ),
                 ),
                 public_summary="Response contract verified",
@@ -462,6 +484,10 @@ class AssistantStepWorkflowAdapter:
             or source.plan_revision != node.plan_revision
             or source.status is not WorkflowNodeStatus.SUCCEEDED
             or source.payload["turn_id"] != node.payload["turn_id"]
+            or source.payload.get("objective_index") != node.payload.get("objective_index")
+            or source.payload.get("interpretation_revision") != (
+                node.payload.get("interpretation_revision")
+            )
             or source.result is None
             or source.result.get("type") != "draft"
         ):

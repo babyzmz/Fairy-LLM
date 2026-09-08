@@ -183,13 +183,18 @@ class AssistantInterpretationRepositoryMixin:
             return None
         intent = ExecutionIntentSnapshot.model_validate_json(json.dumps(row["execution_intent"]))
         if (
-            intent.turn_id != turn_id
+            intent.active_objective_index is not None
+            or intent.turn_id != turn_id
             or intent.interpretation_id != UUID(row["id"])
             or intent.interpretation_revision != row["revision"]
             or intent.source_message_id != UUID(row["source_message_id"])
             or intent.source_message_sha256 != row["source_message_sha256"]
         ):
             raise InvalidTransitionError("Execution intent does not match its interpretation")
+        if revision is None:
+            from fairy_core.assistant.workflow_objectives import project_objective
+
+            return project_objective(self, intent)
         return intent
 
     def get_interpretation(

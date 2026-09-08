@@ -317,7 +317,12 @@ def register_assistant_workflow_adapter(
         application, ledger, unit_of_work_factory, adapter,
         failure_handler=adapters.settle_failed_run,
     )
-    for kind in (STEP_ROUTE, STEP_MODEL, STEP_REVIEW, STEP_VERIFY, STEP_FINALIZE):
+    from fairy_core.assistant.workflow_objectives import OBJECTIVE_BEGIN, OBJECTIVE_COMPLETE
+
+    for kind in (
+        STEP_ROUTE, STEP_MODEL, STEP_REVIEW, STEP_VERIFY, STEP_FINALIZE,
+        OBJECTIVE_BEGIN, OBJECTIVE_COMPLETE,
+    ):
         adapters.register(kind, steps)
     adapters.register(ASSISTANT_STEP_JOIN_KIND, steps)
     tool_steps = AssistantStepWorkflowAdapter(

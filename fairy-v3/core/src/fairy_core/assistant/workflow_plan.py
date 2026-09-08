@@ -150,7 +150,8 @@ def assistant_step_workflow_plan(
     nodes = tuple(
         WorkflowNode.create(
             run_id=run_id, plan_revision=revision, node_key=kind, kind=kind,
-            payload={"turn_id": str(turn_id)}, public_summary=summary,
+            payload={"turn_id": str(turn_id), **({"objective_protocol": 1} if index else {})},
+            public_summary=summary,
             ready=ready and index == 0, max_attempts=16,
             resource_keys=(f"assistant-turn:{turn_id}",),
         )
