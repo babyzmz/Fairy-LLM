@@ -15,6 +15,7 @@ from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.providers import CancellationToken, ProviderCancelledError
 from fairy_core.workflow.models import (
     WorkflowAttemptClaim,
+    WorkflowEdge,
     WorkflowNode,
     WorkflowRunStatus,
     WorkflowSnapshot,
@@ -31,6 +32,12 @@ class WorkflowNodeResult:
     evidence_refs: tuple[str, ...] = ()
     public_summary: str | None = None
     available_at: datetime | None = None
+    next_nodes: tuple[WorkflowNode, ...] = ()
+    next_edges: tuple[WorkflowEdge, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.available_at is not None and (self.next_nodes or self.next_edges):
+            raise ValueError("Deferred Workflow nodes cannot append continuations")
 
 
 class WorkflowNodeAdapter(Protocol):
@@ -415,6 +422,8 @@ class WorkflowScheduler:
                         result=result.output,
                         evidence_refs=result.evidence_refs,
                         public_summary=result.public_summary,
+                        next_nodes=result.next_nodes,
+                        next_edges=result.next_edges,
                     )
                 else:
                     unit_of_work.workflows.defer(

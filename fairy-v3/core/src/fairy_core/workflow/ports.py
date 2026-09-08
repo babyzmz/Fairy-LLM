@@ -83,6 +83,8 @@ class WorkflowRepository(Protocol):
         result: Mapping[str, Any],
         evidence_refs: tuple[str, ...],
         public_summary: str | None = None,
+        next_nodes: tuple[WorkflowNode, ...] = (),
+        next_edges: tuple[WorkflowEdge, ...] = (),
     ) -> WorkflowSnapshot: ...
 
     def retry(

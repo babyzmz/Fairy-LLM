@@ -287,6 +287,15 @@
 - Core已接入Task/Turn权威的活动固定、LRU容量回收和单调时钟300秒空闲释放；页面快照/动作刷新访问时间，普通状态get不延寿。审批、取消尚有未完成调用、未知Task或状态库失败均不驱逐；跨tenant缺失绑定保持未知。释放确认后持久为suspended，保留Tab恢复元数据；恢复换新Session/Tab，显式停止已释放会话无需重复找Worker。
 - 资源操作与回收共用所有者锁，失败保留容量；无效URL或未知Session先校验，不因无效请求驱逐别的聊天。Core正常启动不创建Browser回收线程/调用Worker，首次使用后按需启动，退出先阻止新回收并关闭Worker，再收尾线程。Browser/Transport/CoreService50项通过（19.25秒）；真实headless Edge20次双会话交替创建保持最多4驻留，300秒模拟时钟触发物理关闭，恢复新身份、状态文件重开均通过。该时钟门禁不等同于真实等待5分钟，原生可见面板/Agent并发仍待最终联合验收。
 
+### Phase 6A：真实节点的原子后续图
+
+- 新引擎需要在模型结果已知后才能确定工具节点；Kernel增加“完成当前Attempt并追加后续图”的单事务边界。不是把工具调用藏在model节点，也不是第二套线程池。
+- 后续图只允许同Run/同Plan Revision的新节点，由当前叶节点自动连接至新图根；不改既有节点Payload、Edge或计划解释。Plan Revision仍仅由用户Steering等明确修订产生，运行时展开作为当前节点结果的追加事实保存。
+- 领取Fence、租约与取消Revision必须在展开前校验；重复/过期/其他tenant完成不能追加。禁止跨Run边、环、重复节点键、连接已有后继及无界节点增长；暂停保留已完成事实但禁止新派发。
+- 实库验证原子回滚、关闭重开、双Run/tenant隔离、并行fan-out/fan-in、取消/暂停/过期Fence和全局4节点上限；新旧引擎分流及真实Provider在Adapter接线后单独验收，内核原语完成不代表Assistant迁移完成。
+- 已加入受Fence保护的原子后续图、每批128/每Revision512节点上限和叶节点追加约束。新图不允许跨Run/Revision、环、旧节点键或重复边；完成重放不能重复插入。SQLite关闭重开、回滚和两个Run并行展开验证全局4/普通Run2限制；实际PostgreSQL事务竞态仍未验。
+- 扩展联合测试发现原有Media重启竞态：失败测试库持久为running、pause_requested=1，但仅有succeeded/waiting Attempts。已新增三个精确失败复现（defer/retry在暂停请求后结算、暂停读取活动状态后并发defer）；不通过增加3秒等待掩盖，独立修复暂停收敛。
+
 ### Phase 3B：事件提交唤醒与推送验收契约
 
 - 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。

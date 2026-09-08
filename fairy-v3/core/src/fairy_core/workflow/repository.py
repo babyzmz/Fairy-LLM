@@ -21,6 +21,7 @@ from fairy_core.storage.schema import (
 from fairy_core.workflow.approval_repository import WorkflowApprovalRepositoryMixin
 from fairy_core.workflow.budget_repository import WorkflowBudgetRepositoryMixin
 from fairy_core.workflow.claim_candidates import ready_candidates
+from fairy_core.workflow.continuations import prepare_continuation
 from fairy_core.workflow.deadline_repository import WorkflowDeadlineRepositoryMixin
 from fairy_core.workflow.errors import (
     WorkflowBudgetExceeded,
@@ -415,10 +416,16 @@ class SqlAlchemyWorkflowRepository(
         result: Mapping[str, Any],
         evidence_refs: tuple[str, ...],
         public_summary: str | None = None,
+        next_nodes: tuple[WorkflowNode, ...] = (),
+        next_edges: tuple[WorkflowEdge, ...] = (),
     ) -> WorkflowSnapshot:
+        self._locked_run(claim.run_id)
         now = datetime.now(UTC)
         self._require_claim(claim, now=now)
-        self._connection.execute(
+        continuation, continuation_edges = prepare_continuation(
+            self._connection, self._tenant_id, claim, next_nodes, next_edges,
+        )
+        updated = self._connection.execute(
             update(workflow_attempts)
             .where(*self._claim_predicates(claim, require_live=True))
             .values(
@@ -430,6 +437,9 @@ class SqlAlchemyWorkflowRepository(
                 finished_at=now,
             )
         )
+        if updated.rowcount != 1:
+            raise WorkflowFenceError("Workflow completion lost its attempt fence")
+        insert_plan(self._connection, self._tenant_id, continuation, continuation_edges)
         values: dict[str, Any] = {
             "status": WorkflowNodeStatus.SUCCEEDED.value,
             "result": dict(result),
