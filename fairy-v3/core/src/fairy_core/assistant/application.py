@@ -26,6 +26,7 @@ from fairy_core.assistant.execution_intent_policy import (
     readonly_intent_issue,
 )
 from fairy_core.assistant.media_routing import constrain_context_for_media
+from fairy_core.assistant.model_boundary import AssistantModelBoundary, AssistantModelYield
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -138,6 +139,8 @@ class AssistantApplication(
         self,
         turn_id: UUID,
         cancellation: CancellationToken,
+        *,
+        boundary: AssistantModelBoundary | None = None,
     ) -> AssistantTurn:
         turn = self._turns.get(turn_id)
         if turn.is_terminal:
@@ -146,16 +149,26 @@ class AssistantApplication(
         if self._turns.submission_cancelled(turn):
             return self._cancel_turn(turn_id, None)
         all_text: list[str] = []
-        usage: dict[str, int] = {}
+        usage: dict[str, int] = dict(boundary.usage) if boundary is not None else {}
         tool_count = self._turns.tool_count(turn_id)
         current_run: CommandRun | None = None
-        chunk_index = 0
-        model_round_start = 1
+        chunk_index = boundary.chunk_index if boundary is not None else 0
+        model_round_start = boundary.model_round if boundary is not None else 1
         ephemeral_context: list[ModelMessage] = []
         transient_images: list[ModelImage] = []
-        invalid_tool_retry_used = False
+        invalid_tool_retry_used = (
+            boundary.invalid_tool_retry_used if boundary is not None else False
+        )
         incomplete_execution_issues: set[str] = set()
         try:
+            if boundary is not None:
+                if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
+                    raise ValueError("Model boundary cannot resume a tool inside its model node")
+                ephemeral_context.extend(self._durable_tool_context(turn_id))
+                ephemeral_context.extend(
+                    ModelMessage.create(role=ModelRole.SYSTEM, content=feedback)
+                    for feedback in boundary.feedback
+                )
             if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
                 if turn.budget_approval_run_id is not None:
                     budget_state = self._resume_budget_approval(turn_id, cancellation)
@@ -341,6 +354,14 @@ class AssistantApplication(
                     direct_arguments = direct_candidates[0].arguments()
                     answer = direct_answer(direct_arguments)
                     cited_evidence_receipt_ids = direct_answer_evidence_ids(direct_arguments)
+                    if boundary is not None:
+                        boundary.draft(
+                            turn_id=turn_id, run=current_run, model_round=model_round,
+                            content=answer, cited_evidence_receipt_ids=cited_evidence_receipt_ids,
+                            source_messages=request.messages, published=False,
+                            usage=usage, chunk_index=chunk_index,
+                        )
+                        raise RuntimeError("Assistant model boundary returned without yielding")
                     completion_issue = self._execution_completion_issue(
                         turn_id,
                         candidate_content=answer,
@@ -437,6 +458,20 @@ class AssistantApplication(
                                 current_run,
                                 error_code="PROVIDER_PROTOCOL_ERROR",
                             )
+                        if boundary is not None:
+                            boundary.retry(
+                                turn_id=turn_id, run=current_run, model_round=model_round,
+                                error_code="PROVIDER_PROTOCOL_ERROR",
+                                feedback=(
+                                    "The previous tool request was malformed or truncated. Retry "
+                                    "once using exactly one offered tool and a complete payload."
+                                ),
+                                usage=usage, chunk_index=chunk_index,
+                                invalid_tool_retry_used=True,
+                            )
+                            raise RuntimeError(
+                                "Assistant model boundary returned without yielding"
+                            ) from None
                         invalid_tool_retry_used = True
                         self._reject_model_round_for_retry(
                             current_run,
@@ -465,6 +500,13 @@ class AssistantApplication(
                             current_run,
                             error_code="ASSISTANT_TOOL_LIMIT",
                         )
+                    if boundary is not None:
+                        boundary.tools(
+                            turn_id=turn_id, run=current_run, candidates=external_candidates,
+                            model_round=model_round, offered_definitions=offered_definitions,
+                            usage=usage, chunk_index=chunk_index,
+                        )
+                        raise RuntimeError("Assistant model boundary returned without yielding")
                     self._wait_for_tools(
                         turn_id=turn_id,
                         run=current_run,
@@ -531,6 +573,15 @@ class AssistantApplication(
                     current_run = None
                     continue
                 if round_text:
+                    if boundary is not None:
+                        boundary.draft(
+                            turn_id=turn_id, run=current_run, model_round=model_round,
+                            content="".join(round_text), cited_evidence_receipt_ids=(),
+                            source_messages=request.messages,
+                            published=decision is None or decision.reviewer_model_id is None,
+                            usage=usage, chunk_index=chunk_index,
+                        )
+                        raise RuntimeError("Assistant model boundary returned without yielding")
                     completion_issue = self._execution_completion_issue(
                         turn_id,
                         candidate_content="".join(round_text),
@@ -605,6 +656,8 @@ class AssistantApplication(
                 current_run,
                 error_code="ASSISTANT_ROUND_LIMIT",
             )
+        except AssistantModelYield:
+            raise
         except (ProviderCancelledError, McpCancelledError):
             if cancellation.is_interrupted:
                 if current_run is not None:
