@@ -645,7 +645,10 @@ def test_interrupted_image_worker_reclaims_the_same_job_after_core_restart(
         reopened.close()
 
 
-def test_pending_video_resumes_polling_after_core_restart(tmp_path: Path) -> None:
+@pytest.mark.parametrize("legacy_pause_state", [False, True])
+def test_pending_video_resumes_polling_after_core_restart(
+    tmp_path: Path, legacy_pause_state: bool,
+) -> None:
     data_root = tmp_path / "data"
     first_provider = RecordingMediaProvider()
     first = build_local_service(data_root, media_provider=first_provider)
@@ -660,6 +663,14 @@ def test_pending_video_resumes_polling_after_core_restart(tmp_path: Path) -> Non
         },
     )
     first.close()
+
+    if legacy_pause_state:
+        with sqlite3.connect(data_root / "core.db") as database:
+            database.execute(
+                "UPDATE core_workflow_runs SET status = 'running', pause_requested = 1 "
+                "WHERE owner_kind = 'media_generation' AND owner_id = ?",
+                (started["id"],),
+            )
 
     recovered_provider = RecordingMediaProvider()
     recovered_provider.video_statuses.append(MediaProviderVideoStatus.COMPLETED)

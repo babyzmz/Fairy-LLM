@@ -295,6 +295,7 @@
 - 实库验证原子回滚、关闭重开、双Run/tenant隔离、并行fan-out/fan-in、取消/暂停/过期Fence和全局4节点上限；新旧引擎分流及真实Provider在Adapter接线后单独验收，内核原语完成不代表Assistant迁移完成。
 - 已加入受Fence保护的原子后续图、每批128/每Revision512节点上限和叶节点追加约束。新图不允许跨Run/Revision、环、旧节点键或重复边；完成重放不能重复插入。SQLite关闭重开、回滚和两个Run并行展开验证全局4/普通Run2限制；实际PostgreSQL事务竞态仍未验。
 - 扩展联合测试发现原有Media重启竞态：失败测试库持久为running、pause_requested=1，但仅有succeeded/waiting Attempts。已新增三个精确失败复现（defer/retry在暂停请求后结算、暂停读取活动状态后并发defer）；不通过增加3秒等待掩盖，独立修复暂停收敛。
+- 暂停写入现用同一SQL语句检查实际活动Attempt；defer/retry经统一Run收敛而非无条件queued。Media启动对旧running/queued+pause_requested状态重新确认实际Attempt，再恢复无活动者，不重发视频创建请求。三项失败回归及旧状态重开先红后绿；Workflow/Assistant控制/Media/Knowledge联合77项通过（74.60秒），相关Ruff通过。原视频重启测试增加旧异常状态参数，保留一次poll、零重复submit及产物断言，未延长原等待时间。
 
 ### Phase 3B：事件提交唤醒与推送验收契约
 

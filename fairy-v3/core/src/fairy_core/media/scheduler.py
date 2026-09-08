@@ -145,6 +145,14 @@ class MediaScheduler:
         with self._unit_of_work_factory() as unit_of_work:
             for job in unit_of_work.state.recoverable_media_jobs():
                 workflow = ensure_media_workflow(unit_of_work, job)
+                if (
+                    workflow.run.pause_requested
+                    and workflow.run.status is not WorkflowRunStatus.PAUSED
+                ):
+                    # Older shutdown races left running/queued + pause_requested
+                    # after the last Attempt had already yielded. Reconcile from
+                    # persisted Attempts, not from a stale in-memory Run status.
+                    workflow = unit_of_work.workflows.request_pause(workflow.run.id)
                 if workflow.run.status is WorkflowRunStatus.PAUSED:
                     resumable_workflows.append(workflow.run.id)
             unit_of_work.commit()

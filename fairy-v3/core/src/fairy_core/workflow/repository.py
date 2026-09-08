@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, insert, select, update
+from sqlalchemy import and_, case, insert, select, update
 from sqlalchemy.engine import Connection
 
 from fairy_core.persistence.tenant import normalize_tenant_id
@@ -498,14 +498,7 @@ class SqlAlchemyWorkflowRepository(
                 updated_at=now,
             )
         )
-        self._connection.execute(
-            update(workflow_runs)
-            .where(
-                workflow_runs.c.tenant_id == self._tenant_id,
-                workflow_runs.c.id == str(claim.run_id),
-            )
-            .values(status=WorkflowRunStatus.QUEUED.value, updated_at=now)
-        )
+        self._settle_run(claim.run_id, now=now)
         snapshot = self.get(claim.run_id)
         assert snapshot is not None
         return snapshot
@@ -549,14 +542,7 @@ class SqlAlchemyWorkflowRepository(
                 updated_at=now,
             )
         )
-        self._connection.execute(
-            update(workflow_runs)
-            .where(
-                workflow_runs.c.tenant_id == self._tenant_id,
-                workflow_runs.c.id == str(claim.run_id),
-            )
-            .values(status=WorkflowRunStatus.QUEUED.value, updated_at=now)
-        )
+        self._settle_run(claim.run_id, now=now)
         snapshot = self.get(claim.run_id)
         assert snapshot is not None
         return snapshot
@@ -713,7 +699,11 @@ class SqlAlchemyWorkflowRepository(
         run = run_from_row(self._locked_run(run_id))
         if run.status in _RUN_TERMINAL:
             return load_snapshot(self._connection, self._tenant_id, run)
-        active = self._has_running_attempt(run_id)
+        active = select(workflow_attempts.c.node_id).where(
+            workflow_attempts.c.tenant_id == self._tenant_id,
+            workflow_attempts.c.run_id == str(run_id),
+            workflow_attempts.c.status == WorkflowAttemptStatus.RUNNING.value,
+        ).exists()
         self._connection.execute(
             update(workflow_runs)
             .where(
@@ -722,8 +712,9 @@ class SqlAlchemyWorkflowRepository(
             )
             .values(
                 pause_requested=True,
-                status=(
-                    WorkflowRunStatus.RUNNING.value if active else WorkflowRunStatus.PAUSED.value
+                status=case(
+                    (active, WorkflowRunStatus.RUNNING.value),
+                    else_=WorkflowRunStatus.PAUSED.value,
                 ),
                 updated_at=now,
             )
