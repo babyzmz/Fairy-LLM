@@ -260,6 +260,7 @@
 - Background/Repository/Schedule/Workflow控制43项通过（39.27秒）；补充解释与取消对照、Schedule服务/Trigger/取消回执16项通过（16.32秒），Ruff通过。真实SQLite关闭重开及跨tenant空投影已验；公开API返回字段与上限未变，前端低频兜底仍待接线。
 - 接线前确认Schedule定义和触发状态尚未写入可订阅Ledger事件，不能直接把2.5秒轮询改慢。先补同事务的最小公开 `assistant.schedule.changed` 事件，覆盖创建/编辑/暂停/恢复/取消、排队/合并/派发/结果及上下文失效；回滚和幂等重放不新增事件，纯租约操作不发事件，事件不包含指令模板或Provider信息。
 - 已补齐同事务事件；Schedule事件/Trigger/Service/Repository/Ledger共21项通过（17.34秒），Ruff通过。新建重放不重复通知，事件失败会回滚定义变更且不唤醒，关闭重开和tenant隔离已验，重复pending租约不发无变化事件。前端新增回归实际复现10秒内5次列表请求，以及Schedule/Turn/审批事件不刷新后台投影，随后接入事件优先、30秒恢复兜底。
+- 前端已接入Schedule、Turn状态和审批事件；后台列表包含其他聊天，因此跨聊天刷新列表，但Schedule Card仅失效所属聊天缓存，不触发Provider或消息刷新。TypeScript通过，App/Shell/Scheduling/Invalidation/ScheduleCard共62项通过（12.23秒）；10秒稳态请求由5次降为1次，30秒执行一次恢复读取，离开聊天模式后停止。事件推送和Windows原生通知仍归最终联合门禁。
 
 ### Phase 3B：事件提交唤醒与推送验收契约
 

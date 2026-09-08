@@ -8,6 +8,27 @@ import {
 } from "./workspaceQueryInvalidation";
 
 describe("workspace query invalidation", () => {
+  it("refreshes global task projections and only the changed chat schedule cards", () => {
+    const batch = createWorkspaceInvalidationBatch();
+    addWorkspaceEventInvalidation(batch, event("assistant.schedule.changed", {
+      conversation_id: "conversation-a",
+    }));
+    expect(matches(batch, ["workspace", "background-tasks", "conversation-a"])).toBe(true);
+    expect(matches(batch, ["workspace", "background-tasks", "conversation-b"])).toBe(true);
+    expect(matches(batch, ["workspace", "assistant-schedules", "conversation-a"])).toBe(true);
+    expect(matches(batch, ["workspace", "assistant-schedules", "conversation-b"])).toBe(false);
+    expect(matches(batch, ["workspace", "providers"])).toBe(false);
+    expect(matches(batch, ["workspace", "messages", "conversation-a"])).toBe(false);
+  });
+
+  it.each(["assistant.turn.completed", "assistant.turn.paused", "approval.created"])(
+    "refreshes background task status from %s without text delta polling", (type) => {
+      const batch = createWorkspaceInvalidationBatch();
+      addWorkspaceEventInvalidation(batch, event(type, { conversation_id: "conversation-a" }));
+      expect(matches(batch, ["workspace", "background-tasks", "conversation-b"])).toBe(true);
+    },
+  );
+
   it("limits a created message to its Conversation, history, Tasks, and traces", () => {
     const batch = createWorkspaceInvalidationBatch();
     addWorkspaceEventInvalidation(batch, event("message.created", {

@@ -74,14 +74,14 @@ export function useAssistantScheduling({
     queryFn: () => client.assistant.backgroundTasks.list(currentConversationId),
     enabled,
     retry: false,
-    refetchInterval: 2_500,
+    refetchInterval: 30_000,
   });
   const chatSchedulesQuery = useQuery({
     queryKey: [...workspaceKey, "assistant-schedules", currentConversationId],
     queryFn: () => client.assistant.schedules.list(requireId(currentConversationId)),
     enabled: enabled && currentConversationId !== null,
     retry: false,
-    refetchInterval: 2_500,
+    refetchInterval: 30_000,
   });
 
   const refresh = useCallback(async () => {

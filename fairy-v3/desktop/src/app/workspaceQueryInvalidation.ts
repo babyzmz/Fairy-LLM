@@ -2,6 +2,7 @@ import type { EventEnvelope } from "../core/client";
 
 export type WorkspaceInvalidationDomain =
   | "approvals"
+  | "backgroundTasks"
   | "browser"
   | "conversations"
   | "extensions"
@@ -13,6 +14,7 @@ export type WorkspaceInvalidationDomain =
   | "projects"
   | "providers"
   | "realtimeTranscript"
+  | "schedules"
   | "tasks"
   | "traces"
   | "voice"
@@ -66,6 +68,10 @@ export function addWorkspaceEventInvalidation(
   };
   const type = event.event_type;
 
+  if (type === "assistant.schedule.changed") {
+    addWorkspaceInvalidation(batch, ["backgroundTasks", "schedules"], scope);
+    return;
+  }
   if (type === "message.created") {
     addWorkspaceInvalidation(batch, ["messages", "tasks", "traces", "conversations"], scope);
     return;
@@ -79,8 +85,8 @@ export function addWorkspaceEventInvalidation(
     addWorkspaceInvalidation(
       batch,
       terminal
-        ? ["messages", "tasks", "traces", "approvals", "workspace", "previews"]
-        : ["tasks", "traces"],
+        ? ["messages", "tasks", "traces", "approvals", "workspace", "previews", "backgroundTasks"]
+        : ["tasks", "traces", "backgroundTasks"],
       scope,
     );
     return;
@@ -88,7 +94,7 @@ export function addWorkspaceEventInvalidation(
   if (type.startsWith("assistant.")) {
     addWorkspaceInvalidation(
       batch,
-      type.includes("approval") ? ["traces", "approvals", "tasks"] : ["traces"],
+      type.includes("approval") ? ["traces", "approvals", "tasks", "backgroundTasks"] : ["traces"],
       scope,
     );
     return;
@@ -109,7 +115,7 @@ export function addWorkspaceEventInvalidation(
     return;
   }
   if (type.startsWith("approval.")) {
-    addWorkspaceInvalidation(batch, ["approvals", "tasks", "traces"], scope);
+    addWorkspaceInvalidation(batch, ["approvals", "tasks", "traces", "backgroundTasks"], scope);
     return;
   }
   if (type.startsWith("preview.") || type.startsWith("runtime.")) {
@@ -199,6 +205,11 @@ export function workspaceQueryMatchesInvalidation(
   }
   if (root !== "workspace") return false;
 
+  // Every background list includes other chats; schedule cards remain chat-scoped.
+  if (batch.domains.has("backgroundTasks") && kind === "background-tasks") return true;
+  if (batch.domains.has("schedules") && kind === "assistant-schedules") {
+    return scopeMatches(keyPart(queryKey, 2), batch.conversationIds);
+  }
   if (batch.domains.has("messages") && ["messages", "project-messages"].includes(kind)) {
     return scopeMatches(keyPart(queryKey, 2), batch.conversationIds);
   }
