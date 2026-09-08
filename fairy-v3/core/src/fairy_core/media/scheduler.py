@@ -225,7 +225,7 @@ class MediaScheduler:
         result = self._application.recover_interrupted()
         resumable_workflows = []
         with self._unit_of_work_factory() as unit_of_work:
-            for job in unit_of_work.state.recoverable_media_jobs():
+            for job in unit_of_work.state.recoverable_media_jobs(include_unsettled_workflows=True):
                 workflow = ensure_media_workflow(unit_of_work, job)
                 if (
                     workflow.run.pause_requested

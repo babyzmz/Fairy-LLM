@@ -30,6 +30,22 @@ identity from the database. This invariant applies to both current and new engin
 
 Implementation and regression results are appended below as work progresses.
 
+### Archive-pending process restart
+
+- Inject an interrupted archive after the real Provider result and Artifact commit,
+  for two different Task/Workspace bindings. Close the first Core and build a new
+  Core over the same temporary database. Both Runs must complete the remaining
+  archive nodes with unchanged Job/Artifact IDs and zero new Provider submissions.
+- This checks actual service/database close-and-reopen; Provider I/O remains
+  scripted. It does not claim paid-provider or native process acceptance.
+- RED: both restored Runs remained paused although their Jobs and Artifacts were
+  completed. Recovery now optionally includes completed Jobs with a nonterminal
+  Media Run, via a tenant-bound SQL existence check. Normal provider-job recovery
+  queries/counts are unchanged and archived historical Jobs are excluded.
+- GREEN: archive restart + store + step Media **11 passed (24.38s)**;
+  complete Media package **27 passed (34.47s)**; Ruff passed. Two separate Tasks
+  recovered the same artifact IDs with zero new Provider requests.
+
 ### Non-blocking domain handoff (in progress)
 
 - Engine 4 stamps trusted internal Command metadata, atomically publishes the

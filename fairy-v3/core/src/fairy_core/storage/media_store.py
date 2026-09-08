@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import and_, insert, or_, select, update
 
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 from fairy_core.media.models import (
@@ -15,7 +15,7 @@ from fairy_core.media.models import (
     MediaGenerationStatus,
 )
 from fairy_core.model_catalog.models import ModelEndpointKind
-from fairy_core.storage.schema import media_generation_jobs
+from fairy_core.storage.schema import media_generation_jobs, workflow_runs
 
 _RECOVERABLE_STATUSES = (
     MediaGenerationStatus.CREATED.value,
@@ -130,14 +130,28 @@ class MediaStateStoreMixin:
             )
         return self._media_job_from_row(row) if row is not None else None
 
-    def recoverable_media_jobs(self) -> list[MediaGenerationJob]:
+    def recoverable_media_jobs(
+        self, *, include_unsettled_workflows: bool = False,
+    ) -> list[MediaGenerationJob]:
+        recoverable = media_generation_jobs.c.status.in_(_RECOVERABLE_STATUSES)
+        if include_unsettled_workflows:
+            recoverable = or_(recoverable, and_(
+                media_generation_jobs.c.status == MediaGenerationStatus.COMPLETED.value,
+                select(workflow_runs.c.id).where(
+                    workflow_runs.c.tenant_id == self._tenant_id,
+                    workflow_runs.c.owner_kind == "media_generation",
+                    workflow_runs.c.owner_id == media_generation_jobs.c.id,
+                    workflow_runs.c.engine_version == 1,
+                    workflow_runs.c.status.not_in(("completed", "cancelled", "failed")),
+                ).exists(),
+            ))
         with self._session.read() as connection:
             rows = (
                 connection.execute(
                     select(media_generation_jobs)
                     .where(
                         media_generation_jobs.c.tenant_id == self._tenant_id,
-                        media_generation_jobs.c.status.in_(_RECOVERABLE_STATUSES),
+                        recoverable,
                     )
                     .order_by(
                         media_generation_jobs.c.updated_at,
