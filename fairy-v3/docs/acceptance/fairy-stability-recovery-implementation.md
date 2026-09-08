@@ -15,7 +15,7 @@
 | 阶段 | 工作 | 状态 |
 | --- | --- | --- |
 | 0 | 分支、用户改动恢复副本、独立 DSH 基线 | 完成 |
-| 1 | 录音 Scope；Browser revision；隐藏面板；桌宠启动 | 定向回归完成，完整桌面回归中；原生未验收 |
+| 1 | 录音 Scope；Browser revision；隐藏面板；桌宠启动 | 实现及完整桌面自动化通过；原生未验收 |
 | 2 | 持久执行意图、目标、副作用约束、多入口一致性 | 未开始 |
 | 3 | 单 reader RPC、控制通道、期限、协商及事件推送 | 未开始 |
 | 4 | 宿主 broker、桌宠脱离主 UI 生命周期、统一领域命令 | 未开始 |
@@ -44,6 +44,16 @@
 - 只读进程检查未发现项目 Node/Python/Cargo/Fairy/Browser Worker；没有停止无关进程。
 - DSH 保存提交是现状检查点，不宣称完整桌面门禁通过；原审查中的 DualSurface 异步启动失败留待 Phase 1 修复。
 - 已单独提交 DSH `660945c94`，TypeScript 通过，DSH/Render Settings 3 文件14测试通过，未上传。
+
+### Phase 1 提交与完整回归
+
+- `8155c2dd2`：F01 录音 generation/作用域隔离。
+- `14f511738`：F04 Browser snapshot/tab revision 一致性。
+- `2ee83e0ae`：F03 隐藏 Browser 视觉查询暂停。
+- `fa1b72c63`：F11 异步桌宠启动契约门禁。
+- 最后一次 TypeScript 通过；`npx vitest run --maxWorkers=2`：105文件、601测试全部通过（71.04秒）。
+- jsdom Canvas context 警告属于模拟环境限制，未通过安装新包或吞掉日志伪装为 GPU 实测。真实麦克风、Playwright、原生 WebView2/远程显示仍待对应联合验收。
+- Phase 2 已完成执行入口和存储扩展点核对，尚未修改其生产代码。现有 interpretation、工具候选、审批恢复、工具执行、Schedule/Steering 必须同时接入约束，不能只过滤工具列表就标记完成。
 
 ## 恢复方法
 
