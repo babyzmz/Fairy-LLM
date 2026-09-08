@@ -77,3 +77,61 @@ finally:
     }
     assert!(slow.join().unwrap().is_ok());
 }
+
+#[test]
+fn real_core_pushes_committed_events_to_two_subscribers_and_replays_after_unwatch() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let core_root = manifest.join("../../../../core");
+    let data = tempdir().unwrap();
+    let bridge =
+        CoreBridge::spawn_verified(CoreLaunchSpec::development(&core_root, data.path())).unwrap();
+    let state = bridge
+        .call(json!({"id": 1, "method": "events.state", "params": {}}))
+        .unwrap();
+    let cursor = state["result"]["latest_cursor"].as_u64().unwrap();
+    let first = bridge.subscribe_events(cursor).unwrap();
+    let second = bridge.subscribe_events(cursor).unwrap();
+    let created = bridge.call(json!({"id": 2, "method": "projects.create", "params": {"name": "Event test", "residency": "local_only"}})).unwrap();
+    assert!(created.get("error").is_none());
+    let mut observed = Vec::new();
+    for subscription in [&first, &second] {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let batch = subscription
+                .recv_timeout(Duration::from_millis(200))
+                .unwrap();
+            if let Some(batch) = batch {
+                assert_eq!(batch["ledger_id"], state["result"]["ledger_id"]);
+                if let Some(event) = batch["items"].as_array().unwrap().iter().find(|item| {
+                    item["event_type"] == "command.output"
+                        && item["payload"]["command_name"] == "workspace.create_empty"
+                }) {
+                    observed.push(event["id"].clone());
+                    break;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "committed project event was not pushed"
+            );
+        }
+    }
+    assert_eq!(observed[0], observed[1]);
+    drop(first);
+    drop(second);
+    let replay = bridge.subscribe_events(cursor).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(batch) = replay.recv_timeout(Duration::from_millis(200)).unwrap() {
+            if batch["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["id"] == observed[0])
+            {
+                break;
+            }
+        }
+        assert!(Instant::now() < deadline);
+    }
+}

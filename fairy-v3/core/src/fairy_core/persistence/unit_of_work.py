@@ -38,6 +38,7 @@ from fairy_core.memory.snapshot_sqlalchemy import SqlAlchemyMemorySnapshotReposi
 from fairy_core.memory.sqlalchemy import SqlAlchemyMemoryRepository
 from fairy_core.model_catalog.ports import ModelCatalogRepository
 from fairy_core.model_catalog.repository import SqlAlchemyModelCatalogRepository
+from fairy_core.persistence.ledger_signal import LedgerCommitSignal
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.presentation.ports import PresentationRepository
 from fairy_core.presentation.repository import SqlAlchemyPresentationRepository
@@ -94,12 +95,15 @@ class CoreUnitOfWorkFactory(Protocol):
 
 
 class SqlAlchemyUnitOfWork:
-    def __init__(self, engine: Engine, *, tenant_id: str) -> None:
+    def __init__(
+        self, engine: Engine, *, tenant_id: str, ledger_signal: LedgerCommitSignal | None = None
+    ) -> None:
         self._engine = engine
         self._tenant_id = normalize_tenant_id(tenant_id)
         self._connection: Connection | None = None
         self._transaction: Transaction | None = None
         self._committed = False
+        self._ledger_signal = ledger_signal
 
     def __enter__(self) -> Self:
         if self._connection is not None:
@@ -224,16 +228,23 @@ class SqlAlchemyUnitOfWork:
             raise RuntimeError("unit of work has already committed")
         self._transaction.commit()
         self._committed = True
+        if self._ledger_signal is not None and self.commands.events_appended:
+            self._ledger_signal.notify()
 
 
 class SqlAlchemyUnitOfWorkFactory:
     def __init__(self, engine: Engine, *, tenant_id: str) -> None:
         self._engine = engine
         self._tenant_id = normalize_tenant_id(tenant_id)
+        self.ledger_signal = LedgerCommitSignal()
 
     @property
     def tenant_id(self) -> str:
         return self._tenant_id
 
     def __call__(self) -> SqlAlchemyUnitOfWork:
-        return SqlAlchemyUnitOfWork(self._engine, tenant_id=self._tenant_id)
+        return SqlAlchemyUnitOfWork(
+            self._engine,
+            tenant_id=self._tenant_id,
+            ledger_signal=self.ledger_signal,
+        )

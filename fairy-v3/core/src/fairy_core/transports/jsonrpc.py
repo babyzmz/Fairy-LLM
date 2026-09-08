@@ -23,6 +23,7 @@ class JsonRpcDispatcher:
 
     def __init__(self, service: CoreService) -> None:
         self._service = service
+        self.ledger_signal = getattr(service, "ledger_signal", None)
 
     def close(self) -> None:
         close = getattr(self._service, "close", None)

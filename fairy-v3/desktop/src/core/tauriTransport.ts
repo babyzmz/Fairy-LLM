@@ -3,7 +3,10 @@ import type {
   CoreMethodMap,
   CoreMethodName,
   CoreTransport,
+  EventEnvelope,
+  EventSubscriptionOptions,
 } from "./client";
+import { pollCoreEvents } from "./client";
 import type {
   OpenRouterConfigurationInput,
   OpenRouterConfigurationStatus,
@@ -91,6 +94,66 @@ export class TauriCoreTransport implements CoreTransport {
     this.startupTimeoutMs = startupPolicy.timeoutMs ?? defaultCoreStartupTimeoutMs;
     this.startupRetryDelayMs = startupPolicy.retryDelayMs ?? defaultCoreStartupRetryDelayMs;
     this.rpcCommand = startupPolicy.rpcCommand ?? "core_rpc";
+  }
+
+  async *subscribeEvents(cursor: number, options: EventSubscriptionOptions = {}): AsyncIterable<EventEnvelope> {
+    if (this.rpcCommand !== "core_rpc") {
+      yield* pollCoreEvents(this, cursor, options);
+      return;
+    }
+    if (options.signal?.aborted) return;
+    const subscriptionId = crypto.randomUUID();
+    let closing: Promise<unknown> | undefined;
+    const close = () => closing ??= this.invoke("core_events_close", { subscriptionId }).catch(() => undefined);
+    const abort = () => { void close(); };
+    options.signal?.addEventListener("abort", abort, { once: true });
+    let current = cursor;
+    let ledgerId: string | undefined;
+    try {
+      const opened = await this.invoke<{ supported: boolean }>("core_events_open", { subscriptionId, cursor })
+        .catch((error: unknown) => {
+          if (String(error) === "Command core_events_open not found") return { supported: false };
+          throw error;
+        });
+      if (options.signal?.aborted) {
+        // An earlier close may have arrived before the host finished opening.
+        await this.invoke("core_events_close", { subscriptionId }).catch(() => undefined);
+        return;
+      }
+      if (!opened.supported) {
+        yield* pollCoreEvents(this, current, options);
+        return;
+      }
+      while (!options.signal?.aborted) {
+        const result = await this.invoke<{
+          kind: "batch" | "idle" | "closed" | "resync";
+          batch?: { source: string; ledger_id: string; items: EventEnvelope[] };
+        }>("core_events_next", { subscriptionId });
+        if (options.signal?.aborted) return;
+        if (result.kind === "idle") continue;
+        if (result.kind === "resync") throw eventSubscriptionError("RPC_EVENT_RESYNC_REQUIRED");
+        if (result.kind === "closed") throw eventSubscriptionError("RPC_EVENT_SUBSCRIPTION_CLOSED");
+        const batch = result.batch;
+        if (!batch || batch.source !== this.eventSourceId || !batch.ledger_id || !Array.isArray(batch.items)) {
+          throw eventSubscriptionError("RPC_EVENT_INVALID_BATCH");
+        }
+        if (ledgerId !== undefined && ledgerId !== batch.ledger_id) throw eventSubscriptionError("RPC_EVENT_RESYNC_REQUIRED");
+        ledgerId = batch.ledger_id;
+        for (const event of batch.items) {
+          if (options.signal?.aborted) return;
+          if (!Number.isSafeInteger(event.cursor) || event.cursor < 0) throw eventSubscriptionError("RPC_EVENT_INVALID_BATCH");
+          if (event.cursor <= current) continue;
+          current = event.cursor;
+          yield event;
+        }
+      }
+    } catch (error) {
+      if (options.signal?.aborted) return;
+      throw typeof error === "string" ? eventSubscriptionError(error) : error;
+    } finally {
+      options.signal?.removeEventListener("abort", abort);
+      await close();
+    }
   }
 
   providerOpenRouterStatus(): Promise<OpenRouterConfigurationStatus> {
@@ -250,6 +313,10 @@ export class TauriCoreTransport implements CoreTransport {
       );
     }
   }
+}
+
+function eventSubscriptionError(errorCode: string): CoreRpcError {
+  return new CoreRpcError({ code: -32051, message: "Local event subscription needs recovery.", data: { error_code: errorCode } });
 }
 
 function delayUntilCoreRetry(delayMs: number, signal?: AbortSignal): Promise<void> {

@@ -1025,33 +1025,37 @@ export class CoreClient {
   }
 
   private subscribeToEvents(cursor: number, options: EventSubscriptionOptions): AsyncIterable<EventEnvelope> {
-    return this.transport.subscribeEvents?.(cursor, options) ?? this.pollEvents(cursor, options);
+    return this.transport.subscribeEvents?.(cursor, options) ?? pollCoreEvents(this.transport, cursor, options);
   }
+}
 
-  private async *pollEvents(cursor: number, options: EventSubscriptionOptions): AsyncIterable<EventEnvelope> {
-    let current = cursor;
-    const requestedInterval = options.pollIntervalMs ?? DEFAULT_EVENT_POLL_MS;
-    const baseInterval = Number.isFinite(requestedInterval)
-      ? Math.max(1, Math.min(MAX_IDLE_EVENT_POLL_MS, requestedInterval))
-      : DEFAULT_EVENT_POLL_MS;
-    let idleInterval = baseInterval;
-    while (!options.signal?.aborted) {
-      const batch = await this.transport.call("events.subscribe", { cursor: current }, { signal: options.signal });
+export async function* pollCoreEvents(
+  transport: CoreTransport,
+  cursor: number,
+  options: EventSubscriptionOptions,
+): AsyncIterable<EventEnvelope> {
+  let current = cursor;
+  const requestedInterval = options.pollIntervalMs ?? DEFAULT_EVENT_POLL_MS;
+  const baseInterval = Number.isFinite(requestedInterval)
+    ? Math.max(1, Math.min(MAX_IDLE_EVENT_POLL_MS, requestedInterval))
+    : DEFAULT_EVENT_POLL_MS;
+  let idleInterval = baseInterval;
+  while (!options.signal?.aborted) {
+    const batch = await transport.call("events.subscribe", { cursor: current }, { signal: options.signal });
+    if (options.signal?.aborted) return;
+    let progressed = false;
+    for (const event of batch.items) {
       if (options.signal?.aborted) return;
-      let progressed = false;
-      for (const event of batch.items) {
-        if (options.signal?.aborted) return;
-        if (event.cursor <= current) continue;
-        current = event.cursor;
-        progressed = true;
-        yield event;
-      }
-      if (!progressed) {
-        await waitForPoll(idleInterval, options.signal);
-        idleInterval = Math.min(MAX_IDLE_EVENT_POLL_MS, idleInterval * 2);
-      } else {
-        idleInterval = baseInterval;
-      }
+      if (event.cursor <= current) continue;
+      current = event.cursor;
+      progressed = true;
+      yield event;
+    }
+    if (!progressed) {
+      await waitForPoll(idleInterval, options.signal);
+      idleInterval = Math.min(MAX_IDLE_EVENT_POLL_MS, idleInterval * 2);
+    } else {
+      idleInterval = baseInterval;
     }
   }
 }

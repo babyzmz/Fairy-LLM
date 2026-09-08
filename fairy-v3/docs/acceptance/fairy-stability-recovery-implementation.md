@@ -17,7 +17,7 @@
 | 0 | 分支、用户改动恢复副本、独立 DSH 基线 | 完成 |
 | 1 | 录音 Scope；Browser revision；隐藏面板；桌宠启动 | 实现及完整桌面自动化通过；原生未验收 |
 | 2 | 持久执行意图、目标、副作用约束、多入口一致性 | 策略/Steering/入口接线已实现；复合 objective 的逐节点完成凭据与 Phase 6 联合闭环 |
-| 3 | 单 reader RPC、控制通道、期限、协商及事件推送 | 进行中：先建立协商后的有界 Python 请求通道 |
+| 3 | 单 reader RPC、控制通道、期限、协商及事件推送 | 请求分流与事件通道已实现；取消控制及原生联合待闭环 |
 | 4 | 宿主 broker、桌宠脱离主 UI 生命周期、统一领域命令 | 未开始 |
 | 5 | 空闲退避、批量查询、有限历史、Browser 资源预算 | 未开始 |
 | 6 | 新版真实模型/工具节点，全局并发与恢复 | 未开始 |
@@ -111,6 +111,19 @@
 - Rust Bridge 测试11项通过，Clippy（仅 core-bridge 全 targets）通过；宿主 `cargo check -p fairy-desktop-v3 --lib` 通过。新增真实 Core＋实际 stdio/Bridge 联通测试：领域边界注入10秒延迟时，健康检查每次<1秒（测试总12.13秒）。这是本机进程级传输证据，不是 WebView2/真实 Provider 联合验收。
 - Core stdio/JSON-RPC 定向20项通过；Capabilities stdio3项通过；TypeScript 通过，Client/Tauri/Cloud Transport 30项通过。新增 EOF/满载/重复 ID/未知 get 串行/断管不再派发场景；既有低于50ms轮询常量断言按批准方案改成250–500ms初始间隔，并补10秒空闲最多7次请求、取消后无计时器/迟到事件的行为测试（修复前401次）。
 - 默认请求30秒，显式 Voice/Browser 长操作120秒；超时返回 `RPC_DEADLINE_EXCEEDED`，不会映射成可重试的启动失联。未协商推送的客户端退避至5秒，读取到新事件后重置。事件 watch、提交后唤醒、慢订阅者重同步仍未实现，Phase 3 尚未完成。
+
+### Phase 3B：事件提交唤醒与推送验收契约
+
+- 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。
+- 本地 watch/unwatch 必须协商启用；响应和事件使用不同 envelope。每个订阅独立有界队列/游标，溢出进入显式 resync，终态与审批依靠持久回放补齐。主窗口卸载或取消清理订阅，迟到消息不能重建旧订阅。
+- 验证双 tenant 提交/回滚隔离，双订阅各自游标，丢唤醒后的5秒持久补读，慢订阅者不阻塞其他窗口、unwatch及重连清理；真实 Rust→Core 联通后再接 Tauri，最后做原生主窗口重载验收。
+- 已实现上述 Core→Rust 推送，每个订阅最多8个批次（每批最多64事件），最多8订阅；溢出进入持续 resync 状态，独立订阅不受影响。订阅者退订会唤醒正在等待的读取，迟到的旧 subscription ID 被忽略。
+- WebView 通过独立 IPC 等待 Rust 队列（空闲最多30秒返回一次），不是轮询 Core 数据库，也不占业务 RPC 控制通道。主窗口 PageLoad Started 按捕获的旧 ID 清理；宿主以真实 window label 绑定所有者，不接受前端自报窗口身份，桌宠仍无通用 Core/事件权限。
+- 新 Core 和旧 Core/旧宿主分别使用推送与250ms→5秒退避回退；正文回放继续经过原 EventCheckpoint 的 source/ledger/cursor/水位恢复逻辑，resync 抛出可识别错误，触发原有持久回放。
+- Core 55项通过（23.26秒），覆盖提交/回滚、两个 tenant、两个订阅、独立写入丢失本机 hint 后补读、未来游标拒绝、协商与退订。Ruff 受影响模块通过。
+- Rust Bridge 14项通过，含真实 Core 双订阅、提交推送、退订重开回放；Core Bridge＋Desktop 全 targets Clippy 通过，宿主订阅隔离单测通过。新增联通测试最初使用了不存在的 `project.created`/`command.completed` 名称，核对 CommandBus 后改为实际 `command.output`，没有改生产事件契约来迎合测试。
+- TypeScript 通过；Client/Tauri/Cloud/EventStream 44测试通过；App/WorkspaceShell/EventStream/Tauri 69测试通过。真实 WebView2 刷新、用户输入竞争、多窗口硬件场景尚待最终验收，不能由这些测试替代。
+- 顺带发现并单独提交 DSH 测试 Clippy 清理 `f82f4b07f`：只改默认值初始化写法，3项原断言保持并通过，没有更改 DSH 样式。
 
 ### Phase 1 / F11：桌宠异步启动门禁（历史证据）
 

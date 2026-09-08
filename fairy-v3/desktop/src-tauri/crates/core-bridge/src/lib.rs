@@ -11,6 +11,10 @@ use std::time::Duration;
 use serde_json::Value;
 use thiserror::Error;
 
+mod events;
+use events::EventSinks;
+pub use events::{CoreEventCancellation, CoreEventSubscription};
+
 const CORE_SERVICE: &str = "fairy-core";
 const CORE_PROTOCOL: &str = "core-service-v1";
 
@@ -194,6 +198,10 @@ pub enum CoreBridgeError {
     RequestTimedOut,
     #[error("Fairy Core request capacity is exhausted; request was not dispatched")]
     CapacityExceeded,
+    #[error("Fairy Core event notifications are unavailable")]
+    EventsUnavailable,
+    #[error("Fairy Core events require replay from the last consumed cursor")]
+    EventResyncRequired,
 }
 
 struct PendingRequest {
@@ -217,6 +225,8 @@ struct BridgeProcess {
     sequence: AtomicU64,
     reader: Mutex<Option<JoinHandle<()>>>,
     writer: Mutex<Option<JoinHandle<()>>>,
+    event_sinks: EventSinks,
+    event_notifications: AtomicBool,
 }
 
 impl Drop for BridgeProcess {
@@ -253,6 +263,9 @@ impl CoreBridge {
         fail_pending(&self.process.pending, |_| {
             CoreBridgeError::WorkerInterrupted
         });
+        if let Ok(mut sinks) = self.process.event_sinks.lock() {
+            sinks.clear();
+        }
     }
 
     pub fn spawn(spec: CoreLaunchSpec) -> Result<Self, CoreBridgeError> {
@@ -280,12 +293,20 @@ impl CoreBridge {
             .ok_or(CoreBridgeError::WorkerInterrupted)?;
         let pending = Arc::new(Mutex::new(BTreeMap::new()));
         let closed = Arc::new(AtomicBool::new(false));
+        let event_sinks = Arc::new(Mutex::new(BTreeMap::new()));
         let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
         let (outbound, receiver) = mpsc::sync_channel(64);
         let reader_pending = Arc::clone(&pending);
         let reader_closed = Arc::clone(&closed);
+        let reader_sinks = Arc::clone(&event_sinks);
         let reader = std::thread::spawn(move || {
-            read_responses(stdout, &reader_pending, &reader_closed, generation);
+            read_responses(
+                stdout,
+                &reader_pending,
+                &reader_closed,
+                generation,
+                &reader_sinks,
+            );
         });
         let writer_pending = Arc::clone(&pending);
         let writer_closed = Arc::clone(&closed);
@@ -302,6 +323,8 @@ impl CoreBridge {
                 sequence: AtomicU64::new(1),
                 reader: Mutex::new(Some(reader)),
                 writer: Mutex::new(Some(writer)),
+                event_sinks,
+                event_notifications: AtomicBool::new(false),
             }),
         })
     }
@@ -309,11 +332,17 @@ impl CoreBridge {
     pub fn spawn_verified(spec: CoreLaunchSpec) -> Result<Self, CoreBridgeError> {
         let bridge = Self::spawn(spec)?;
         bridge.verify_handshake()?;
-        // Old Cores return Method not found and retain sequential dispatch. No event
-        // notifications are enabled by this request; they need separate negotiation.
-        let _capabilities = bridge.call(serde_json::json!({
-            "jsonrpc": "2.0", "id": 0, "method": "transport.negotiate", "params": {}
+        // Old Cores retain their sequential protocol; subscribers can fall back.
+        let capabilities = bridge.call(serde_json::json!({
+            "jsonrpc": "2.0", "id": 0, "method": "transport.negotiate", "params": {"event_notifications": true}
         }))?;
+        bridge.process.event_notifications.store(
+            capabilities
+                .pointer("/result/event_notifications")
+                .and_then(Value::as_bool)
+                == Some(true),
+            Ordering::Release,
+        );
         Ok(bridge)
     }
 
@@ -439,6 +468,7 @@ fn read_responses(
     pending: &PendingRequests,
     closed: &AtomicBool,
     generation: u64,
+    event_sinks: &EventSinks,
 ) {
     let mut reader = BufReader::new(stdout);
     loop {
@@ -450,6 +480,9 @@ fn read_responses(
         let Ok(mut response) = serde_json::from_str::<Value>(&line) else {
             break;
         };
+        if events::dispatch(event_sinks, &response) {
+            continue;
+        }
         let key = response.get("id").and_then(Value::as_str);
         if let Some(key) = key.filter(|key| key.starts_with(&format!("{generation}:"))) {
             let request = pending
@@ -472,6 +505,9 @@ fn read_responses(
     }
     closed.store(true, Ordering::Release);
     fail_pending(pending, |_| CoreBridgeError::WorkerInterrupted);
+    if let Ok(mut sinks) = event_sinks.lock() {
+        sinks.clear();
+    }
 }
 
 fn write_requests(

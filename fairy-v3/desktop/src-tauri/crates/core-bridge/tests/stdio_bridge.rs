@@ -173,6 +173,47 @@ fn shutdown_interrupts_cloned_callers_and_does_not_affect_a_new_generation() {
 }
 
 #[test]
+fn slow_event_subscriber_requests_resync_without_blocking_another_subscriber() {
+    let script = r#"
+import json, sys
+count=0
+for line in sys.stdin:
+    r=json.loads(line)
+    result={'status':'ok','service':'fairy-core','protocol':'core-service-v1','event_notifications':True}
+    if r['method']=='events.watch':
+        count+=1
+        key=r['params']['subscription_id']
+        result={'subscription_id':key, 'ledger_id':'ledger', 'latest_cursor':0, 'oldest_cursor':0}
+    print(json.dumps({'id':r['id'], 'result':result}),flush=True)
+    if r['method']=='events.watch':
+        for cursor in range(12 if count==1 else 1):
+            print(json.dumps({'jsonrpc':'2.0','method':'events.changed','params':{
+                'subscription_id':key, 'cursor':cursor+1, 'items':[], 'resync_required':False
+            }}),flush=True)
+"#;
+    let bridge = CoreBridge::spawn_verified(helper(script)).unwrap();
+    let first = bridge.subscribe_events(0).unwrap();
+    let second = bridge.subscribe_events(0).unwrap();
+    assert_eq!(
+        second
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap()["cursor"],
+        1
+    );
+    assert!(matches!(
+        first.recv_timeout(Duration::from_secs(1)),
+        Err(CoreBridgeError::EventResyncRequired)
+    ));
+    drop(first);
+    drop(second);
+    assert_eq!(
+        bridge.call(json!({"id": 8, "method": "health"})).unwrap()["result"]["status"],
+        "ok"
+    );
+}
+
+#[test]
 fn verifies_the_core_service_and_protocol_before_use() {
     let script = r#"
 import json

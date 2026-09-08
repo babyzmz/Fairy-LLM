@@ -3,6 +3,64 @@ import { describe, expect, it, vi } from "vitest";
 import { CoreRpcError, TauriCoreTransport } from "./tauriTransport";
 
 describe("TauriCoreTransport", () => {
+  it("falls back to bounded polling when an older desktop host has no event command", async () => {
+    const invoke = vi.fn(async (command: string) => {
+      if (command.startsWith("core_events_")) throw `Command ${command} not found`;
+      return { jsonrpc: "2.0", id: 1, result: { items: [{ cursor: 1 }], next_cursor: 1 } };
+    });
+    const stream = new TauriCoreTransport(invoke as never).subscribeEvents(0)[Symbol.asyncIterator]();
+    expect((await stream.next()).value).toMatchObject({ cursor: 1 });
+    await stream.return?.();
+    expect(invoke.mock.calls.some(([command]) => command === "core_rpc")).toBe(true);
+  });
+
+  it("consumes host-pushed events and requests replay on a bounded queue overflow", async () => {
+    let reads = 0;
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "core_events_open") return { supported: true };
+      if (command === "core_events_next") return ++reads === 1
+        ? { kind: "batch", batch: { source: "local:stdio", ledger_id: "ledger", items: [{ cursor: 5 }] } }
+        : { kind: "resync" };
+      if (command === "core_events_close") return undefined;
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const transport = new TauriCoreTransport(invoke as never);
+    const events = transport.subscribeEvents(4)[Symbol.asyncIterator]();
+    expect((await events.next()).value).toMatchObject({ cursor: 5 });
+    await expect(events.next()).rejects.toMatchObject({ errorCode: "RPC_EVENT_RESYNC_REQUIRED" });
+    expect(invoke.mock.calls.map(([command]) => command)).toEqual([
+      "core_events_open", "core_events_next", "core_events_next", "core_events_close",
+    ]);
+  });
+
+  it("closes a subscription whose open response arrives after abort", async () => {
+    let resolve!: (value: unknown) => void;
+    const invoke = vi.fn((command: string) => command === "core_events_open"
+      ? new Promise((done) => { resolve = done; }) : Promise.resolve());
+    const transport = new TauriCoreTransport(invoke as never);
+    const controller = new AbortController();
+    const pending = transport.subscribeEvents(0, { signal: controller.signal })[Symbol.asyncIterator]().next();
+    controller.abort();
+    resolve({ supported: true });
+    expect(await pending).toEqual({ done: true, value: undefined });
+    expect(invoke.mock.calls.filter(([command]) => command === "core_events_close")).toHaveLength(2);
+    expect(invoke.mock.calls.some(([command]) => command === "core_events_next")).toBe(false);
+  });
+
+  it("uses distinct subscription identities for two host clients", async () => {
+    const invoke = vi.fn(async (command: string) => command === "core_events_open"
+      ? { supported: true } : { kind: "batch", batch: { source: "local:stdio", ledger_id: "ledger", items: [{ cursor: 1 }] } });
+    const first = new TauriCoreTransport(invoke as never).subscribeEvents(0)[Symbol.asyncIterator]();
+    const second = new TauriCoreTransport(invoke as never).subscribeEvents(0)[Symbol.asyncIterator]();
+    await first.next();
+    await second.next();
+    await first.return?.();
+    await second.return?.();
+    const calls = invoke.mock.calls as unknown as [string, { subscriptionId?: string }][];
+    const ids = calls.filter(([command]) => command === "core_events_open").map(([, args]) => args.subscriptionId);
+    expect(new Set(ids).size).toBe(2);
+  });
+
   it("identifies the local stdio event source", () => {
     const transport = new TauriCoreTransport(async () => undefined as never);
 

@@ -91,6 +91,7 @@ class SqlAlchemyCommandLedger:
         if initialize_schema and dialect_name != "sqlite":
             raise ValueError("PostgreSQL schemas must be initialized through Alembic")
         self._tenant_id = normalized_tenant
+        self.events_appended = 0
         self._session = SqlAlchemySession(bind, owns_engine=owns_engine)
         if initialize_schema:
             command_metadata.create_all(bind)
@@ -344,6 +345,7 @@ class SqlAlchemyCommandLedger:
                 )
                 .returning(domain_events.c.cursor)
             ).scalar_one()
+        self.events_appended += 1
         return EventEnvelope(
             id=event_id,
             cursor=int(cursor),
@@ -838,6 +840,7 @@ class SqlAlchemyCommandLedger:
             )
             .returning(domain_events.c.cursor)
         ).scalar_one()
+        self.events_appended += 1
         return EventEnvelope(
             id=event_id,
             cursor=int(cursor),

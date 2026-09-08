@@ -217,6 +217,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         self._application = application
         self._workspace_service = WorkspaceService(application.workspace_access)
         self._unit_of_work_factory = unit_of_work_factory
+        self.ledger_signal = getattr(unit_of_work_factory, "ledger_signal", None)
         self._registry = registry
         self._skill_registry = skill_registry or SkillRegistry(registry)
         self._skill_manager = skill_manager

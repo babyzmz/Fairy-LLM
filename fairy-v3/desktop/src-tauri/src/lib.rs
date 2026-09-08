@@ -70,6 +70,7 @@ pub mod ambient_context;
 pub mod ambient_dialogue_state;
 pub mod background_notification;
 pub mod capture;
+mod core_event_subscriptions;
 pub mod desktop_preferences;
 pub mod hardware_capabilities;
 pub mod hardware_probe;
@@ -566,6 +567,7 @@ pub fn bridge_failure_response(id: Value, error: &CoreBridgeError) -> Value {
 
 struct DesktopState {
     core: Arc<Mutex<Option<CoreBridge>>>,
+    core_events: Arc<core_event_subscriptions::CoreEventSubscriptions>,
     voice: Arc<VoiceWorkerManager>,
     realtime: Arc<RealtimeWorkerManager>,
     local_model: Arc<LocalModelControl>,
@@ -1344,6 +1346,91 @@ async fn core_rpc(
         ));
     }
     Ok(call_core(&state, request).await)
+}
+
+#[tauri::command]
+async fn core_events_open(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    subscription_id: String,
+    cursor: u64,
+) -> Result<Value, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    let owner = window.label().to_owned();
+    let hub = Arc::clone(&state.core_events);
+    let bridge = state
+        .core
+        .lock()
+        .map_err(|_| "CORE_EVENT_LOCK")?
+        .as_ref()
+        .cloned()
+        .ok_or("WORKER_INTERRUPTED")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        hub.reserve(&owner, &subscription_id)?;
+        match bridge.subscribe_events(cursor) {
+            Ok(subscription) => {
+                hub.bind(&owner, &subscription_id, subscription)?;
+                Ok(json!({"supported": true, "subscription_id": subscription_id}))
+            }
+            Err(error) => {
+                hub.close(&owner, &subscription_id);
+                match error {
+                    CoreBridgeError::EventsUnavailable => Ok(json!({"supported": false})),
+                    CoreBridgeError::EventResyncRequired => {
+                        Err("RPC_EVENT_RESYNC_REQUIRED".to_owned())
+                    }
+                    _ => Err("RPC_EVENT_STREAM_UNAVAILABLE".to_owned()),
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|_| "RPC_EVENT_STREAM_UNAVAILABLE".to_owned())?
+}
+
+#[tauri::command]
+async fn core_events_next(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    subscription_id: String,
+) -> Result<Value, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    let owner = window.label().to_owned();
+    let hub = Arc::clone(&state.core_events);
+    let Some(subscription) = hub.get(&owner, &subscription_id) else {
+        return Ok(json!({"kind": "closed"}));
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let receiver = subscription
+            .try_lock()
+            .map_err(|_| "RPC_EVENT_READ_IN_PROGRESS".to_owned())?;
+        let result = receiver.recv_timeout(Duration::from_secs(30));
+        if hub.current_id(&owner).as_deref() != Some(subscription_id.as_str()) {
+            return Ok(json!({"kind": "closed"}));
+        }
+        match result {
+            Ok(Some(batch)) => Ok(json!({"kind": "batch", "batch": batch})),
+            Ok(None) => Ok(json!({"kind": "idle"})),
+            Err(CoreBridgeError::EventResyncRequired) => Ok(json!({"kind": "resync"})),
+            Err(_) => Err("RPC_EVENT_STREAM_UNAVAILABLE".to_owned()),
+        }
+    })
+    .await
+    .map_err(|_| "RPC_EVENT_STREAM_UNAVAILABLE".to_owned())?
+}
+
+#[tauri::command]
+async fn core_events_close(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    subscription_id: String,
+) -> Result<(), String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    let owner = window.label().to_owned();
+    let hub = Arc::clone(&state.core_events);
+    tauri::async_runtime::spawn_blocking(move || hub.close(&owner, &subscription_id))
+        .await
+        .map_err(|_| "RPC_EVENT_STREAM_UNAVAILABLE".to_owned())
 }
 
 #[tauri::command]
@@ -5511,6 +5598,15 @@ pub fn run() {
     let application = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                if let Some(state) = webview.app_handle().try_state::<DesktopState>() {
+                    let owner = webview.label().to_owned();
+                    if let Some(id) = state.core_events.current_id(&owner) {
+                        let hub = Arc::clone(&state.core_events);
+                        tauri::async_runtime::spawn_blocking(move || hub.close(&owner, &id));
+                    }
+                }
+            }
             if webview.label() != "main"
                 || payload.event() != tauri::webview::PageLoadEvent::Finished
             {
@@ -5566,6 +5662,7 @@ pub fn run() {
             let presence = PresenceCoordinatorHandle::new(coordinator_config(&preferences));
             app.manage(DesktopState {
                 core,
+                core_events: Arc::new(core_event_subscriptions::CoreEventSubscriptions::default()),
                 voice,
                 realtime,
                 local_model,
@@ -5634,6 +5731,9 @@ pub fn run() {
             ambient_dialogue_state_get,
             ambient_dialogue_state_update,
             core_rpc,
+            core_events_open,
+            core_events_next,
+            core_events_close,
             settings_rpc,
             companion_rpc,
             provider_openrouter_status,
