@@ -71,3 +71,13 @@ data; never include it in source commits or test output.
   database migration was performed. Domain supersession, revised manifests and
   read-only completion are the next implementation step, not covered by these
   storage-only results.
+
+### Deep re-routing follow-up
+
+Changing a task to Deep after file-plan supersession attempted to upgrade the old
+cancelled plan and raised `Execution Plan is not active`. A regression first
+reproduced that failure. Budget setup now upgrades only an active, current file
+plan; the Workflow budget still changes to 24 rounds and the cancelled plan keeps
+its original 12-round historical limit. File revision, full model routing, workflow
+controls and budget steering: **41 passed (43.90 s)**. No new authority or budget
+approval bypass is introduced.

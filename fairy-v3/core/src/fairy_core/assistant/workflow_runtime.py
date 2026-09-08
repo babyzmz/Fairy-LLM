@@ -6,6 +6,8 @@ from fairy_core.assistant.models import AssistantTurn
 from fairy_core.assistant.plan_budget import consume_tool_budget
 from fairy_core.assistant.routing import RoutingComplexity, RoutingDecision
 from fairy_core.assistant.turn_reader import require_task, require_turn
+from fairy_core.execution.plan_revisions import obsolete_file_plan
+from fairy_core.execution.plans import ExecutionPlanStatus
 from fairy_core.workflow.models import WorkflowBudget
 from fairy_core.workflow.scheduler import WorkflowPaused
 
@@ -31,7 +33,11 @@ class AssistantWorkflowRuntimeMixin:
                     budget=deep_budget,
                 )
                 execution_plan = unit_of_work.state.execution_plan_for_task(task.id)
-                if execution_plan is not None:
+                if (
+                    execution_plan is not None
+                    and execution_plan.status is ExecutionPlanStatus.ACTIVE
+                    and not obsolete_file_plan(unit_of_work, task.id, execution_plan)
+                ):
                     expected_revision = execution_plan.revision
                     changed = execution_plan.upgrade_budget(
                         max_model_calls=deep_budget.max_model_rounds,

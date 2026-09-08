@@ -1,8 +1,10 @@
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 
 from fairy_core.assistant.interpretation import RequestAction
+from fairy_core.assistant.routing import RoutingComplexity
 from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
 from fairy_core.execution.plan_revisions import supersede_file_plan
 from fairy_core.execution.plans import TaskStepKind
@@ -68,6 +70,10 @@ def test_revised_domain_plan_keeps_completed_facts_and_cannot_start_obsolete_wor
                 edges=(),
             )
             unit.commit()
+        budget = service._assistant_application._configure_workflow_budget(
+            UUID(turn["id"]), SimpleNamespace(complexity=RoutingComplexity.HIGH),
+        )
+        assert budget.max_model_rounds == 24
         with pytest.raises(InvalidTransitionError):
             planning.start_file_batch(task_id, ("before.txt",))
         with pytest.raises(InvalidTransitionError):
@@ -82,6 +88,7 @@ def test_revised_domain_plan_keeps_completed_facts_and_cannot_start_obsolete_wor
             assert (old.generation, old.workflow_plan_revision) == (1, 1)
             assert (new.generation, new.workflow_plan_revision) == (2, 2)
             assert old.status == "cancelled"
+            assert old.max_model_calls == 12
             assert new.status == "active"
             steps = unit.state.task_steps_for_plan(old.id)
             assert (
