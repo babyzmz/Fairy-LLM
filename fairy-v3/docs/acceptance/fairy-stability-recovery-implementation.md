@@ -102,6 +102,8 @@
 
 ### Phase 3A：请求分发验收契约
 
+- Phase 2 独立补漏：Classifier 只有路由/证据字段、缺失完整 interpretation 时，不再由 `requires_workspace_changes` 推导出中置信执行权限；保留路由与查证信息，但意图降为只读。正式双聊天回归修复前能放行 `run.sandboxed`，修复后拒绝执行/安装且保留 `project.read`。测试使用真实路由、临时持久化和 Context，仅模型输出脚本化；未修改完整 Classifier 或显式 legacy 系统命令的语义。Core Assistant 188项通过（85.95秒），受影响 Ruff 通过。最初测试误入最终回复的既有工作区完整性门禁，已收窄为所审查的路由→持久意图→工具暴露链，不将该失败冒充权限复现。
+
 - 保留单 stdio 入口和未协商客户端的顺序响应。`transport.negotiate` 是本地传输能力，不是业务授权；只有明确协商后开启并发请求，事件推送尚未实现时不得宣称支持。
 - 一个控制通道仅接已核对的轻量状态请求，两个显式只读 Worker，一个默认串行 Worker；各通道排队数量有界，满载返回公开 `RPC_CAPACITY_EXCEEDED`，绝不悄悄丢弃写操作或自动重试。
 - 响应在单一写锁内完整输出。请求 ID 持有至响应发出，活动重复 ID 明确拒绝。读取线程不等慢业务完成，控制通道不启动模型、Browser、Voice 或同步资源清理。

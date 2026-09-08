@@ -500,6 +500,66 @@ def test_manual_model_classifies_evidence_and_rejects_uncited_plain_text(
         service.close()
 
 
+def test_route_only_classifier_cannot_grant_execution_authority(tmp_path: Path) -> None:
+    from fairy_core.assistant.execution_intent_policy import readonly_intent_issue
+    from fairy_core.commanding.registry import build_default_registry
+    from fairy_core.providers import CancellationToken
+
+    profile = "openrouter-qwen-free"
+    rounds = []
+    for changes in (True, False):
+        rounds.append(
+            (
+                ModelDelta.text(
+                    profile_id=profile,
+                    sequence=1,
+                    text=json.dumps({
+                        "evidence_requirements": [],
+                        "requires_workspace_changes": changes,
+                        "public_summary": "Routing metadata without an intent contract.",
+                    }),
+                ),
+                ModelDelta.done(profile_id=profile, sequence=2, finish_reason="stop"),
+            )
+        )
+    qwen = _provider(profile_id=profile, model_id=QWEN_FREE_MODEL_ID, rounds=rounds)
+    service = build_local_service(tmp_path, provider_registry=ProviderRegistry((qwen,)))
+    try:
+        service.invoke("models.selection.update", {
+            "mode": "manual", "model_id": QWEN_FREE_MODEL_ID,
+            "allow_free_fallback": False, "zero_data_retention": False,
+            "expected_revision": 0, "idempotency_key": "incomplete-classifier-selection",
+        })
+        for index, request in enumerate(("Handle the project", "Explain the project")):
+            task = _task(service, request)
+            turn = _auto_turn(service, task, f"route-only:{index}")
+            application = service._assistant_application
+            application._ensure_routing(
+                application._turns.get(UUID(turn["id"])), CancellationToken(),
+            )
+            with service._unit_of_work_factory() as unit:
+                intent = unit.assistant.get_execution_intent(UUID(turn["id"]))
+                assert intent is not None
+                assert intent.conversation_id == UUID(task["conversation_id"])
+                run_tool = next(
+                    tool for tool in build_default_registry().definitions()
+                    if tool.name == "run.sandboxed"
+                )
+                assert readonly_intent_issue(intent, run_tool) == "EXECUTION_INTENT_READ_ONLY"
+            context = application._context.build(
+                application._turns.get(UUID(turn["id"])),
+                provider_capabilities=frozenset({
+                    ProviderCapability.TEXT, ProviderCapability.TOOLS,
+                }),
+            )
+            offered = {tool.name for tool in context.tools}
+            assert "run.sandboxed" not in offered
+            assert "deps.install" not in offered
+            assert "project.read" in offered
+    finally:
+        service.close()
+
+
 def test_manual_media_is_interpreted_before_generation(tmp_path: Path) -> None:
     deepseek = _provider(
         profile_id="openrouter-deepseek-v4-pro",

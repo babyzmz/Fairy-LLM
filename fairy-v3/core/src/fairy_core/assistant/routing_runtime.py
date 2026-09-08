@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -9,6 +10,7 @@ from fairy_core.assistant.context import bound_persona_instruction
 from fairy_core.assistant.events import append_message_created
 from fairy_core.assistant.interpretation import (
     ClassifierInterpretationPayload,
+    InterpretationConfidence,
     InterpretationDisposition,
     RequestAction,
     build_classifier_input_envelopes,
@@ -345,6 +347,13 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
                         evidence_requirements=decision.evidence_requirements,
                     )
                 )
+                if interpretation_payload is None:
+                    # Routing metadata selects a model, not permission to perform effects.
+                    # Keep evidence requirements but fail closed until intent is established.
+                    interpretation = replace(
+                        interpretation,
+                        confidence=InterpretationConfidence.LOW,
+                    )
                 unit_of_work.assistant.append_interpretation(
                     interpretation,
                     expected_revision=(
