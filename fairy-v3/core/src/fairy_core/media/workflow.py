@@ -335,15 +335,15 @@ class MediaGenerationWorkflowAdapter:
                             str(result.artifact.id) if result.artifact is not None else None
                         ),
                     },
-                    lease_owner=persisted.lease_owner,
-                    lease_fence=persisted.lease_fence,
+                    lease_owner=command.lease_owner,
+                    lease_fence=command.lease_fence,
                 )
             else:
                 bus.fail(
                     persisted.id,
                     error_code=_safe_error_code(error or RuntimeError("Media failed")),
-                    lease_owner=persisted.lease_owner,
-                    lease_fence=persisted.lease_fence,
+                    lease_owner=command.lease_owner,
+                    lease_fence=command.lease_fence,
                 )
             unit_of_work.commit()
 

@@ -309,6 +309,8 @@
 
 ### Phase 6C：真实工具节点与审批恢复边界
 
+- Media 交接审查发现旧完成/失败回调借用数据库当前租约的 Fence。已用原始执行租约结算并添加4个先失败的双命令/重开回归；Media及Command Bus共34项通过（31.80秒）。详见[专项记录](media-workflow-handoff-recovery.md)。异步领域等待仍继续实施，不由此宣称Phase 6完成。
+
 - 下一项Review契约：Primary草稿检查通过后先完成其Command，再由独立Review节点调用受Harness/Persona约束的Reviewer，之后再次验证并由独立最终节点写消息。Review检查点只保存公开候选正文、证据ID和最多24k字符的原用户/Assistant文本投影，不保存系统提示或隐藏推理；完成回执丢失不能重复调用Reviewer。无Review的最小链不增加此节点。节点异常还须与Turn/Task状态收敛，取消/过期Fence不得借失败处理改写新实例。
 - Review节点已接线：既有多模型Persona/消息/Trace契约及Review回执丢失均通过，Reviewer不重复请求，Primary草稿不投影到用户消息。Review/单轮边界/路由32项通过（38.28秒）；补充Manual证据契约发现并修复引用缺失被误报为通用中断，之后新引擎Review/纯聊天/工具15项通过（26.25秒）。保留普通文本未显式声明引用与direct_answer显式引用列表的区别。默认引擎尚未切换；异常收敛、未知副作用及领域等待门禁仍继续。
 - 异常收敛失败基线：注入验证异常后Workflow已FAILED，Turn仍RUNNING。Kernel现在先校验并接受失败Fence，再在同一UoW调用领域失败处理；版本4只结算其绑定Turn/Task/Trace，终态和另一会话不改写。验证失败、Review、最终回复恢复与Kernel调度16项通过（15.54秒），Ruff通过。已恢复Provider/证据失败的准确错误码；不将异常正文作为公开错误，物理工具停止仍遵循既有取消/租约流程，不声称数据库失败等于OS操作已停止。
