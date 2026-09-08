@@ -19,6 +19,7 @@ from fairy_core.assistant.tools import tool_message_content, uses_deferred_media
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.domain.errors import VersionConflictError
+from fairy_core.domain.execution import ChangesetStatus
 from fairy_core.domain.models import TaskStatus
 from fairy_core.providers import ModelMessage, ModelToolCall
 
@@ -61,6 +62,11 @@ class AssistantToolContextMixin:
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
             task = require_task(unit_of_work, turn.task_id)
+            if any(changeset.status in {
+                ChangesetStatus.PROPOSED, ChangesetStatus.AWAITING_APPROVAL,
+                ChangesetStatus.APPLYING,
+            } for changeset in unit_of_work.state.changesets_for_task(turn.task_id)):
+                return "waiting"
         if task.status is TaskStatus.AWAITING_APPROVAL:
             return "waiting"
         if task.status is TaskStatus.REJECTED:

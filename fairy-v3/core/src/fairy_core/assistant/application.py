@@ -10,6 +10,7 @@ from fairy_core.assistant.candidates import (
     arguments_for_definition,
     deduplicate_tool_candidates,
 )
+from fairy_core.assistant.changeset_receipts import reconcile_changeset_receipt
 from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.context import AssistantContextBuilder
 from fairy_core.assistant.context_diagnostics import AssistantContextDiagnosticsMixin
@@ -585,6 +586,11 @@ class AssistantApplication(
                             )
                     cancellation.raise_if_cancelled()
                     self._raise_if_workflow_paused(turn_id)
+                    approval_state = self._changeset_approval_state(turn_id)
+                    if approval_state == "waiting":
+                        return self._turns.get(turn_id)
+                    if approval_state == "rejected":
+                        return self._cancel_turn(turn_id, None)
                     if not self._resume_after_tools(turn_id):
                         return self._cancel_turn(turn_id, current_run)
                     current_run = None
@@ -1215,6 +1221,11 @@ class AssistantApplication(
                 self._cancel_running_tool_in_unit(unit_of_work, invocation, running)
                 unit_of_work.commit()
                 raise ProviderCancelledError("Assistant Turn is no longer active")
+            changeset_status = None
+            if definition.name == "edit.propose_changeset" and definition.source == "builtin":
+                result, changeset_status = reconcile_changeset_receipt(
+                    unit_of_work, persisted_turn, result,
+                )
             expected_status = invocation.status
             evidence_receipts = seal_evidence_drafts(
                 result.evidence_drafts,
@@ -1233,7 +1244,9 @@ class AssistantApplication(
                 invocation,
                 expected_status=expected_status,
             )
-            if result.awaiting_approval:
+            if changeset_status == "rejected":
+                self._tool_trace.reject_in_unit(unit_of_work, run=running)
+            elif result.awaiting_approval:
                 self._tool_trace.wait_for_external_approval_in_unit(
                     unit_of_work,
                     turn=persisted_turn,

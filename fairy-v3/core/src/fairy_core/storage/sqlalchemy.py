@@ -404,6 +404,23 @@ class SqlAlchemyStateStore(
         row = self._get_by_id(changesets, changeset_id)
         return self._changeset_from_row(row) if row is not None else None
 
+    def get_changeset_for_update(self, changeset_id: UUID) -> Changeset | None:
+        """Serialize receipt publication with approval/application settlement."""
+        predicates = (
+            changesets.c.tenant_id == self._tenant_id, changesets.c.id == str(changeset_id),
+        )
+        with self._session.write() as connection:
+            if connection.dialect.name == "sqlite":
+                # SQLite SELECT does not acquire a row lock. A no-op write starts
+                # the writer transaction without changing the domain timestamp.
+                connection.execute(update(changesets).where(*predicates).values(
+                    updated_at=changesets.c.updated_at,
+                ))
+            row = connection.execute(
+                select(changesets).where(*predicates).with_for_update(),
+            ).mappings().first()
+        return self._changeset_from_row(row) if row is not None else None
+
     def find_changeset_by_idempotency_key(self, idempotency_key: str) -> Changeset | None:
         row = self._first(
             select(changesets).where(

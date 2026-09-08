@@ -38,6 +38,7 @@
 
 ### Phase 6：领域结果与中途修订边界
 
+- 提案发布早于工具回执的审批竞态已独立复现并修复：受锁保护的Changeset回执、应用后重新解析Turn、APPLYING期间等待、拒绝后停止模型循环。默认3与新4双引擎及Core接口合计53项通过（55.94秒），见[快速审批证据](changeset-early-approval.md)。未运行真实Provider/PG/原生验收。
 - Changeset未应用审批可被新要求替代，旧批准事实保留，工具/审批Trace同时关闭；文件计划按Workflow修订绑定并恢复新计划工具可见性，只读/禁止执行不会进入自动安装、测试或Preview。55项定向联合通过（70.35秒），见[专项记录](steering-changeset-plan.md)。新发现“提案已可见但工具回执未提交”的快速审批竞态，下一步独立修复；尚不切换默认引擎。
 - 文件计划存储增加Task内generation与Workflow revision绑定，保留历史manifest/steps；SQLite旧库重建与重复重开、跨租户与版本外键等20项通过（12.09秒），Cloud离线迁移/部署契约42项通过（3.43秒）。实际桌面库已通过SQLite backup API一致性备份、未迁移；见[版本化记录](workflow-file-plan-revisions.md)。领域计划替代及Changeset只读续接仍在实现。
 - 未执行的模型预算审批可被新要求替代，旧卡只保留历史决定，新路线重新分类并按成本政策生成新审批，不继承旧授权。双会话/待定与已批准/重启/重复点击和唯一回复等联合43项通过（60.09秒），见[专项证据](steering-budget-approval.md)。Changeset审批中更新仍待单独闭环。

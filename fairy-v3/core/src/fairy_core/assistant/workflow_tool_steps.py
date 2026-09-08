@@ -93,6 +93,9 @@ def execute_tool_step(adapter, node, claim, cancellation, turn):
     if approval == "waiting":
         raise WorkflowWaitingForApproval(checkpoint)
     if approval == "rejected":
+        # The model command completed when publishing the tool graph; this join
+        # owns no running model lease and must not borrow another command's lease.
+        adapter._application._cancel_turn(turn.id, None)
         raise WorkflowCancelled
     if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
         if not adapter._application._resume_after_tools(turn.id):

@@ -1190,6 +1190,11 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
                 decided_by="user",
             )
         decided = self._application.get_approval(validated.approval_id)
+        if was_pending and changeset is not None and assistant_turn_id is None:
+            # The proposal can be approved before its tool receipt is published.
+            # Recheck after the apply transaction; receipt publication also reads
+            # the Changeset under a lock, so neither completion order loses wakeup.
+            assistant_turn_id = self._assistant_turn_id_for_approval(decided)
         if was_pending and assistant_turn_id is not None and changeset is not None:
             with self._unit_of_work_factory() as unit_of_work:
                 invocation = self._changeset_tool_invocation(unit_of_work, decided)
