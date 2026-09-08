@@ -154,6 +154,16 @@
 - 扩大 Core 门禁233项通过、1项因未生成 RPC manifest 失败；按既有脚本生成 manifest 后 JSON-RPC 11项通过，没有放宽 catalog 断言。Cloud HTTP/部署55项通过（16.47秒）；TypeScript及Client/Cloud/Tauri传输35项通过；相关 Ruff通过。旧 Cloud head断言只更新新增迁移，增加离线可逆门禁。后续最终全量门禁仍需统一复跑。
 - 剩余边界：旧前端的分步 Task/Turn API 尚未切换，跨旧新入口并发与宿主会话恢复仍待接线验证；本轮不将这个入口子任务当作 Phase 4 完成。
 
+### Phase 4B：宿主桌宠通道验收契约
+
+- Rust 仅缓存显式聊天绑定及当前 Turn 投影，不拥有业务数据库或执行队列。主窗口可以绑定已由 Core 验证的 scratch Conversation；Pet Input 只能提交文本及绑定 Revision，不能选择 RPC 名、Project、Scope、模型或自报角色。Pet Render 不能调用发送/取消。
+- 所有 Core RPC 等待在宿主锁之外。发送开始固定绑定 Revision，主窗口随后切换绑定时，旧调用可以完成原聊天持久化，但不得覆盖新聊天投影。取消使用宿主保存的精确 Turn ID/Revision，不解析另一窗口的当前 UI 选择。
+- 自动化先验证双聊天切换、过期绑定/迟到结果、固定 RPC/来源/模型字段和窗口身份；宿主接线后再跑真实 Core Bridge/原生重载。纯 Rust 状态测试不能替代 WebView2。未绑定聊天的创建、发送中取消、终态推送和主窗口刷新仍需后续连续接通才可默认启用新通道。
+- 已建立宿主绑定缓存与 `pet_chat_bind/context_get/submit/cancel` 受限 IPC：只有 main 可绑定，只有 pet-input 可发送/取消，pet-render 未获得读写 Core 权限。参数由宿主生成，不接受 Pet 自报 Conversation/模型/来源或 RPC 名。等待 Core 响应期间不持有绑定锁。
+- 已验证旧绑定、迟到发送与旧请求释放不覆盖新聊天；终态收到迟到 stopping 投影曾被重新打开，增加终态单向守卫后通过。已删除/已清除的聊天不能绑定；本项先失败复现再修复。
+- Rust7项通过，含真实 Core 子进程、真实 Task/Turn/消息链及双聊天，脚本模型仅替代外部网络 Provider。模拟丢弃的是前端连接句柄，不冒充真实 WebView 重载。最初脚本导入失败源于开发启动选择 capabilities 工作目录，测试显式切至 Core 根后正常联通。现有窗口权限11项通过；Desktop全targets Clippy通过。
+- 尚未将前端切至新通道，未启动真实 Fairy；终态/回复事件推送、未绑定时新聊天、发送中取消仍在后续列表，不能提前宣称桌宠通道已经端到端替换。
+
 ### Phase 3B：事件提交唤醒与推送验收契约
 
 - 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。

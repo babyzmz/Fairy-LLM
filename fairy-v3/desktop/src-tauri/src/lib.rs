@@ -85,6 +85,7 @@ pub mod omni_model_manifest;
 pub mod omni_model_store;
 pub mod omni_runtime_protocol;
 pub mod omni_runtime_self_test;
+mod pet_chat_broker;
 pub mod presence_backdrop;
 pub mod presence_coordinator;
 pub mod presence_interaction;
@@ -568,6 +569,7 @@ pub fn bridge_failure_response(id: Value, error: &CoreBridgeError) -> Value {
 struct DesktopState {
     core: Arc<Mutex<Option<CoreBridge>>>,
     core_events: Arc<core_event_subscriptions::CoreEventSubscriptions>,
+    pet_chat: pet_chat_broker::PetChatBroker,
     voice: Arc<VoiceWorkerManager>,
     realtime: Arc<RealtimeWorkerManager>,
     local_model: Arc<LocalModelControl>,
@@ -1346,6 +1348,126 @@ async fn core_rpc(
         ));
     }
     Ok(call_core(&state, request).await)
+}
+
+fn pet_chat_core_result(response: Value) -> Result<Value, String> {
+    if let Some(error) = response.get("error") {
+        let code = error
+            .pointer("/data/error_code")
+            .and_then(Value::as_str)
+            .filter(|code| {
+                code.len() <= 128
+                    && code.bytes().all(|byte| {
+                        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                    })
+            })
+            .unwrap_or("PET_CHAT_CORE_UNAVAILABLE");
+        return Err(code.to_owned());
+    }
+    response
+        .get("result")
+        .cloned()
+        .ok_or_else(|| "PET_CHAT_RESPONSE_INVALID".into())
+}
+
+fn publish_pet_chat_context(app: &tauri::AppHandle, state: &DesktopState) {
+    if let Ok(context) = state.pet_chat.context() {
+        let _ = app.emit_to(PET_INPUT_LABEL, "pet-chat-context-changed", &context);
+        let _ = app.emit_to("main", "pet-chat-context-changed", &context);
+    }
+}
+
+#[tauri::command]
+async fn pet_chat_bind(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: pet_chat_broker::PetChatBindingInput,
+) -> Result<pet_chat_broker::PetChatContext, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    let conversation = pet_chat_core_result(
+        call_core(
+            &state,
+            json!({
+                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
+                "method": "conversations.get", "params": {"conversation_id": input.conversation_id}
+            }),
+        )
+        .await,
+    )?;
+    let context = state.pet_chat.bind(input, &conversation)?;
+    publish_pet_chat_context(&app, &state);
+    Ok(context)
+}
+
+#[tauri::command]
+fn pet_chat_context_get(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<pet_chat_broker::PetChatContext, String> {
+    if window.label() != "main" {
+        authorize_pet_input_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    }
+    state.pet_chat.context()
+}
+
+#[tauri::command]
+async fn pet_chat_submit(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    revision: u64,
+    submission_id: String,
+    text: String,
+) -> Result<Value, String> {
+    authorize_pet_input_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    let ticket = state
+        .pet_chat
+        .prepare_submission(revision, &submission_id, &text)?;
+    let response = call_core(
+        &state,
+        json!({
+            "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
+            "method": "assistant.messages.submit", "params": ticket.params
+        }),
+    )
+    .await;
+    let result = pet_chat_core_result(response).and_then(|turn| {
+        let applied = state.pet_chat.finish_submission(&ticket, &turn)?;
+        if applied {
+            publish_pet_chat_context(&app, &state);
+        }
+        Ok(json!({"submission_id": submission_id, "status": "accepted",
+            "binding_revision": revision, "turn_id": turn.get("id")}))
+    });
+    state.pet_chat.release_submission(&ticket);
+    result
+}
+
+#[tauri::command]
+async fn pet_chat_cancel(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    revision: u64,
+) -> Result<Value, String> {
+    authorize_pet_input_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    let params = state.pet_chat.cancel_request(revision)?;
+    let turn = pet_chat_core_result(
+        call_core(
+            &state,
+            json!({
+                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
+                "method": "assistant.turns.cancel", "params": params
+            }),
+        )
+        .await,
+    )?;
+    if state.pet_chat.accept_turn(revision, &turn)? {
+        publish_pet_chat_context(&app, &state);
+    }
+    Ok(json!({"accepted": true, "binding_revision": revision,
+        "turn_id": turn.get("id"), "cancellation_pending": turn.get("cancellation_pending")}))
 }
 
 #[tauri::command]
@@ -5663,6 +5785,7 @@ pub fn run() {
             app.manage(DesktopState {
                 core,
                 core_events: Arc::new(core_event_subscriptions::CoreEventSubscriptions::default()),
+                pet_chat: pet_chat_broker::PetChatBroker::default(),
                 voice,
                 realtime,
                 local_model,
@@ -5731,6 +5854,10 @@ pub fn run() {
             ambient_dialogue_state_get,
             ambient_dialogue_state_update,
             core_rpc,
+            pet_chat_bind,
+            pet_chat_context_get,
+            pet_chat_submit,
+            pet_chat_cancel,
             core_events_open,
             core_events_next,
             core_events_close,
