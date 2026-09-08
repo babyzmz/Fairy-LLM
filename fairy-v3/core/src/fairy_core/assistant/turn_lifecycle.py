@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import UTC, datetime
 from uuid import UUID
@@ -22,6 +23,8 @@ from fairy_core.domain.execution import ChangesetStatus, PreviewStatus
 from fairy_core.domain.models import TaskStatus, VersionVisibility, WorkspaceType
 from fairy_core.execution.plans import ExecutionPlanStatus, TaskStepKind, TaskStepStatus
 from fairy_core.providers import ModelExecutionRole
+from fairy_core.workflow.errors import WorkflowFenceError, WorkflowRevisionError
+from fairy_core.workflow.models import WorkflowAttemptClaim
 
 
 class AssistantTurnLifecycleMixin:
@@ -121,9 +124,38 @@ class AssistantTurnLifecycleMixin:
         content: str,
         usage: dict[str, int],
         cited_evidence_receipt_ids: tuple[str, ...] = (),
+        workflow_claim: WorkflowAttemptClaim | None = None,
     ) -> AssistantTurn:
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
+            if workflow_claim is not None:
+                if (
+                    workflow_claim.run_id != turn.workflow_run_id
+                    or run.task_id != turn.task_id
+                    or run.conversation_id != turn.conversation_id
+                    or run.scope_digest != turn.scope_digest
+                    or run.input_payload.get("turn_id") != str(turn.id)
+                ):
+                    raise WorkflowFenceError("Finalization does not belong to this Workflow Turn")
+                unit_of_work.workflows.record_checkpoint(
+                    workflow_claim,
+                    result={
+                        "turn_id": str(turn.id), "model_command_id": str(run.id),
+                        "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                        "usage": usage,
+                        "cited_evidence_receipt_ids": list(cited_evidence_receipt_ids),
+                    },
+                )
+                if turn.status is AssistantTurnStatus.COMPLETED:
+                    message = unit_of_work.assistant.message_for_turn(
+                        turn.id, MessageRole.ASSISTANT,
+                    )
+                    if message is None or message.content != content:
+                        raise WorkflowRevisionError(
+                            "Completed response differs from its checkpoint"
+                        )
+                    unit_of_work.commit()
+                    return turn
             task = require_task(unit_of_work, turn.task_id)
             completed_usage = usage
             if turn.model_selection is not None:
