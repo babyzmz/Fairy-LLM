@@ -3,13 +3,15 @@ use super::*;
 
 #[test]
 fn old_preferences_default_to_liquid_without_resetting_any_existing_value() {
-    let mut before = DesktopPreferences::default();
-    before.revision = 91;
-    before.voice_replies_enabled = false;
-    before.pet_optics_mode = PetOpticsMode::Enhanced;
-    before.pet_size_percent = 125;
-    before.pet_opacity_percent = 84;
-    before.selected_profile_id = Some("keep-provider".to_owned());
+    let before = DesktopPreferences {
+        revision: 91,
+        voice_replies_enabled: false,
+        pet_optics_mode: PetOpticsMode::Enhanced,
+        pet_size_percent: 125,
+        pet_opacity_percent: 84,
+        selected_profile_id: Some("keep-provider".to_owned()),
+        ..DesktopPreferences::default()
+    };
     let mut old = serde_json::to_value(&before).unwrap();
     old.as_object_mut().unwrap().remove("pet_form");
     old.as_object_mut().unwrap().remove("chat_fairy_eye_enabled");
@@ -25,10 +27,12 @@ fn old_preferences_default_to_liquid_without_resetting_any_existing_value() {
 
 #[test]
 fn form_and_chat_visibility_roundtrip_independently() {
-    let mut preferences = DesktopPreferences::default();
-    preferences.pet_form = PetForm::HddEye;
-    preferences.chat_fairy_eye_enabled = false;
-    preferences.pet_optics_mode = PetOpticsMode::Enhanced;
+    let preferences = DesktopPreferences {
+        pet_form: PetForm::HddEye,
+        chat_fairy_eye_enabled: false,
+        pet_optics_mode: PetOpticsMode::Enhanced,
+        ..DesktopPreferences::default()
+    };
     let loaded: DesktopPreferences = serde_json::from_slice(&serde_json::to_vec(&preferences).unwrap()).unwrap();
     assert_eq!(loaded.pet_form, PetForm::HddEye);
     assert!(!loaded.chat_fairy_eye_enabled);
