@@ -117,6 +117,14 @@ export interface AssistantCommandInput {
   turn_id?: string | null;
   expected_cancellation_revision?: number | null;
 }
+export interface AssistantConversationPresentation {
+  conversation_id: string;
+  turn: Pick<AssistantTurn,
+    "id" | "conversation_id" | "status" | "cancellation_revision" |
+    "cancellation_pending" | "error_code" | "updated_at"
+  > | null;
+  reply: { id: string; text: string } | null;
+}
 export interface AssistantCommandResult {
   command: "new" | "clear" | "stop" | "project" | "permission" | "help";
   conversation: Conversation | null;
@@ -860,6 +868,10 @@ export interface CoreMethodMap {
   "assistant.commands.dispatch": {
     params: AssistantCommandInput;
     result: AssistantCommandResult;
+  };
+  "assistant.conversations.presentation.get": {
+    params: { conversation_id: string };
+    result: AssistantConversationPresentation;
   };
   "assistant.background_tasks.list": {
     params: { current_conversation_id?: string | null; recent_limit?: number };

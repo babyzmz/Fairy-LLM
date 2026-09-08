@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
+from fairy_core.contracts.assistant_presentation import AssistantConversationPresentation
 from fairy_core.contracts.assistant_schedules import (
     AssistantBackgroundTaskListInput,
     AssistantBackgroundTaskPageModel,
@@ -306,6 +307,10 @@ from fairy_core.system_actions.models import SystemActionExecution, SystemAction
 
 CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
     {
+        "assistant.conversations.presentation.get": CoreMethod(
+            "assistant.conversations.presentation.get", ConversationIdInput,
+            AssistantConversationPresentation, CoreMethodTransport.LOCAL_ONLY,
+        ),
         "assistant.commands.dispatch": CoreMethod(
             "assistant.commands.dispatch", AssistantCommandInput, AssistantCommandResult,
             CoreMethodTransport.LOCAL_ONLY,

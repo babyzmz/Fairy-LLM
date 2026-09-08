@@ -15,6 +15,7 @@ CONTROL_METHODS = frozenset({"health", "assistant.turns.pause", "assistant.turns
 READ_METHODS = frozenset(
     {
         "assistant.turns.get",
+        "assistant.conversations.presentation.get",
         "assistant.turns.workflow.get",
         "assistant.turns.interpretation.get",
         "messages.list",

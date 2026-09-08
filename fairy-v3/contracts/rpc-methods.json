@@ -67,6 +67,12 @@
       "transport": "local_only"
     },
     {
+      "name": "assistant.conversations.presentation.get",
+      "request_model": "ConversationIdInput",
+      "response_model": "AssistantConversationPresentation",
+      "transport": "local_only"
+    },
+    {
       "name": "assistant.messages.submit",
       "request_model": "AssistantMessageSubmitInput",
       "response_model": "AssistantTurnModel",

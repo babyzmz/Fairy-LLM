@@ -119,6 +119,21 @@ class SqlAlchemyAssistantRepository(
         ))
         return UUID(row["conversation_id"]) if row is not None else None
 
+    def latest_turn_presentation(self, conversation_id: UUID) -> dict[str, Any] | None:
+        columns = assistant_turns.c
+        row = self._first(select(
+            columns.id, columns.conversation_id, columns.status,
+            columns.cancellation_revision, columns.error_code, columns.updated_at,
+            and_(
+                columns.status == AssistantTurnStatus.CANCELLED.value,
+                self._pending_operations(columns.id),
+            ).label("cancellation_pending"),
+        ).where(
+            columns.tenant_id == self._tenant_id,
+            columns.conversation_id == str(conversation_id),
+        ).order_by(columns.created_at.desc(), columns.id.desc()).limit(1))
+        return dict(row) if row is not None else None
+
     def save_turn(self, turn: AssistantTurn) -> None:
         scoped_values = {"tenant_id": self._tenant_id, **self._turn_values(turn)}
         with self._session.write() as connection:

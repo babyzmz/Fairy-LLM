@@ -37,6 +37,7 @@ from fairy_core.assistant.image_inputs import build_image_attachments
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.message_ingress import AssistantMessageIngress
 from fairy_core.assistant.models import ToolInvocationStatus
+from fairy_core.assistant.presentation import AssistantPresentationService
 from fairy_core.assistant.schedule_service import AssistantScheduleService
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
@@ -491,6 +492,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             commands=lambda: self._get_capabilities(EmptyInput())["slash_commands"],
             cancel=self._cancel_assistant_turn,
         )
+        self._assistant_presentation = AssistantPresentationService(unit_of_work_factory)
         self._preview_idle_scheduler = (
             PreviewIdleScheduler(runtime_application) if runtime_application is not None else None
         )
@@ -498,6 +500,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             "ambient.dialogue.evaluate": self._ambient_dialogue.evaluate,
             "assistant.messages.submit": self._message_ingress.submit,
             "assistant.commands.dispatch": self._domain_commands.dispatch,
+            "assistant.conversations.presentation.get": self._assistant_presentation.get,
             "approvals.decide": self._decide_approval,
             "approvals.list": self._list_approvals,
             "artifacts.list": self._list_artifacts,

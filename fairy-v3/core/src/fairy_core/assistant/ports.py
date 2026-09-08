@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from fairy_core.assistant.execution_intent import ExecutionIntentSnapshot
@@ -23,6 +23,8 @@ from fairy_core.storage.pagination import StatePage
 
 
 class AssistantRepository(Protocol):
+    def latest_turn_presentation(self, conversation_id: UUID) -> dict[str, Any] | None: ...
+
     def message_submission_digest(self, key_digest: str) -> str | None: ...
 
     def message_submission_conversation(self, key_digest: str) -> UUID | None: ...

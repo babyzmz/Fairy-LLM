@@ -85,6 +85,13 @@ def test_exclusive_restart_settles_cancelled_model_streams_without_replaying_too
         assert first["status"] == "cancelled"
         assert first["cancellation_pending"] is False
         assert second["cancellation_pending"] is True
+        for current in (first, second):
+            presentation = restored.invoke("assistant.conversations.presentation.get", {
+                "conversation_id": current["conversation_id"],
+            })
+            assert presentation["turn"]["id"] == current["id"]
+            assert presentation["turn"]["cancellation_pending"] == current["cancellation_pending"]
+            assert presentation["reply"] is None
         assert provider.requests == []
         with restored._unit_of_work_factory() as unit:
             for value in turn_ids:
