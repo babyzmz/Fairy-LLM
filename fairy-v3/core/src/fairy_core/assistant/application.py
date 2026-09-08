@@ -715,9 +715,21 @@ class AssistantApplication(
         cancellation: CancellationToken,
         offered_definitions: dict[str, ToolDefinition],
         budget_reserved: bool = False,
+        prepared_invocation_id: UUID | None = None,
     ) -> tuple[bool, Message | None, str | None, tuple[ModelImage, ...]]:
         cancellation.raise_if_cancelled()
         self._turns.require_waiting_for_tool(turn_id)
+        if prepared_invocation_id is not None:
+            with self._unit_of_work_factory() as unit_of_work:
+                prepared = unit_of_work.assistant.get_tool_invocation(prepared_invocation_id)
+            if (
+                prepared is None or prepared.turn_id != turn_id
+                or prepared.status is not ToolInvocationStatus.CREATED
+                or prepared.provider_call_id != candidate.call_id
+                or prepared.tool_name != candidate.name
+                or prepared.model_round != model_round or prepared.sequence != sequence
+            ):
+                raise ValueError("prepared Tool Invocation does not match the requested call")
         if candidate.name is None:
             message = self._append_tool_message(
                 turn_id=turn_id,
@@ -810,8 +822,19 @@ class AssistantApplication(
                 scope_digest=scope.scope_digest,
                 arguments=arguments,
             )
+            if prepared_invocation_id is not None:
+                prepared = unit_of_work.assistant.get_tool_invocation(prepared_invocation_id)
+                if (
+                    prepared is None or prepared.status is not ToolInvocationStatus.CREATED
+                    or prepared.turn_id != turn.id or prepared.task_id != task.id
+                    or prepared.scope_digest != scope.scope_digest
+                    or prepared.argument_hash != invocation.argument_hash
+                ):
+                    raise ValueError("prepared Tool Invocation changed before dispatch")
+                invocation = prepared
             existing = unit_of_work.assistant.list_tool_invocations(turn_id)
-            if any(item.argument_hash == invocation.argument_hash for item in existing):
+            if any(item.argument_hash == invocation.argument_hash and item.id != invocation.id
+                   for item in existing):
                 duplicate = True
                 running = None
             else:
@@ -830,7 +853,7 @@ class AssistantApplication(
                     or current_definition.definition_digest != definition.definition_digest
                 ):
                     invocation.reject(error_code="MCP_SCHEMA_CHANGED")
-                    unit_of_work.assistant.save_tool_invocation(invocation)
+                    _save_tool_dispatch(unit_of_work, invocation, prepared_invocation_id)
                     unit_of_work.commit()
                     running = None
                     duplicate = False
@@ -872,7 +895,7 @@ class AssistantApplication(
                     invocation.reject(
                         error_code=dispatch.error_code or "TOOL_REJECTED",
                     )
-                    unit_of_work.assistant.save_tool_invocation(invocation)
+                    _save_tool_dispatch(unit_of_work, invocation, prepared_invocation_id)
                     if dispatch.run is not None:
                         self._tool_trace.start_in_unit(
                             unit_of_work,
@@ -886,7 +909,7 @@ class AssistantApplication(
                     running = None
                 elif dispatch.requires_approval:
                     invocation.queue(command_run_id=dispatch.run.id)
-                    unit_of_work.assistant.save_tool_invocation(invocation)
+                    _save_tool_dispatch(unit_of_work, invocation, prepared_invocation_id)
                     approval = Approval.create(
                         task_id=turn.task_id,
                         command_run_id=dispatch.run.id,
@@ -915,7 +938,7 @@ class AssistantApplication(
                     )
                     invocation.queue(command_run_id=running.id)
                     invocation.start()
-                    unit_of_work.assistant.save_tool_invocation(invocation)
+                    _save_tool_dispatch(unit_of_work, invocation, prepared_invocation_id)
                     self._tool_trace.start_in_unit(
                         unit_of_work,
                         turn=turn,
@@ -1149,6 +1172,15 @@ class AssistantApplication(
             )
             unit_of_work.commit()
         return message, result.awaiting_approval, None, result.images
+
+
+def _save_tool_dispatch(unit_of_work, invocation, prepared_invocation_id: UUID | None) -> None:
+    if prepared_invocation_id is None:
+        unit_of_work.assistant.save_tool_invocation(invocation)
+    else:
+        unit_of_work.assistant.update_tool_invocation(
+            invocation, expected_status=ToolInvocationStatus.CREATED,
+        )
 
 
 def _tool_error_code(error: Exception) -> str:

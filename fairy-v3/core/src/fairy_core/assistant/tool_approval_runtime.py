@@ -65,15 +65,27 @@ class AssistantToolApprovalMixin:
         self,
         turn_id: UUID,
         cancellation: CancellationToken,
+        *,
+        invocation_id: UUID | None = None,
     ) -> bool:
         cancellation.raise_if_cancelled()
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
             if turn.status is not AssistantTurnStatus.WAITING_FOR_TOOL:
                 raise ValueError("Assistant Turn is not waiting for a tool")
+            if invocation_id is None:
+                candidates = unit_of_work.assistant.list_tool_invocations(turn_id)
+            else:
+                selected = unit_of_work.assistant.get_tool_invocation(invocation_id)
+                if (
+                    selected is None or selected.turn_id != turn_id
+                    or selected.task_id != turn.task_id
+                ):
+                    raise ValueError("Selected Tool Invocation does not belong to this Turn")
+                candidates = (selected,)
             pending = [
                 invocation
-                for invocation in unit_of_work.assistant.list_tool_invocations(turn_id)
+                for invocation in candidates
                 if invocation.status in {ToolInvocationStatus.QUEUED, ToolInvocationStatus.RUNNING}
             ]
             if not pending:

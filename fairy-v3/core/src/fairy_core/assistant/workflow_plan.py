@@ -3,6 +3,7 @@ from __future__ import annotations
 from itertools import pairwise
 from uuid import UUID
 
+from fairy_core.assistant.workflow_tool_plan import assistant_tool_continuation
 from fairy_core.workflow.models import (
     WorkflowEdge,
     WorkflowInstructionStatus,
@@ -190,6 +191,7 @@ __all__ = [
     "ASSISTANT_WORKFLOW_NODE_KIND",
     "ASSISTANT_WORKFLOW_PREPARE_NODE_KIND",
     "apply_pending_assistant_steering",
+    "assistant_tool_continuation",
     "assistant_workflow_node",
     "assistant_workflow_plan",
     "legacy_assistant_workflow_plan",
