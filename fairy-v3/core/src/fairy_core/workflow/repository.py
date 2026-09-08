@@ -20,6 +20,7 @@ from fairy_core.storage.schema import (
 )
 from fairy_core.workflow.approval_repository import WorkflowApprovalRepositoryMixin
 from fairy_core.workflow.budget_repository import WorkflowBudgetRepositoryMixin
+from fairy_core.workflow.claim_candidates import ready_candidates
 from fairy_core.workflow.deadline_repository import WorkflowDeadlineRepositoryMixin
 from fairy_core.workflow.errors import (
     WorkflowBudgetExceeded,
@@ -268,36 +269,6 @@ class SqlAlchemyWorkflowRepository(
             raise ValueError("Workflow claim parameters are invalid")
         self._expire_overdue(now)
         self._reclaim_expired(now)
-        rows = (
-            self._connection.execute(
-                select(workflow_nodes, workflow_runs)
-                .join(
-                    workflow_runs,
-                    and_(
-                        workflow_runs.c.tenant_id == workflow_nodes.c.tenant_id,
-                        workflow_runs.c.id == workflow_nodes.c.run_id,
-                        workflow_runs.c.active_plan_revision == workflow_nodes.c.plan_revision,
-                    ),
-                )
-                .where(
-                    workflow_nodes.c.tenant_id == self._tenant_id,
-                    workflow_nodes.c.status == WorkflowNodeStatus.READY.value,
-                    workflow_nodes.c.available_at <= now,
-                    workflow_runs.c.status.in_(
-                        (WorkflowRunStatus.QUEUED.value, WorkflowRunStatus.RUNNING.value)
-                    ),
-                    workflow_runs.c.pause_requested.is_(False),
-                )
-                .order_by(
-                    workflow_runs.c.parent_run_id.is_not(None).desc(),
-                    workflow_runs.c.updated_at,
-                    workflow_nodes.c.created_at,
-                    workflow_nodes.c.id,
-                )
-            )
-            .mappings()
-            .all()
-        )
         active_rows = (
             self._connection.execute(
                 select(
@@ -327,50 +298,34 @@ class SqlAlchemyWorkflowRepository(
         selected: list[Mapping[str, Any]] = []
         selected_child = False
         selected_blocking_parent = False
-        remaining = list(rows)
-        while remaining and len(selected) < limit:
-            selected_run_ids: set[str] = set()
-            progress = False
-            next_remaining: list[Mapping[str, Any]] = []
-            for row in remaining:
-                run_id = str(row["run_id"])
-                if run_id in selected_run_ids or len(selected) >= limit:
-                    next_remaining.append(row)
-                    continue
-                budget_limit = int(row["max_parallel_nodes"])
-                active = active_by_run[run_id]
-                policy = WorkflowConcurrencyPolicy(row["concurrency_policy"])
-                keys = frozenset(string_list(row["resource_keys"]))
-                is_child = row["parent_run_id"] is not None
-                is_blocking_parent = not is_child and str(row["kind"]) in blocking_parent_kinds
-                needs_child_slot = (
-                    reserve_child_slot or selected_blocking_parent or is_blocking_parent
-                )
-                if (
-                    not is_child
-                    and not selected_child
-                    and needs_child_slot
-                    and len(selected) >= limit - 1
-                ):
-                    next_remaining.append(row)
-                    continue
-                if (
-                    len(active) >= budget_limit
-                    or conflicts(policy, keys, active)
-                    or bool(keys & active_resource_keys)
-                ):
-                    next_remaining.append(row)
-                    continue
-                selected.append(row)
-                selected_run_ids.add(run_id)
-                active.append((policy, keys))
-                active_resource_keys.update(keys)
-                selected_child = selected_child or is_child
-                selected_blocking_parent = selected_blocking_parent or is_blocking_parent
-                progress = True
-            if not progress:
+        for row in ready_candidates(self._connection, tenant_id=self._tenant_id, now=now):
+            run_id = str(row["run_id"])
+            budget_limit = int(row["max_parallel_nodes"])
+            active = active_by_run[run_id]
+            policy = WorkflowConcurrencyPolicy(row["concurrency_policy"])
+            keys = frozenset(string_list(row["resource_keys"]))
+            is_child = row["parent_run_id"] is not None
+            is_blocking_parent = not is_child and str(row["kind"]) in blocking_parent_kinds
+            needs_child_slot = (
+                reserve_child_slot or selected_blocking_parent or is_blocking_parent
+            )
+            if (
+                not is_child and not selected_child and needs_child_slot
+                and len(selected) >= limit - 1
+            ):
+                continue
+            if (
+                len(active) >= budget_limit or conflicts(policy, keys, active)
+                or bool(keys & active_resource_keys)
+            ):
+                continue
+            selected.append(row)
+            active.append((policy, keys))
+            active_resource_keys.update(keys)
+            selected_child = selected_child or is_child
+            selected_blocking_parent = selected_blocking_parent or is_blocking_parent
+            if len(selected) >= limit:
                 break
-            remaining = next_remaining
 
         claims: list[WorkflowAttemptClaim] = []
         for row in selected:
