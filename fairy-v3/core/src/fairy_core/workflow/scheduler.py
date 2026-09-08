@@ -508,10 +508,6 @@ class WorkflowScheduler:
         except WorkflowPaused:
             abandoned = self._abandon(claim)
             settled = abandoned
-            if abandoned:
-                replan = getattr(self._adapters.require(node.kind), "replan_after_pause", None)
-                if callable(replan) and replan(node):
-                    self._wake.set()
         except ProviderCancelledError:
             if active.cancellation.is_interrupted:
                 self._abandon(claim)
@@ -543,19 +539,43 @@ class WorkflowScheduler:
     def _finish_active(self, active: _ActiveNode) -> None:
         claim = active.claim
         finished = None
+        run_idle = False
         try:
             with self._lock:
                 current = self._active.get(claim.node_id)
                 if current is active:
                     self._active.pop(claim.node_id, None)
                 if not any(item.claim.run_id == claim.run_id for item in self._active.values()):
+                    run_idle = True
                     finished = self._cancelled_idle.pop(claim.run_id, None)
         finally:
             if finished is not None and not finished.done():
                 finished.set_result(None)
+            if run_idle:
+                self._replan_completed_boundary(active)
             self._resume_after_boundary_if_ready(claim.run_id)
             self._changed.set()
             self._wake.set()
+
+    def _replan_completed_boundary(self, active: _ActiveNode) -> None:
+        """Both a yielded model and successfully completed tools are node boundaries."""
+        try:
+            with self._unit_of_work_factory() as unit:
+                run = unit.workflows.get_run(active.claim.run_id)
+                if run is None or run.status is not WorkflowRunStatus.PAUSED:
+                    return
+                node = active.node or unit.workflows.get_node(
+                    active.claim.run_id, active.claim.node_id,
+                )
+            if node is None:
+                return
+            replan = getattr(self._adapters.require(node.kind), "replan_after_pause", None)
+            if callable(replan):
+                replan(node)
+        except Exception:
+            logger.exception(
+                "Workflow Run %s could not apply its boundary update", active.claim.run_id,
+            )
 
     def _resume_after_boundary_if_ready(self, run_id: UUID) -> None:
         with self._lock:

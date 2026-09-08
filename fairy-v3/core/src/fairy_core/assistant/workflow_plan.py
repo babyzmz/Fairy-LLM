@@ -3,6 +3,7 @@ from __future__ import annotations
 from itertools import pairwise
 from uuid import UUID
 
+from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
 from fairy_core.assistant.workflow_step_nodes import STEP_ROUTE
 from fairy_core.assistant.workflow_tool_plan import assistant_tool_continuation
 from fairy_core.workflow.models import (
@@ -194,6 +195,24 @@ def apply_pending_assistant_steering(unit_of_work, run_id: UUID) -> bool:
         nodes=nodes,
         edges=edges,
     )
+    turn = unit_of_work.assistant.get_turn(UUID(snapshot.run.owner_id))
+    if (
+        turn is not None and turn.status is AssistantTurnStatus.WAITING_FOR_TOOL
+        and turn.budget_approval_run_id is None
+    ):
+        invocations = unit_of_work.assistant.list_tool_invocations(turn.id)
+        if invocations and all(invocation.status in {
+            ToolInvocationStatus.COMPLETED, ToolInvocationStatus.FAILED,
+            ToolInvocationStatus.REJECTED, ToolInvocationStatus.CANCELLED,
+        } for invocation in invocations):
+            # The superseded fan-in would have resumed this state. Preserve the
+            # finished facts, without mistaking them for a new approval wait.
+            expected_status = turn.status
+            turn.resume()
+            unit_of_work.assistant.update_turn(
+                turn, expected_status=expected_status,
+                expected_cancellation_revision=turn.cancellation_revision,
+            )
     return True
 
 

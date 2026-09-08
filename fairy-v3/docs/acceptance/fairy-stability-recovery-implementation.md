@@ -309,6 +309,9 @@
 
 ### Phase 6C：真实工具节点与审批恢复边界
 
+- Steering补充验收：模型节点暂停/恢复、两类原始请求幂等改要求、Classifier两个边界重解释、澄清等待重开，版本4先通过6项原契约复用测试。进一步验证两个读取节点执行期间的Steering：允许原读取完成并保留事实，旧fan-in被superseded，新Revision继续同一Turn且不重复调用；完成后才计入门禁。
+- RED确认了两层读取Steering缺口：正常完成节点未触发计划修订；补齐后新解释节点又把已完成工具残留的WAITING_FOR_TOOL误判为审批等待。Kernel现在在Run最后一个活动节点退出后统一处理暂停边界；新Revision与已结算工具的Turn恢复在同一事务完成，不修改完成事实。双读取顺序、原工具节点成功、旧join superseded、新要求进入下一模型上下文且零重复调用均通过。Workflow、旧/新控制、step工具与Media共90项通过（102.56秒），Ruff通过。异步Media尚未结算时的Steering、故障追踪的租约边界仍继续核对，默认版本4尚未开启。
+
 - 版本4的Assistant/Media双Run在归档边界关闭重开后保留全部原身份，零重复生成、一次最终回复。音频/视频同意与拒绝审批门禁通过；视频旧回执缺少必填空Artifact列表及后续提示词误称“生成物已完成”均已修复。Media、step Media、模型路由59项通过（77.46秒）；完整Assistant与Steering/多Run门禁继续进行。
 
 - 实际关闭/重开Core服务后复现“Job已完成但归档Workflow仍暂停”的漏恢复；恢复查询现在以tenant隔离的SQL存在性检查补齐未终态领域Run，不扫描已归档历史或重复生成。双Task归档保留原Artifact且新Provider请求为零；Media全包27项通过（34.47秒）。这是服务/数据库重开证据，非真实付费Provider或原生GUI验收。
