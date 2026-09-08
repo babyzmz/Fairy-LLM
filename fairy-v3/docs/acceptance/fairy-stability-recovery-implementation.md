@@ -173,6 +173,8 @@
 - 已实现 local-only `assistant.commands.dispatch`，当前菜单可用性由 Core Registry 复核。新建/清空使用同事务创建＋回执，四路重放和重启返回原 Conversation；清空不删除旧聊天，删除后的旧回执不复活聊天。停止绑定 Conversation/Turn/Revision 并保存域分离回执；权限只返回宿主 UI action。
 - Core 命令/消息入口/权限30项通过（29.93秒），命令＋JSON-RPC＋回执25项通过（20.37秒）；TypeScript、传输Client/Cloud/Tauri36项与 Ruff、diff检查通过。新权限测试先持久化设置再比较完整记录，避免未初始化默认设置每次读取生成时间戳的夹具问题。未改变已有产品权限断言。
 - 前端还未切换；统一入口当前走默认串行传输通道，下一步必须对已验证的 stop 控制请求单独分流，避免与创建聊天的文件操作共享等待锁。原 `assistant.turns.cancel` 快速通道继续保留。原生重载仍未验收。
+- 后续已复现并修复上述控制阻塞：只有通过完整 DTO 校验且包含 Conversation/Turn/Revision 的单独 `/stop` 可进入控制通道；其它命令、额外参数和缺失上下文仍串行。Core 停止路径使用独立短锁，不读取扩展目录；停止已有操作不再以启动新模型的能力为前提。原会话/取消 Revision 校验和停止回执保留。此处不保证长时间持有 SQLite 写事务时仍无锁等待，数据库事务长度需继续复查。
+- 控制/命令/权限30项通过（22.49秒），JSON-RPC/stdio15项通过（12.85秒），Ruff通过；两个新增回归先失败再修复。真实 native 延迟场景仍待后续验收。
 
 ### Phase 3B：事件提交唤醒与推送验收契约
 

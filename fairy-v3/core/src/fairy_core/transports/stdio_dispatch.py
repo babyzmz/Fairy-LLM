@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Event, Lock
 from typing import TextIO
 
+from fairy_core.contracts.domain_commands import is_control_stop_command
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.transports.stdio_events import EventCursorResyncRequired, StdioEventWatches
 
@@ -121,7 +122,10 @@ class StdioRequestDispatcher:
             return
         lane = (
             "control"
-            if method in CONTROL_METHODS
+            if method in CONTROL_METHODS or (
+                method == "assistant.commands.dispatch"
+                and is_control_stop_command(request.get("params"))
+            )
             else "read"
             if method in READ_METHODS
             else "serial"

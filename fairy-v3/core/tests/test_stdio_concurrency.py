@@ -157,3 +157,43 @@ def test_broken_output_does_not_start_queued_side_effects():
         release.set()
         transport.close()
     assert calls == [1]
+
+
+def test_only_valid_explicit_stop_commands_bypass_serial_work():
+    started, release, stopped, ordinary = (Event() for _ in range(4))
+
+    class Dispatcher:
+        def dispatch(self, request):
+            if request["id"] == 1:
+                started.set()
+                assert release.wait(5)
+            elif request["id"] == 2:
+                stopped.set()
+            else:
+                ordinary.set()
+            return {"id": request["id"], "result": {}}
+
+    transport = StdioRequestDispatcher(Dispatcher(), io.StringIO())
+    try:
+        transport.dispatch(json.loads(_request(0, "transport.negotiate")))
+        transport.dispatch(json.loads(_request(1, "slow.write")))
+        assert started.wait(2)
+        transport.dispatch({"id": 2, "method": "assistant.commands.dispatch", "params": {
+            "text": "/stop", "idempotency_key": "stop:once",
+            "conversation_id": "0198f4de-0114-7000-8000-000000000001",
+            "turn_id": "0198f4de-0114-7000-8000-000000000002",
+            "expected_cancellation_revision": 0,
+        }})
+        for index, params in enumerate([
+            {"text": "/new", "idempotency_key": "new:one"},
+            {"text": "/stop other", "idempotency_key": "bad:one"},
+            {"text": "/stop", "idempotency_key": "bad:two", "extra": True},
+            {"text": "/stop", "idempotency_key": "missing:context"},
+        ], 3):
+            transport.dispatch({"id": index, "method": "assistant.commands.dispatch",
+                                "params": params})
+        assert stopped.wait(0.5), "explicit stop is blocked behind serial work"
+        assert not ordinary.is_set()
+    finally:
+        release.set()
+        transport.close()

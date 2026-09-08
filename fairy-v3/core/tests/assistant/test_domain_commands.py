@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, Thread
 from uuid import UUID
 
 import pytest
@@ -126,4 +127,44 @@ def test_replaying_new_does_not_resurrect_a_deleted_chat(tmp_path: Path):
         with pytest.raises(InvalidTransitionError, match="unavailable"):
             _dispatch(service, "/new", "deleted:one")
     finally:
+        service.close()
+
+
+def test_stop_does_not_wait_for_extension_refresh_or_new_chat_filesystem_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    provider = BlockingProvider()
+    service = build_local_service(tmp_path, provider_registry=ProviderRegistry((provider,)))
+    entered, release, stopped = Event(), Event(), Event()
+    errors = []
+    thread = None
+    try:
+        conversation = _dispatch(service, "/new", "existing:chat")["conversation"]
+        turn = service.invoke("assistant.messages.submit", {
+            "conversation_id": conversation["id"], "content": "Hello", "profile_id": "scripted",
+            "source": "pet", "idempotency_key": "message:active",
+        })
+        def slow_catalog():
+            entered.set()
+            assert release.wait(3)
+            return []
+        monkeypatch.setattr(service._domain_commands, "_commands", slow_catalog)
+        def stop():
+            try:
+                _dispatch(service, "/stop", "stop:fast", conversation_id=conversation["id"],
+                          turn_id=turn["id"], expected_cancellation_revision=0)
+            except Exception as error:
+                errors.append(error)
+            finally:
+                stopped.set()
+        with service._domain_commands._lock:
+            thread = Thread(target=stop)
+            thread.start()
+            assert stopped.wait(0.8), "stop waited for catalog or new-chat lock"
+        assert not entered.is_set()
+        assert errors == []
+    finally:
+        release.set()
+        if thread is not None:
+            thread.join(5)
         service.close()

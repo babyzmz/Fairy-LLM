@@ -1,7 +1,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from fairy_core.contracts.common import ContractModel
 from fairy_core.contracts.models import AssistantTurnModel, ConversationModel
@@ -32,3 +32,16 @@ class AssistantCommandResult(ContractModel):
     turn: AssistantTurnModel | None = None
     ui_action: AssistantCommandUiAction | None = None
     notice: str | None = None
+
+
+def is_control_stop_command(params: object) -> bool:
+    """Validate the complete envelope before granting the fast control lane."""
+    try:
+        request = AssistantCommandInput.model_validate(params)
+    except ValidationError:
+        return False
+    return (
+        request.text.strip() == "/stop"
+        and request.conversation_id is not None and request.turn_id is not None
+        and request.expected_cancellation_revision is not None
+    )

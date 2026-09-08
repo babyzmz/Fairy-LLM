@@ -22,7 +22,6 @@ def default_slash_commands() -> tuple[SlashCommandDefinition, ...]:
         SlashCommandDefinition(
             name="stop",
             description="Stop the active assistant response.",
-            required_operation="model.generate",
         ),
         SlashCommandDefinition(
             name="clear",

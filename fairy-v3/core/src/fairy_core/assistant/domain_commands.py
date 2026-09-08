@@ -25,12 +25,21 @@ class AssistantDomainCommands:
         self._commands = commands
         self._cancel = cancel
         self._lock = RLock()
+        self._stop_lock = RLock()
 
     def dispatch(self, request: AssistantCommandInput) -> dict[str, Any]:
         parts = request.text.strip().split()
         if not parts or not parts[0].startswith("/"):
             raise ValueError("Expected an explicit slash command")
         name = parts[0][1:]
+        if name == "stop":
+            if len(parts) != 1:
+                raise ValueError("Command does not accept arguments")
+            key, digest = self._identity(request)
+            # Stopping an already bound Turn is not permission to start model work.
+            # Never refresh extensions or wait for new-chat filesystem preparation.
+            with self._stop_lock:
+                return {"command": name, "turn": self._stop(request, key, digest)}
         commands = self._commands()
         definition = next((item for item in commands if item["name"] == name), None)
         if definition is None:
@@ -53,6 +62,14 @@ class AssistantDomainCommands:
                     f" {item['argument_hint']}" if item.get("argument_hint") else ""
                 ) for item in commands if item["available"]
             )}
+        if name not in {"new", "clear"}:
+            raise ValueError("Slash command has no domain handler")
+        key, digest = self._identity(request)
+        with self._lock:
+            return {"command": name, "conversation": self._new(request, key, digest)}
+
+    @staticmethod
+    def _identity(request: AssistantCommandInput) -> tuple[str, str]:
         key = sha256(
             ("assistant.commands.dispatch\0" + request.idempotency_key.strip()).encode(),
         ).hexdigest()
@@ -61,10 +78,7 @@ class AssistantDomainCommands:
         digest = sha256(json.dumps(
             payload, sort_keys=True, separators=(",", ":"),
         ).encode()).hexdigest()
-        with self._lock:
-            if name in {"new", "clear"}:
-                return {"command": name, "conversation": self._new(request, key, digest)}
-            return {"command": name, "turn": self._stop(request, key, digest)}
+        return key, digest
 
     def _existing(self, unit, key: str, digest: str):
         existing = unit.assistant.message_submission_digest(key)
