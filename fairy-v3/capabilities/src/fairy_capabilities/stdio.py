@@ -81,7 +81,11 @@ def build_composed_local_dispatcher(
 def main() -> None:
     configured = os.environ.get("FAIRY_V3_DATA_DIR", "").strip()
     data_dir = Path(configured) if configured else Path.home() / ".fairy-v3"
-    process_stream(build_composed_local_dispatcher(data_dir), sys.stdin, sys.stdout)
+    dispatcher = build_composed_local_dispatcher(data_dir)
+    try:
+        process_stream(dispatcher, sys.stdin, sys.stdout)
+    finally:
+        dispatcher.close()
 
 
 if __name__ == "__main__":

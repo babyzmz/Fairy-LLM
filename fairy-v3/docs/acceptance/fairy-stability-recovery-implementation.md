@@ -17,7 +17,7 @@
 | 0 | 分支、用户改动恢复副本、独立 DSH 基线 | 完成 |
 | 1 | 录音 Scope；Browser revision；隐藏面板；桌宠启动 | 实现及完整桌面自动化通过；原生未验收 |
 | 2 | 持久执行意图、目标、副作用约束、多入口一致性 | 策略/Steering/入口接线已实现；复合 objective 的逐节点完成凭据与 Phase 6 联合闭环 |
-| 3 | 单 reader RPC、控制通道、期限、协商及事件推送 | 未开始 |
+| 3 | 单 reader RPC、控制通道、期限、协商及事件推送 | 进行中：先建立协商后的有界 Python 请求通道 |
 | 4 | 宿主 broker、桌宠脱离主 UI 生命周期、统一领域命令 | 未开始 |
 | 5 | 空闲退避、批量查询、有限历史、Browser 资源预算 | 未开始 |
 | 6 | 新版真实模型/工具节点，全局并发与恢复 | 未开始 |
@@ -99,6 +99,18 @@
 - 新增首次识别/回复中 Steering、旧 Profile 通知撤权、Schedule 与普通聊天等价测试，全部有对应失败复现。既有 Steering 测试参数化增强断言，没有放宽暂停/消息唯一性/幂等检查。
 - 验证：Core cwd 执行 `ruff check src/fairy_core/assistant tests/assistant` 通过；`pytest tests/assistant tests/test_sqlite_core.py tests/test_persistence_recovery.py tests/test_jsonrpc_transport.py tests/test_stdio_transport.py -q --tb=short`：218 passed（100.54秒）。均为临时数据库与脚本 Provider；没有运行真实用户库迁移、网络模型、桌面或原生硬件。
 - 复合 objective 当前仍只保存依赖，尚无可信逐 objective 完成凭据；不能把执行模型自报“分析完成”作为修改授权。该部分与 Phase 6 真实节点共用实现，联合关闭 Phase 2，不能提前宣称本阶段完全完成。真实 Provider 与原生联合验收仍未运行。用户要求连续推进，提交不是停点。
+
+### Phase 3A：请求分发验收契约
+
+- 保留单 stdio 入口和未协商客户端的顺序响应。`transport.negotiate` 是本地传输能力，不是业务授权；只有明确协商后开启并发请求，事件推送尚未实现时不得宣称支持。
+- 一个控制通道仅接已核对的轻量状态请求，两个显式只读 Worker，一个默认串行 Worker；各通道排队数量有界，满载返回公开 `RPC_CAPACITY_EXCEEDED`，绝不悄悄丢弃写操作或自动重试。
+- 响应在单一写锁内完整输出。请求 ID 持有至响应发出，活动重复 ID 明确拒绝。读取线程不等慢业务完成，控制通道不启动模型、Browser、Voice 或同步资源清理。
+- 测试用同步 Event 阻塞慢请求，确认控制/读取响应先返回；未声明方法保持串行；饱和、重复 ID、EOF 清理和旧协议顺序分别验证。随后 Rust/真实进程门禁验证乱序、代际和期限，再实现持久事件通知；此处测试不能单独证明桌面响应已恢复。
+- 实施：Rust 单 reader 按宿主 generation/唯一 wire ID 分发；有界写队列由唯一 writer 输出，调用线程不持有覆盖等待期间的锁。原始客户端 ID 只在回复该调用者时恢复；主窗口与 Realtime Assistance 的宿主外层锁也已释放后再等待。队列满明确未派发，超时明确操作结果可能未定，不自动重试。
+- Python 每通道最多32个运行/排队请求；未声明方法默认串行。响应管道断开后不再启动已排队副作用；原 Core 和组合版入口均在流结束/异常时关闭 dispatcher。控制通道目前仅 `health`/`assistant.turns.pause`；取消仍有同步领域清理，待下一子任务拆分，不宣称取消延迟门禁通过。
+- Rust Bridge 测试11项通过，Clippy（仅 core-bridge 全 targets）通过；宿主 `cargo check -p fairy-desktop-v3 --lib` 通过。新增真实 Core＋实际 stdio/Bridge 联通测试：领域边界注入10秒延迟时，健康检查每次<1秒（测试总12.13秒）。这是本机进程级传输证据，不是 WebView2/真实 Provider 联合验收。
+- Core stdio/JSON-RPC 定向20项通过；Capabilities stdio3项通过；TypeScript 通过，Client/Tauri/Cloud Transport 30项通过。新增 EOF/满载/重复 ID/未知 get 串行/断管不再派发场景；既有低于50ms轮询常量断言按批准方案改成250–500ms初始间隔，并补10秒空闲最多7次请求、取消后无计时器/迟到事件的行为测试（修复前401次）。
+- 默认请求30秒，显式 Voice/Browser 长操作120秒；超时返回 `RPC_DEADLINE_EXCEEDED`，不会映射成可重试的启动失联。未协商推送的客户端退避至5秒，读取到新事件后重置。事件 watch、提交后唤醒、慢订阅者重同步仍未实现，Phase 3 尚未完成。
 
 ### Phase 1 / F11：桌宠异步启动门禁（历史证据）
 

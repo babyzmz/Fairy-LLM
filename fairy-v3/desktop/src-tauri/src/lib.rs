@@ -547,10 +547,11 @@ pub fn anchored_pet_frame(
 }
 
 pub fn bridge_failure_response(id: Value, error: &CoreBridgeError) -> Value {
-    let error_code = if matches!(error, CoreBridgeError::WorkerInterrupted) {
-        "WORKER_INTERRUPTED"
-    } else {
-        "CORE_PROTOCOL_ERROR"
+    let error_code = match error {
+        CoreBridgeError::WorkerInterrupted => "WORKER_INTERRUPTED",
+        CoreBridgeError::RequestTimedOut => "RPC_DEADLINE_EXCEEDED",
+        CoreBridgeError::CapacityExceeded => "RPC_CAPACITY_EXCEEDED",
+        _ => "CORE_PROTOCOL_ERROR",
     };
     json!({
         "jsonrpc": "2.0",
@@ -1306,10 +1307,12 @@ async fn call_core(state: &DesktopState, request: Value) -> Value {
     let core = Arc::clone(&state.core);
     match tauri::async_runtime::spawn_blocking(move || {
         let guard = core.lock().map_err(|_| CoreBridgeError::LockPoisoned)?;
-        guard
+        let bridge = guard
             .as_ref()
             .ok_or(CoreBridgeError::WorkerInterrupted)?
-            .call(request)
+            .clone();
+        drop(guard);
+        bridge.call(request)
     })
     .await
     {
@@ -5147,7 +5150,9 @@ fn restart_core(state: &DesktopState) -> Result<(), Box<dyn std::error::Error>> 
         .core
         .lock()
         .map_err(|_| CoreBridgeError::LockPoisoned)?;
-    *core = None;
+    if let Some(previous) = core.take() {
+        previous.shutdown();
+    }
     let launch =
         configured_core_launch(&state.data_dir, &state.desktop_program, &state.resource_dir)?;
     *core = Some(CoreBridge::spawn_verified(launch)?);

@@ -44,6 +44,7 @@ from fairy_core.skills.loader import SkillPackageLoader
 from fairy_core.skills.manager import SkillManager
 from fairy_core.skills.registry import SkillRegistry
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
+from fairy_core.transports.stdio_dispatch import StdioRequestDispatcher
 from fairy_core.voice import VoiceRegistry
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 from fairy_core.workspace.rust_worker import RustWorkspaceProvisioner
@@ -337,33 +338,41 @@ def process_stream(
     source: TextIO,
     destination: TextIO,
 ) -> None:
-    for line in source:
-        if not line.strip():
-            continue
-        try:
-            request = json.loads(line)
-            if not isinstance(request, dict):
-                raise ValueError("request must be an object")
-            response = dispatcher.dispatch(request)
-        except (json.JSONDecodeError, ValueError) as exc:
-            response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32700,
-                    "message": "Parse error",
-                    "data": {"details": str(exc)},
-                },
-            }
-        destination.write(json.dumps(response, ensure_ascii=True, separators=(",", ":")))
-        destination.write("\n")
-        destination.flush()
+    transport = StdioRequestDispatcher(dispatcher, destination)
+    try:
+        for line in source:
+            if not line.strip():
+                continue
+            try:
+                request = json.loads(line)
+                if not isinstance(request, dict):
+                    raise ValueError("request must be an object")
+            except (json.JSONDecodeError, ValueError) as exc:
+                transport.write(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": None,
+                        "error": {
+                            "code": -32700,
+                            "message": "Parse error",
+                            "data": {"details": str(exc)},
+                        },
+                    }
+                )
+            else:
+                transport.dispatch(request)
+    finally:
+        transport.close()
 
 
 def main() -> None:
     configured = os.environ.get("FAIRY_V3_DATA_DIR", "").strip()
     data_dir = Path(configured) if configured else Path.home() / ".fairy-v3"
-    process_stream(build_local_dispatcher(data_dir), sys.stdin, sys.stdout)
+    dispatcher = build_local_dispatcher(data_dir)
+    try:
+        process_stream(dispatcher, sys.stdin, sys.stdout)
+    finally:
+        dispatcher.close()
 
 
 if __name__ == "__main__":

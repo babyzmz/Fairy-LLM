@@ -3,7 +3,33 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from fairy_capabilities.stdio import build_composed_local_dispatcher
+
+
+@pytest.mark.parametrize("broken", [False, True])
+def test_main_closes_composed_resources_when_the_input_stream_ends(monkeypatch, broken):
+    from fairy_capabilities import stdio
+
+    closed = []
+
+    class Dispatcher:
+        def close(self):
+            closed.append(True)
+
+    def stream(*args):
+        if broken:
+            raise BrokenPipeError("client disconnected")
+
+    monkeypatch.setattr(stdio, "build_composed_local_dispatcher", lambda _: Dispatcher())
+    monkeypatch.setattr(stdio, "process_stream", stream)
+    if broken:
+        with pytest.raises(BrokenPipeError):
+            stdio.main()
+    else:
+        stdio.main()
+    assert closed == [True]
 
 
 def test_composed_stdio_injects_public_provider_metadata_only(tmp_path: Path) -> None:

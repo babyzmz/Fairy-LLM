@@ -3,7 +3,10 @@ use std::env;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use serde_json::Value;
 use thiserror::Error;
@@ -187,26 +190,71 @@ pub enum CoreBridgeError {
     ProtocolMismatch { expected: String, actual: String },
     #[error("Fairy Core bridge lock is poisoned")]
     LockPoisoned,
+    #[error("Fairy Core request timed out; the operation may still be running")]
+    RequestTimedOut,
+    #[error("Fairy Core request capacity is exhausted; request was not dispatched")]
+    CapacityExceeded,
 }
 
-struct ProcessIo {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+struct PendingRequest {
+    original_id: i64,
+    sender: mpsc::Sender<Result<Value, CoreBridgeError>>,
 }
 
-impl Drop for ProcessIo {
+type PendingRequests = Arc<Mutex<BTreeMap<String, PendingRequest>>>;
+
+enum Outbound {
+    Request { key: String, payload: Vec<u8> },
+    Stop,
+}
+
+struct BridgeProcess {
+    child: Mutex<Child>,
+    pending: PendingRequests,
+    outbound: mpsc::SyncSender<Outbound>,
+    closed: Arc<AtomicBool>,
+    generation: u64,
+    sequence: AtomicU64,
+    reader: Mutex<Option<JoinHandle<()>>>,
+    writer: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Drop for BridgeProcess {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.closed.store(true, Ordering::Release);
+        if let Ok(child) = self.child.get_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let _ = self.outbound.try_send(Outbound::Stop);
+        for handle in [&mut self.reader, &mut self.writer] {
+            if let Ok(Some(join)) = handle.get_mut().map(Option::take) {
+                let _ = join.join();
+            }
+        }
     }
 }
 
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone)]
 pub struct CoreBridge {
-    process: Mutex<ProcessIo>,
+    process: Arc<BridgeProcess>,
 }
 
 impl CoreBridge {
+    pub fn shutdown(&self) {
+        self.process.closed.store(true, Ordering::Release);
+        if let Ok(mut child) = self.process.child.lock() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let _ = self.process.outbound.try_send(Outbound::Stop);
+        fail_pending(&self.process.pending, |_| {
+            CoreBridgeError::WorkerInterrupted
+        });
+    }
+
     pub fn spawn(spec: CoreLaunchSpec) -> Result<Self, CoreBridgeError> {
         let mut command = Command::new(spec.program);
         if spec.clear_environment {
@@ -230,11 +278,30 @@ impl CoreBridge {
             .stdout
             .take()
             .ok_or(CoreBridgeError::WorkerInterrupted)?;
+        let pending = Arc::new(Mutex::new(BTreeMap::new()));
+        let closed = Arc::new(AtomicBool::new(false));
+        let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        let (outbound, receiver) = mpsc::sync_channel(64);
+        let reader_pending = Arc::clone(&pending);
+        let reader_closed = Arc::clone(&closed);
+        let reader = std::thread::spawn(move || {
+            read_responses(stdout, &reader_pending, &reader_closed, generation);
+        });
+        let writer_pending = Arc::clone(&pending);
+        let writer_closed = Arc::clone(&closed);
+        let writer = std::thread::spawn(move || {
+            write_requests(stdin, receiver, &writer_pending, &writer_closed);
+        });
         Ok(Self {
-            process: Mutex::new(ProcessIo {
-                child,
-                stdin,
-                stdout: BufReader::new(stdout),
+            process: Arc::new(BridgeProcess {
+                child: Mutex::new(child),
+                pending,
+                outbound,
+                closed,
+                generation,
+                sequence: AtomicU64::new(1),
+                reader: Mutex::new(Some(reader)),
+                writer: Mutex::new(Some(writer)),
             }),
         })
     }
@@ -242,6 +309,11 @@ impl CoreBridge {
     pub fn spawn_verified(spec: CoreLaunchSpec) -> Result<Self, CoreBridgeError> {
         let bridge = Self::spawn(spec)?;
         bridge.verify_handshake()?;
+        // Old Cores return Method not found and retain sequential dispatch. No event
+        // notifications are enabled by this request; they need separate negotiation.
+        let _capabilities = bridge.call(serde_json::json!({
+            "jsonrpc": "2.0", "id": 0, "method": "transport.negotiate", "params": {}
+        }))?;
         Ok(bridge)
     }
 
@@ -277,39 +349,153 @@ impl CoreBridge {
     }
 
     pub fn call(&self, request: Value) -> Result<Value, CoreBridgeError> {
+        let timeout = match request.get("method").and_then(Value::as_str) {
+            Some(
+                "voice.transcribe"
+                | "voice.synthesize"
+                | "browser.snapshots.get"
+                | "browser.actions.execute",
+            ) => Duration::from_secs(120),
+            _ => Duration::from_secs(30),
+        };
+        self.call_with_timeout(request, timeout)
+    }
+
+    pub fn call_with_timeout(
+        &self,
+        mut request: Value,
+        timeout: Duration,
+    ) -> Result<Value, CoreBridgeError> {
         let expected_id = request
             .get("id")
             .and_then(Value::as_i64)
             .ok_or(CoreBridgeError::MissingRequestId)?;
-        let mut process = self
-            .process
-            .lock()
-            .map_err(|_| CoreBridgeError::LockPoisoned)?;
-
-        let mut payload = serde_json::to_vec(&request)?;
-        payload.push(b'\n');
-        write_request(&mut process.stdin, &payload)?;
-
-        let mut response_line = String::new();
-        let bytes_read = process
-            .stdout
-            .read_line(&mut response_line)
-            .map_err(map_process_io)?;
-        if bytes_read == 0 {
+        if self.process.closed.load(Ordering::Acquire) {
             return Err(CoreBridgeError::WorkerInterrupted);
         }
-        let response: Value = serde_json::from_str(&response_line)?;
-        let actual_id = response
-            .get("id")
-            .and_then(Value::as_i64)
-            .ok_or(CoreBridgeError::MissingRequestId)?;
-        if actual_id != expected_id {
-            return Err(CoreBridgeError::ResponseIdMismatch {
-                expected: expected_id,
-                actual: actual_id,
+        let key = format!(
+            "{}:{}",
+            self.process.generation,
+            self.process.sequence.fetch_add(1, Ordering::Relaxed)
+        );
+        request["id"] = Value::String(key.clone());
+        let mut payload = serde_json::to_vec(&request)?;
+        payload.push(b'\n');
+        let (sender, receiver) = mpsc::channel();
+        {
+            let mut pending = self
+                .process
+                .pending
+                .lock()
+                .map_err(|_| CoreBridgeError::LockPoisoned)?;
+            if self.process.closed.load(Ordering::Acquire) {
+                return Err(CoreBridgeError::WorkerInterrupted);
+            }
+            if pending.len() >= 64 {
+                return Err(CoreBridgeError::CapacityExceeded);
+            }
+            pending.insert(
+                key.clone(),
+                PendingRequest {
+                    original_id: expected_id,
+                    sender,
+                },
+            );
+        }
+        if let Err(error) = self.process.outbound.try_send(Outbound::Request {
+            key: key.clone(),
+            payload,
+        }) {
+            if let Ok(mut pending) = self.process.pending.lock() {
+                pending.remove(&key);
+            }
+            return Err(match error {
+                mpsc::TrySendError::Full(_) => CoreBridgeError::CapacityExceeded,
+                mpsc::TrySendError::Disconnected(_) => CoreBridgeError::WorkerInterrupted,
             });
         }
-        Ok(response)
+        let result = receiver.recv_timeout(timeout.min(Duration::from_secs(120)));
+        if let Ok(mut pending) = self.process.pending.lock() {
+            pending.remove(&key);
+        }
+        match result {
+            Ok(response) => response,
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(CoreBridgeError::RequestTimedOut),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(CoreBridgeError::WorkerInterrupted),
+        }
+    }
+}
+
+fn fail_pending(pending: &PendingRequests, error: impl Fn(i64) -> CoreBridgeError) {
+    if let Ok(mut requests) = pending.lock() {
+        for (_, request) in std::mem::take(&mut *requests) {
+            let _ = request.sender.send(Err(error(request.original_id)));
+        }
+    }
+}
+
+fn read_responses(
+    stdout: ChildStdout,
+    pending: &PendingRequests,
+    closed: &AtomicBool,
+    generation: u64,
+) {
+    let mut reader = BufReader::new(stdout);
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        let Ok(mut response) = serde_json::from_str::<Value>(&line) else {
+            break;
+        };
+        let key = response.get("id").and_then(Value::as_str);
+        if let Some(key) = key.filter(|key| key.starts_with(&format!("{generation}:"))) {
+            let request = pending
+                .lock()
+                .ok()
+                .and_then(|mut requests| requests.remove(key));
+            if let Some(request) = request {
+                response["id"] = Value::from(request.original_id);
+                let _ = request.sender.send(Ok(response));
+            }
+            // A timed-out request may finish later. Never assign it to another caller.
+        } else {
+            let actual = response.get("id").and_then(Value::as_i64);
+            fail_pending(pending, |expected| match actual {
+                Some(actual) => CoreBridgeError::ResponseIdMismatch { expected, actual },
+                None => CoreBridgeError::WorkerInterrupted,
+            });
+            break;
+        }
+    }
+    closed.store(true, Ordering::Release);
+    fail_pending(pending, |_| CoreBridgeError::WorkerInterrupted);
+}
+
+fn write_requests(
+    mut stdin: ChildStdin,
+    receiver: mpsc::Receiver<Outbound>,
+    pending: &PendingRequests,
+    closed: &AtomicBool,
+) {
+    while let Ok(Outbound::Request { key, payload }) = receiver.recv() {
+        if closed.load(Ordering::Acquire) {
+            break;
+        }
+        if !pending
+            .lock()
+            .map(|requests| requests.contains_key(&key))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if write_request(&mut stdin, &payload).is_err() {
+            closed.store(true, Ordering::Release);
+            fail_pending(pending, |_| CoreBridgeError::WorkerInterrupted);
+            break;
+        }
     }
 }
 

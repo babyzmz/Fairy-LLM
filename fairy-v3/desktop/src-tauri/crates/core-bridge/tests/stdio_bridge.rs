@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::path::PathBuf;
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
 
 use fairy_core_bridge::{CoreBridge, CoreBridgeError, CoreLaunchSpec};
 use serde_json::json;
@@ -53,6 +55,43 @@ for line in sys.stdin:
 }
 
 #[test]
+fn concurrent_requests_with_same_client_id_receive_their_own_out_of_order_responses() {
+    let script = r#"
+import json, sys, threading, time
+lock = threading.Lock()
+def respond(request):
+    if request['method'] == 'slow':
+        time.sleep(1)
+    with lock:
+        print(json.dumps({'jsonrpc':'2.0', 'id':request['id'], 'result':request['method']}), flush=True)
+for line in sys.stdin:
+    threading.Thread(target=respond, args=(json.loads(line),)).start()
+"#;
+    let bridge = Arc::new(CoreBridge::spawn(helper(script)).expect("start helper"));
+    let (sender, receiver) = mpsc::channel();
+    let first = Arc::clone(&bridge);
+    let slow = std::thread::spawn(move || first.call(json!({"id": 7, "method": "slow"})));
+    // Give the first caller an opportunity to enter its response wait.
+    std::thread::sleep(Duration::from_millis(100));
+    let second = Arc::clone(&bridge);
+    let fast = std::thread::spawn(move || {
+        sender
+            .send(second.call(json!({"id": 7, "method": "health"})))
+            .unwrap();
+    });
+    let response = receiver.recv_timeout(Duration::from_millis(500));
+    let slow_response = slow.join().unwrap().unwrap();
+    fast.join().unwrap();
+    assert_eq!(slow_response["id"], 7);
+    assert_eq!(slow_response["result"], "slow");
+    let response = response
+        .expect("fast call must not wait for the slow response")
+        .unwrap();
+    assert_eq!(response["id"], 7);
+    assert_eq!(response["result"], "health");
+}
+
+#[test]
 fn rejects_a_response_with_the_wrong_request_id() {
     let script = r#"
 import json, sys
@@ -85,6 +124,52 @@ fn reports_worker_interrupted_when_core_exits() {
         .expect_err("closed stdout must fail");
 
     assert!(matches!(error, CoreBridgeError::WorkerInterrupted));
+}
+
+#[test]
+fn late_response_after_timeout_cannot_complete_another_request() {
+    let script = r#"
+import json, sys, threading, time
+lock = threading.Lock()
+def respond(request):
+    time.sleep(0.2 if request['method'] == 'slow' else 0.4)
+    with lock:
+        print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':request['method']}), flush=True)
+for line in sys.stdin:
+    threading.Thread(target=respond, args=(json.loads(line),)).start()
+"#;
+    let bridge = CoreBridge::spawn(helper(script)).unwrap();
+    let error = bridge
+        .call_with_timeout(
+            json!({"id": 1, "method": "slow"}),
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+    assert!(matches!(error, CoreBridgeError::RequestTimedOut));
+    let response = bridge.call(json!({"id": 1, "method": "next"})).unwrap();
+    assert_eq!(response["id"], 1);
+    assert_eq!(response["result"], "next");
+}
+
+#[test]
+fn shutdown_interrupts_cloned_callers_and_does_not_affect_a_new_generation() {
+    let old = CoreBridge::spawn(helper(
+        "import sys, time\nfor line in sys.stdin: time.sleep(5)",
+    ))
+    .unwrap();
+    let clone = old.clone();
+    let caller = std::thread::spawn(move || clone.call(json!({"id": 1, "method": "slow"})));
+    std::thread::sleep(Duration::from_millis(50));
+    old.shutdown();
+    assert!(matches!(
+        caller.join().unwrap(),
+        Err(CoreBridgeError::WorkerInterrupted)
+    ));
+    let new = CoreBridge::spawn(helper("import json, sys\nfor line in sys.stdin:\n r=json.loads(line); print(json.dumps({'id':r['id'],'result':'new'}),flush=True)")).unwrap();
+    assert_eq!(
+        new.call(json!({"id": 1, "method": "health"})).unwrap()["result"],
+        "new"
+    );
 }
 
 #[test]

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   CoreClient,
@@ -47,8 +47,40 @@ class RecordingTransport implements CoreTransport {
 }
 
 describe("CoreClient", () => {
-  it("keeps local ledger polling inside the event latency budget", () => {
-    expect(DEFAULT_EVENT_POLL_MS).toBeLessThanOrEqual(50);
+  it("uses a bounded fallback interval rather than 25ms idle polling", () => {
+    expect(DEFAULT_EVENT_POLL_MS).toBeGreaterThanOrEqual(250);
+    expect(DEFAULT_EVENT_POLL_MS).toBeLessThanOrEqual(500);
+  });
+
+  it("backs off idle polling and stops without timers after abort", async () => {
+    vi.useFakeTimers();
+    const call = vi.fn().mockResolvedValue({ items: [] });
+    const controller = new AbortController();
+    const client = new CoreClient({ call } as CoreTransport);
+    const iterator = client.events.subscribe(0, { signal: controller.signal })[Symbol.asyncIterator]();
+    const pending = iterator.next();
+    try {
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(call.mock.calls.length).toBeLessThanOrEqual(7);
+      expect(call.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      controller.abort();
+      await pending;
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not yield a response arriving after its subscription was aborted", async () => {
+    let resolve!: (value: unknown) => void;
+    const call = vi.fn(() => new Promise((done) => { resolve = done; }));
+    const controller = new AbortController();
+    const client = new CoreClient({ call } as CoreTransport);
+    const iterator = client.events.subscribe(0, { signal: controller.signal })[Symbol.asyncIterator]();
+    const pending = iterator.next();
+    controller.abort();
+    resolve({ items: [{ cursor: 1 }] });
+    expect(await pending).toEqual({ done: true, value: undefined });
   });
 
   it("exposes one typed method surface for local and cloud transports", async () => {

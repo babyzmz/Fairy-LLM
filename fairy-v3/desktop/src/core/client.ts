@@ -120,7 +120,8 @@ import type {
   EditRecipeUpdateInput,
 } from "./contracts";
 
-export const DEFAULT_EVENT_POLL_MS = 25;
+export const DEFAULT_EVENT_POLL_MS = 250;
+const MAX_IDLE_EVENT_POLL_MS = 5_000;
 
 export type * from "./contracts";
 
@@ -1029,15 +1030,27 @@ export class CoreClient {
 
   private async *pollEvents(cursor: number, options: EventSubscriptionOptions): AsyncIterable<EventEnvelope> {
     let current = cursor;
+    const requestedInterval = options.pollIntervalMs ?? DEFAULT_EVENT_POLL_MS;
+    const baseInterval = Number.isFinite(requestedInterval)
+      ? Math.max(1, Math.min(MAX_IDLE_EVENT_POLL_MS, requestedInterval))
+      : DEFAULT_EVENT_POLL_MS;
+    let idleInterval = baseInterval;
     while (!options.signal?.aborted) {
-      const batch = await this.transport.call("events.subscribe", { cursor: current });
+      const batch = await this.transport.call("events.subscribe", { cursor: current }, { signal: options.signal });
+      if (options.signal?.aborted) return;
+      let progressed = false;
       for (const event of batch.items) {
+        if (options.signal?.aborted) return;
         if (event.cursor <= current) continue;
         current = event.cursor;
+        progressed = true;
         yield event;
       }
-      if (batch.items.length === 0) {
-        await waitForPoll(options.pollIntervalMs ?? DEFAULT_EVENT_POLL_MS, options.signal);
+      if (!progressed) {
+        await waitForPoll(idleInterval, options.signal);
+        idleInterval = Math.min(MAX_IDLE_EVENT_POLL_MS, idleInterval * 2);
+      } else {
+        idleInterval = baseInterval;
       }
     }
   }
