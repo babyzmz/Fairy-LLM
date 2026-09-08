@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from uuid import UUID
 
 from fairy_core.assistant.interpretation import (
     AssistantRequestInterpretationRevision,
+    InterpretationConfidence,
     InterpretationDisposition,
+    RequestAction,
+    fallback_interpretation,
 )
 from fairy_core.assistant.models import (
     AssistantTurn,
@@ -16,6 +20,7 @@ from fairy_core.assistant.models import (
     MessageRole,
     MessageVisibility,
 )
+from fairy_core.assistant.system_intent import unrouted_interpretation
 from fairy_core.assistant.trace_models import TurnTrace
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.turn_reader import require_turn
@@ -295,9 +300,7 @@ class AssistantLedgerApplication:
                 action=current.action,
                 objectives=current.objectives,
                 targets=current.targets,
-                constraints=tuple(
-                    dict.fromkeys((*current.constraints, clarification_constraint))
-                ),
+                constraints=tuple(dict.fromkeys((*current.constraints, clarification_constraint))),
                 deliverable=current.deliverable,
                 evidence_requirements=current.evidence_requirements,
                 assumptions=current.assumptions,
@@ -624,6 +627,33 @@ class AssistantLedgerApplication:
                     turn.id,
                     turn.active_interpretation_revision,
                 )
+                if current_interpretation is None and turn.model_selection is not None:
+                    original = unit_of_work.assistant.message_for_turn(turn.id, MessageRole.USER)
+                    pending = replace(
+                        fallback_interpretation(
+                            turn_id=turn.id,
+                            revision=1,
+                            source_message_id=message.id,
+                            source_message=message.content,
+                            action=RequestAction.ANSWER,
+                        ),
+                        idempotency_key=f"steer:{idempotency_key}",
+                        confidence=InterpretationConfidence.LOW,
+                        constraints=(f"Original request: {original.content[:1_950]}",)
+                        if original is not None
+                        else (),
+                    )
+                    unit_of_work.assistant.append_interpretation(pending, expected_revision=None)
+                    next_interpretation_revision = 1
+                    expected_status = turn.status
+                    expected_cancellation = turn.cancellation_revision
+                    turn.bind_interpretation(1, expected_revision=None)
+                    turn.invalidate_routing_for_steering()
+                    unit_of_work.assistant.update_turn(
+                        turn,
+                        expected_status=expected_status,
+                        expected_cancellation_revision=expected_cancellation,
+                    )
                 if current_interpretation is not None:
                     next_interpretation_revision = current_interpretation.revision + 1
                     update_constraint = f"Updated requirement: {instruction[:1_950]}"
@@ -638,23 +668,49 @@ class AssistantLedgerApplication:
                         objectives=current_interpretation.objectives,
                         targets=current_interpretation.targets,
                         constraints=tuple(
-                            dict.fromkeys(
-                                (*current_interpretation.constraints, update_constraint)
-                            )
+                            dict.fromkeys((*current_interpretation.constraints, update_constraint))
                         ),
                         deliverable=current_interpretation.deliverable,
                         evidence_requirements=current_interpretation.evidence_requirements,
                         assumptions=current_interpretation.assumptions,
                         missing_information=current_interpretation.missing_information,
-                        confidence=current_interpretation.confidence,
+                        confidence=(
+                            InterpretationConfidence.LOW
+                            if turn.model_selection is not None
+                            else current_interpretation.confidence
+                        ),
                         disposition=current_interpretation.disposition,
                         public_summary="The active task requirements were updated",
                         clarification_question=current_interpretation.clarification_question,
                     )
+                    if turn.model_selection is None:
+                        revised_interpretation = replace(
+                            unrouted_interpretation(
+                                turn_id=turn.id,
+                                revision=next_interpretation_revision,
+                                source_message_id=message.id,
+                                source_message=message.content,
+                            ),
+                            idempotency_key=revised_interpretation.idempotency_key,
+                            constraints=revised_interpretation.constraints,
+                        )
                     unit_of_work.assistant.append_interpretation(
                         revised_interpretation,
                         expected_revision=current_interpretation.revision,
                     )
+                    if turn.model_selection is not None:
+                        expected_status = turn.status
+                        expected_cancellation = turn.cancellation_revision
+                        turn.bind_interpretation(
+                            next_interpretation_revision,
+                            expected_revision=current_interpretation.revision,
+                        )
+                        turn.invalidate_routing_for_steering()
+                        unit_of_work.assistant.update_turn(
+                            turn,
+                            expected_status=expected_status,
+                            expected_cancellation_revision=expected_cancellation,
+                        )
                 paused = unit_of_work.workflows.request_pause(turn.workflow_run_id)
                 unit_of_work.commands.append_domain_event(
                     event_type="assistant.turn.steered",

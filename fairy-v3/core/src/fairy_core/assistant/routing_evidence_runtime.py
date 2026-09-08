@@ -70,6 +70,7 @@ class RoutingClassifierInput:
     source_message_id: UUID
     catalog: ModelCatalogSnapshot
     model_round: int
+    interpretation_revision: int | None = None
     prior_interpretation: AssistantRequestInterpretationRevision | None = None
 
 
@@ -103,9 +104,7 @@ class EvidenceRoutingRuntimeMixin:
             raise ValueError("manual evidence classifier requires Manual selection")
         selected = MODEL_ALLOWLIST_BY_ID.get(selection.model_id or "")
         if selected is None:
-            raise EvidenceClassificationFailedError(
-                "selected model cannot be interpreted"
-            )
+            raise EvidenceClassificationFailedError("selected model cannot be interpreted")
         classifier_model_id = (
             selection.model_id
             if selected.endpoint_kind is ModelEndpointKind.CHAT
@@ -223,11 +222,9 @@ class EvidenceRoutingRuntimeMixin:
                 turn.id,
                 turn.active_interpretation_revision,
             )
-            refresh = (
-                interpretation is not None
-                and interpretation.revision > 1
-                and interpretation.disposition
-                is InterpretationDisposition.CLARIFICATION_REQUIRED
+            refresh = interpretation is not None and (
+                interpretation.disposition is InterpretationDisposition.CLARIFICATION_REQUIRED
+                or interpretation.idempotency_key.startswith("steer:")
             )
             user_message = (
                 unit_of_work.assistant.get_message(interpretation.source_message_id)
@@ -246,6 +243,7 @@ class EvidenceRoutingRuntimeMixin:
             user_request=user_message.content,
             source_message_id=user_message.id,
             catalog=catalog,
+            interpretation_revision=turn.active_interpretation_revision,
             model_round=(
                 _CLARIFICATION_CLASSIFIER_ROUND_BASE + interpretation.revision
                 if refresh and interpretation

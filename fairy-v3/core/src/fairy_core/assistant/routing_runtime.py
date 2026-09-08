@@ -43,6 +43,7 @@ from fairy_core.assistant.routing_evidence_runtime import (
     route_step_summary,
     validate_router_attempt,
 )
+from fairy_core.assistant.system_intent import unrouted_interpretation
 from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
@@ -75,6 +76,7 @@ from fairy_core.providers import (
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
+from fairy_core.workflow.scheduler import WorkflowPaused
 
 
 class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMixin):
@@ -89,12 +91,11 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
             )
             if source_message is None:
                 raise RuntimeError("Assistant Turn has no user message")
-            interpretation = fallback_interpretation(
+            interpretation = unrouted_interpretation(
                 turn_id=turn.id,
                 revision=1,
                 source_message_id=source_message.id,
                 source_message=source_message.content,
-                action=RequestAction.ANSWER,
             )
             unit_of_work.assistant.append_interpretation(
                 interpretation,
@@ -128,6 +129,7 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
                 turn.id,
                 decision,
                 run=route_run,
+                classifier_input=classifier_input,
                 replace_evidence=True,
                 interpretation_payload=evidence.interpretation,
             )
@@ -158,6 +160,7 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
                 turn.id,
                 decision,
                 run=route_run,
+                classifier_input=classifier_input,
                 interpretation_payload=(evidence.interpretation if evidence is not None else None),
             )
             return decision
@@ -245,6 +248,7 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
                 turn.id,
                 decision,
                 run=run,
+                classifier_input=classifier_input,
                 interpretation_payload=routed.interpretation,
             )
             return decision
@@ -263,12 +267,32 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
         turn_id: UUID,
         decision: RoutingDecision,
         *,
+        classifier_input: RoutingClassifierInput,
         run: CommandRun | None = None,
         replace_evidence: bool = False,
         interpretation_payload: ClassifierInterpretationPayload | None = None,
     ) -> None:
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
+            if turn.active_interpretation_revision != classifier_input.interpretation_revision:
+                # Fence the result within the same transaction as interpretation binding.
+                # A delayed classifier may never authorize a newer source message.
+                if run is not None:
+                    self._trace.transition_command_step_in_unit(
+                        unit_of_work,
+                        run=run,
+                        kind=TraceStepKind.MODEL,
+                        status=TraceStepStatus.FAILED,
+                        public_detail="Requirements changed while the request was analyzed.",
+                    )
+                    self._command_bus(unit_of_work.commands).fail(
+                        run.id,
+                        error_code="EXECUTION_INTENT_CHANGED",
+                        lease_owner=run.lease_owner,
+                        lease_fence=run.lease_fence,
+                    )
+                    unit_of_work.commit()
+                raise WorkflowPaused
             expected_status = turn.status
             expected_revision = turn.cancellation_revision
             current_interpretation = unit_of_work.assistant.get_interpretation(
@@ -280,15 +304,16 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
                 and (decision.evidence_classified or interpretation_payload is not None)
             ) or (
                 current_interpretation is not None
-                and current_interpretation.disposition
-                is InterpretationDisposition.CLARIFICATION_REQUIRED
+                and (
+                    current_interpretation.disposition
+                    is InterpretationDisposition.CLARIFICATION_REQUIRED
+                    or current_interpretation.idempotency_key.startswith("steer:")
+                )
                 and interpretation_payload is not None
             )
             if should_append_interpretation:
                 source_message = (
-                    unit_of_work.assistant.get_message(
-                        current_interpretation.source_message_id
-                    )
+                    unit_of_work.assistant.get_message(current_interpretation.source_message_id)
                     if current_interpretation is not None
                     else unit_of_work.assistant.message_for_turn(
                         turn.id,
@@ -299,9 +324,7 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
                     raise RuntimeError("Assistant Turn has no user message")
                 action = _request_action(decision)
                 next_interpretation_revision = (
-                    current_interpretation.revision + 1
-                    if current_interpretation is not None
-                    else 1
+                    current_interpretation.revision + 1 if current_interpretation is not None else 1
                 )
                 interpretation = (
                     interpretation_from_classifier(

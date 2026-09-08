@@ -151,6 +151,67 @@ def test_schedule_authoring_rejects_literal_only_or_vague_instructions(
         service.close()
 
 
+@pytest.mark.parametrize("instruction", ["Create a project summary", "Notify me when ready"])
+def test_legacy_schedule_uses_the_same_execution_intent_as_chat(tmp_path: Path, instruction: str):
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.text(profile_id="scripted", sequence=1, text="Done"),
+                ModelDelta.done(profile_id="scripted", sequence=2, finish_reason="stop"),
+            )
+            for _ in range(2)
+        ]
+    )
+    service = build_local_service(tmp_path, provider_registry=ProviderRegistry((provider,)))
+    try:
+        task = _scratch_task(service, instruction)
+        direct = service.invoke(
+            "assistant.turns.create",
+            {
+                "task_id": task["id"],
+                "profile_id": "scripted",
+                "idempotency_key": "direct",
+            },
+        )
+        service.invoke("assistant.turns.start", {"turn_id": direct["id"]})
+        wait_for_turn(service, direct["id"])
+        schedule = service.invoke(
+            "assistant.schedules.create",
+            {
+                "conversation_id": task["conversation_id"],
+                "instruction": instruction,
+                "operation_mode": "answer",
+                "trigger_kind": "daily",
+                "trigger_rule": {"local_time": "09:00"},
+                "timezone": "Australia/Sydney",
+                "next_fire_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+                "profile_id": "scripted",
+                "idempotency_key": "schedule:equivalence",
+            },
+        )
+        occurrence = service.invoke(
+            "assistant.schedules.run_now",
+            {
+                "schedule_id": schedule["id"],
+                "expected_revision": schedule["active_revision"],
+                "idempotency_key": "run:equivalence",
+            },
+        )
+        scheduled_id = _wait_for_occurrence_turn(service, UUID(occurrence["id"]))
+        wait_for_turn(service, str(scheduled_id))
+        interpretations = [
+            service.invoke("assistant.turns.interpretation.get", {"turn_id": key})
+            for key in (direct["id"], str(scheduled_id))
+        ]
+        assert interpretations[0]["action"] == interpretations[1]["action"]
+        assert interpretations[0]["targets"] == interpretations[1]["targets"]
+        assert {tool.name for tool in provider.requests[0].tools} == {
+            tool.name for tool in provider.requests[1].tools
+        }
+    finally:
+        service.close()
+
+
 def test_pending_schedule_waits_for_the_active_turn_in_the_same_chat(tmp_path: Path) -> None:
     provider = _SerialProvider()
     service = build_local_service(

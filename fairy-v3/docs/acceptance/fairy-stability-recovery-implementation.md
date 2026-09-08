@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | 0 | 分支、用户改动恢复副本、独立 DSH 基线 | 完成 |
 | 1 | 录音 Scope；Browser revision；隐藏面板；桌宠启动 | 实现及完整桌面自动化通过；原生未验收 |
-| 2 | 持久执行意图、目标、副作用约束、多入口一致性 | 进行中：先建立不可变绑定及恢复契约，执行拦截尚未接入 |
+| 2 | 持久执行意图、目标、副作用约束、多入口一致性 | 策略/Steering/入口接线已实现；复合 objective 的逐节点完成凭据与 Phase 6 联合闭环 |
 | 3 | 单 reader RPC、控制通道、期限、协商及事件推送 | 未开始 |
 | 4 | 宿主 broker、桌宠脱离主 UI 生命周期、统一领域命令 | 未开始 |
 | 5 | 空闲退避、批量查询、有限历史、Browser 资源预算 | 未开始 |
@@ -84,7 +84,23 @@
 - 本轮没有改 Desktop/Rust，也未重跑其门禁；Phase 1 的桌面结果保留为历史证据。工具执行前策略尚未消费此快照，Phase 2 仍为进行中。
 - 结束时只读进程检查未发现本项目 Node/Python/Cargo/Fairy/Browser Worker 残留；未停止无关进程。
 
-### Phase 1 / F11：桌宠异步启动门禁
+### Phase 2B：执行策略接线（进行中）
+
+- Context、候选派发和实际执行消费同一持久意图；后两者重新读取 active Revision。CommandRun 输入保存解释 Revision；审批恢复到真正执行之前比较，旧审批不能恢复新要求已经撤销的动作。
+- 回答/解释/审查、低置信度、待澄清默认只读；允许有明确 builtin 来源和 executor 的研究/计划内部写入。按 action 区分修改、运行、媒体、浏览器、管理工具，未声明语义的第三方写工具不自动获得权限。
+- 原文中明确的“不修改/不执行/不通知/不保存记忆”形成额外收紧条件；引用/代码不作为此类指令。这是保守否定守卫，不能替代 Classifier 的语义理解，不宣称覆盖任意自然语言。
+- 文件 Changeset 的相对目标匹配与目录边界在派发及执行两处检查；Core Scope 仍负责真实路径、版本和权限。目标不明返回公开意图错误，不能直接猜测访问范围。
+- 系统操作默认识别明确指令；提及 notification、引用示例与否定文本不再授予调用。无 Classifier 的 legacy profile 只为已识别的直接系统命令绑定相应 tool target，其余仍只读降级。
+- 修改一项既有重启审批测试的输入，从含糊的“Resume this approved notification action”改成明确“Notify me after approval, including after restart”；审批、重启、幂等断言保持不变。
+- 新增策略矩阵、引用/否定、文件目标和审批过期回归；此前一次整组失败发现实际执行读取了错误的 CommandRun 字段，已按权威 `input_payload` 修复并通过定向恢复测试。未吞掉异常、未放宽执行结果断言。
+- Steering 重新识别新来源消息并清空旧路由；识别输入持有解释 Revision，绑定结果在同事务比较，旧识别结果不得绑定新消息。首次识别中途更正保存低权限 pending Revision；旧 Profile 更正重走同一只读/直接系统命令规则。
+- 预算审批幂等键带解释 Revision，不复用旧要求的路由预算授权；已完成操作保留，不回滚其事实。
+- 删除 Schedule 的独立 legacy 执行解释构造器，实际 Turn 与普通聊天使用相同准备路径。Schedule Card 的计划描述与来源哈希校验保留，不再把描述层的词法 action 当执行权限。
+- 新增首次识别/回复中 Steering、旧 Profile 通知撤权、Schedule 与普通聊天等价测试，全部有对应失败复现。既有 Steering 测试参数化增强断言，没有放宽暂停/消息唯一性/幂等检查。
+- 验证：Core cwd 执行 `ruff check src/fairy_core/assistant tests/assistant` 通过；`pytest tests/assistant tests/test_sqlite_core.py tests/test_persistence_recovery.py tests/test_jsonrpc_transport.py tests/test_stdio_transport.py -q --tb=short`：218 passed（100.54秒）。均为临时数据库与脚本 Provider；没有运行真实用户库迁移、网络模型、桌面或原生硬件。
+- 复合 objective 当前仍只保存依赖，尚无可信逐 objective 完成凭据；不能把执行模型自报“分析完成”作为修改授权。该部分与 Phase 6 真实节点共用实现，联合关闭 Phase 2，不能提前宣称本阶段完全完成。真实 Provider 与原生联合验收仍未运行。用户要求连续推进，提交不是停点。
+
+### Phase 1 / F11：桌宠异步启动门禁（历史证据）
 
 - 先复现原 projection-only 测试立即寻找尚未挂载 renderer 的失败；改为等待真实设置加载后的 DOM，不改生产渲染逻辑。
 - 新增加载等待/live 优先、原生加载失败回退、启动中卸载三个行为测试，验证现有守卫而非增加无条件延时。

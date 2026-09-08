@@ -8,7 +8,13 @@ from uuid import UUID
 
 import pytest
 
-from fairy_core.assistant.models import ToolInvocationStatus
+from fairy_core.assistant.interpretation import InterpretedObjective, RequestAction
+from fairy_core.assistant.models import (
+    Message,
+    MessageRole,
+    MessageVisibility,
+    ToolInvocationStatus,
+)
 from fairy_core.assistant.workflow_plan import ASSISTANT_MODEL_ROUND_NODE_KIND
 from fairy_core.commanding.models import CommandStatus
 from fairy_core.domain.errors import InvalidTransitionError
@@ -110,6 +116,59 @@ def test_standard_profile_approval_resumes_one_tool_effect_once(tmp_path: Path) 
             "response",
         ]
         assert all(step["status"] == "succeeded" for step in trace["steps"])
+    finally:
+        service.close()
+
+
+def test_approval_cannot_reuse_authority_after_a_new_intent_revision(tmp_path: Path) -> None:
+    provider = _approval_provider(final_text="No notification was sent")
+    executor = RecordingToolExecutor()
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((provider,)),
+        tool_executor=executor,
+    )
+    try:
+        task = _scratch_task(service, "Notify me after approval")
+        turn = _turn(service, task, "turn:intent-approval")
+        waiting = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        assert waiting["status"] == "waiting_for_tool"
+        approval = service.invoke("approvals.list", {"task_id": task["id"]})["items"][0]
+        with service._unit_of_work_factory() as unit_of_work:
+            original = unit_of_work.assistant.get_interpretation(UUID(turn["id"]))
+            message = Message.create(
+                conversation_id=UUID(task["conversation_id"]),
+                task_id=UUID(task["id"]),
+                turn_id=UUID(turn["id"]),
+                sequence=unit_of_work.assistant.next_message_sequence(
+                    UUID(task["conversation_id"])
+                ),
+                role=MessageRole.USER,
+                visibility=MessageVisibility.USER,
+                content="Only explain the result; do not notify me.",
+            )
+            revised = type(original).create(
+                turn_id=original.turn_id,
+                revision=2,
+                source_message_id=message.id,
+                source_message=message.content,
+                normalized_goal=message.content,
+                action=RequestAction.EXPLAIN,
+                objectives=(InterpretedObjective(message.content, RequestAction.EXPLAIN),),
+                public_summary="Explain only",
+            )
+            unit_of_work.assistant.append_message(message)
+            unit_of_work.assistant.append_interpretation(revised, expected_revision=1)
+            unit_of_work.commit()
+        service.invoke("approvals.decide", {"approval_id": approval["id"], "approved": True})
+        completed = wait_for_turn(service, turn["id"])
+        assert completed["status"] == "completed"
+        assert executor.calls == []
+        with service._unit_of_work_factory() as unit_of_work:
+            invocation = unit_of_work.assistant.list_tool_invocations(UUID(turn["id"]))[0]
+            command = unit_of_work.commands.get_run(invocation.command_run_id)
+        assert invocation.error_code == "EXECUTION_INTENT_CHANGED"
+        assert command.status is CommandStatus.FAILED
     finally:
         service.close()
 
@@ -226,7 +285,7 @@ def test_approved_turn_resumes_after_core_restart_and_expired_claim(
         provider_registry=ProviderRegistry((first_provider,)),
         tool_executor=RecordingToolExecutor(),
     )
-    task = _scratch_task(first_service, "Resume this approved notification action")
+    task = _scratch_task(first_service, "Notify me after approval, including after restart")
     turn = _turn(first_service, task, "turn:approval:restart")
     first_service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
     approval = first_service.invoke("approvals.list", {"task_id": task["id"]})["items"][0]

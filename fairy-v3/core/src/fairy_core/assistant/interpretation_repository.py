@@ -11,6 +11,7 @@ from sqlalchemy import insert, select, update
 
 from fairy_core.assistant.evidence import EvidenceRequirementKind
 from fairy_core.assistant.execution_intent import ExecutionIntentSnapshot
+from fairy_core.assistant.execution_intent_policy import intent_prohibitions
 from fairy_core.assistant.interpretation import (
     AssistantRequestInterpretationRevision,
     InterpretationConfidence,
@@ -122,6 +123,7 @@ class AssistantInterpretationRepositoryMixin:
                 user_constraints=interpretation.constraints,
                 confidence=interpretation.confidence,
                 disposition=interpretation.disposition,
+                source_prohibitions=intent_prohibitions(source.content),
             )
             values["execution_intent"] = intent.model_dump(mode="json")
             current_predicate = (

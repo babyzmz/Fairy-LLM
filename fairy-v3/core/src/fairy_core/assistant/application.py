@@ -20,6 +20,11 @@ from fairy_core.assistant.evidence import (
     evidence_context,
     seal_evidence_drafts,
 )
+from fairy_core.assistant.execution_intent_policy import (
+    ExecutionIntentError,
+    file_target_issue,
+    readonly_intent_issue,
+)
 from fairy_core.assistant.media_routing import constrain_context_for_media
 from fairy_core.assistant.models import (
     AssistantTurn,
@@ -721,6 +726,21 @@ class AssistantApplication(
             )
             return False, message, "PROVIDER_PROTOCOL_ERROR", ()
         definition = offered_definitions.get(candidate.name)
+        registered = self._registry.get(candidate.name)
+        intent = None
+        if registered is not None:
+            with self._unit_of_work_factory() as unit_of_work:
+                intent = unit_of_work.assistant.get_execution_intent(turn_id)
+                intent_issue = readonly_intent_issue(intent, registered)
+            if intent_issue is not None:
+                message = self._append_tool_message(
+                    turn_id=turn_id,
+                    tool_name=candidate.name,
+                    tool_call_id=candidate.call_id,
+                    content=ExecutionIntentError(intent_issue).model_detail,
+                    rejected=True,
+                )
+                return False, message, intent_issue, ()
         if definition is None or not getattr(definition, "model_visible", False):
             message = self._append_tool_message(
                 turn_id=turn_id,
@@ -746,6 +766,18 @@ class AssistantApplication(
                 rejected=True,
             )
             return False, message, "PROVIDER_PROTOCOL_ERROR", ()
+
+        if definition.name == "edit.propose_changeset" and intent is not None:
+            issue = file_target_issue(intent, arguments.get("files"))
+            if issue is not None:
+                message = self._append_tool_message(
+                    turn_id=turn_id,
+                    tool_name=definition.name,
+                    tool_call_id=candidate.call_id,
+                    content=ExecutionIntentError(issue).model_detail,
+                    rejected=True,
+                )
+                return False, message, issue, ()
 
         if definition.name == "execution.plan":
             with self._unit_of_work_factory() as unit_of_work:
@@ -819,6 +851,9 @@ class AssistantApplication(
                             payload={
                                 "arguments": arguments,
                                 "definition_digest": definition.definition_digest,
+                                "interpretation_revision": (
+                                    intent.interpretation_revision if intent is not None else None
+                                ),
                             },
                             idempotency_key=(
                                 f"assistant:{turn.id}:tool:{invocation.argument_hash}"
@@ -945,6 +980,29 @@ class AssistantApplication(
         try:
             cancellation.raise_if_cancelled()
             self._turns.require_waiting_for_tool(turn_id)
+            with self._unit_of_work_factory() as unit_of_work:
+                intent = unit_of_work.assistant.get_execution_intent(turn_id)
+                intent_issue = readonly_intent_issue(intent, definition)
+                if intent is not None and (
+                    intent.turn_id != turn_id
+                    or intent.task_id != scope.task_id
+                    or intent.conversation_id != scope.conversation_id
+                    or intent.workspace_id != scope.workspace_id
+                    or intent.project_id != scope.project_id
+                    or intent.execution_target != scope.execution_target
+                    or intent.base_version_id != scope.base_version_id
+                    or intent.target_version_id != scope.target_version_id
+                ):
+                    intent_issue = "EXECUTION_INTENT_SCOPE_CHANGED"
+                if intent is not None and definition.name == "edit.propose_changeset":
+                    intent_issue = intent_issue or file_target_issue(intent, arguments.get("files"))
+                expected_revision = running.input_payload.get("interpretation_revision")
+                if expected_revision is not None and (
+                    intent is None or intent.interpretation_revision != expected_revision
+                ):
+                    intent_issue = "EXECUTION_INTENT_CHANGED"
+                if intent_issue is not None:
+                    raise ExecutionIntentError(intent_issue)
             if definition.name == "preview.status" and self._execution_completion_hook is not None:
                 # Preview is Core-owned. Prepare and verify the durable target version before the
                 # model reads status so it cannot spin on a transient null projection.

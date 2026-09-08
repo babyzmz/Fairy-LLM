@@ -6,15 +6,7 @@ from threading import RLock
 from uuid import UUID
 
 from fairy_core.application.core import CoreApplication
-from fairy_core.assistant.interpretation import (
-    AssistantRequestInterpretationRevision,
-    InterpretationConfidence,
-    InterpretationDisposition,
-    InterpretedObjective,
-    RequestAction,
-)
 from fairy_core.assistant.ledger import AssistantLedgerApplication
-from fairy_core.assistant.models import MessageRole
 from fairy_core.assistant.schedule_interpretation import interpret_scheduled_instruction
 from fairy_core.assistant.schedule_models import (
     AssistantOccurrenceStatus,
@@ -101,9 +93,6 @@ class AssistantScheduledTurnDispatcher:
         else:
             turn = existing
 
-        if schedule.model_selection is None:
-            self._bind_legacy_schedule_interpretation(turn.id, schedule)
-
         if turn.workflow_run_id is None:
             raise AssistantScheduleAttentionRequired(
                 "WORKFLOW_BINDING_MISSING",
@@ -127,56 +116,6 @@ class AssistantScheduledTurnDispatcher:
             unit_of_work.commit()
         self._scheduler.start(turn.id)
         return True
-
-    def _bind_legacy_schedule_interpretation(
-        self,
-        turn_id: UUID,
-        schedule: AssistantSchedule,
-    ) -> None:
-        with self._unit_of_work_factory() as unit_of_work:
-            turn = unit_of_work.assistant.get_turn(turn_id)
-            if turn is None:
-                raise AssistantScheduleAttentionRequired(
-                    "TURN_MISSING",
-                    "The scheduled Assistant turn is no longer available.",
-                )
-            if turn.active_interpretation_revision is not None:
-                return
-            message = unit_of_work.assistant.message_for_turn(turn.id, MessageRole.USER)
-            if message is None:
-                raise AssistantScheduleAttentionRequired(
-                    "SCHEDULE_MESSAGE_MISSING",
-                    "The scheduled instruction message is unavailable.",
-                )
-            interpreted = interpret_scheduled_instruction(schedule.instruction)
-            interpretation = AssistantRequestInterpretationRevision.create(
-                turn_id=turn.id,
-                revision=1,
-                source_message_id=message.id,
-                source_message=message.content,
-                normalized_goal=schedule.instruction[:4_000],
-                action=interpreted.action,
-                objectives=(
-                    InterpretedObjective(
-                        schedule.instruction[:2_000],
-                        interpreted.action,
-                    ),
-                ),
-                targets=(schedule.instruction[:1_000],),
-                deliverable=(
-                    schedule.instruction[:2_000]
-                    if interpreted.action in {RequestAction.CREATE, RequestAction.GENERATE}
-                    else None
-                ),
-                confidence=InterpretationConfidence.MEDIUM,
-                disposition=InterpretationDisposition.READY,
-                public_summary=interpreted.public_summary,
-            )
-            unit_of_work.assistant.append_interpretation(
-                interpretation,
-                expected_revision=None,
-            )
-            unit_of_work.commit()
 
     def _validate_binding(self, unit_of_work, schedule: AssistantSchedule) -> str:
         try:

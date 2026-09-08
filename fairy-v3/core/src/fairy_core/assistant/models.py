@@ -516,6 +516,14 @@ class AssistantTurn:
         self.routing_decision = None
         self.updated_at = _now()
 
+    def invalidate_routing_for_steering(self) -> None:
+        if self.status not in {AssistantTurnStatus.RUNNING, AssistantTurnStatus.WAITING_FOR_TOOL}:
+            raise InvalidTransitionError("Only an active Turn can reinterpret steering")
+        # Historical approvals remain in the ledger. They cannot authorize a newly selected route.
+        self.routing_decision = None
+        self.budget_approval_run_id = None
+        self.updated_at = _now()
+
     def resume(self) -> None:
         self._transition_to(AssistantTurnStatus.RUNNING)
 

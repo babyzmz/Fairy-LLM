@@ -163,14 +163,15 @@ def test_active_turn_can_pause_and_resume_at_a_model_boundary(tmp_path: Path) ->
         service.close()
 
 
-def test_steering_revises_one_turn_and_replays_idempotently(tmp_path: Path) -> None:
+@pytest.mark.parametrize("original", ["Draft a response", "Notify me when ready"])
+def test_steering_revises_one_turn_and_replays_idempotently(tmp_path: Path, original: str) -> None:
     provider = _BoundaryProvider()
     service = build_local_service(
         tmp_path,
         provider_registry=ProviderRegistry((provider,)),
     )
     try:
-        task = _scratch_task(service, "Draft a response")
+        task = _scratch_task(service, original)
         turn = _turn(service, task, "turn:steer")
         service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
         assert provider.started.wait(timeout=3.0)
@@ -200,16 +201,104 @@ def test_steering_revises_one_turn_and_replays_idempotently(tmp_path: Path) -> N
         assert completed["status"] == "completed"
         assert workflow["active_plan_revision"] == 2
         assert interpretation["revision"] == 2
+        assert interpretation["action"] == "answer"
+        assert interpretation["targets"] == []
         assert interpretation["constraints"][-1] == (
             "Updated requirement: Focus on the recovery behavior instead."
         )
         assert [message["content"] for message in messages] == [
-            "Draft a response",
+            original,
             "Focus on the recovery behavior instead.",
             "Updated response",
         ]
         assert replayed["id"] == turn["id"]
         assert provider.call_count == 2
+    finally:
+        provider.release.set()
+        service.close()
+
+
+@pytest.mark.parametrize("blocked_call", [1, 2])
+def test_steering_reclassifies_the_new_source_before_continuing(tmp_path: Path, blocked_call: int):
+    profile_id = "openrouter-qwen-free"
+
+    class ReclassifyingProvider(ScriptedProvider):
+        def __init__(self):
+            super().__init__(
+                [],
+                profile_id=profile_id,
+                model_id=QWEN_FREE_MODEL_ID,
+                capabilities=frozenset(
+                    {
+                        ProviderCapability.TEXT,
+                        ProviderCapability.TOOLS,
+                        ProviderCapability.STRUCTURED_OUTPUT,
+                    }
+                ),
+            )
+            self.started = Event()
+            self.release = Event()
+
+        def stream(self, request, cancellation):
+            self.requests.append(request)
+            count = len(self.requests)
+            if count == blocked_call:
+                self.started.set()
+                assert self.release.wait(timeout=5)
+                cancellation.raise_if_cancelled()
+            if count in {1, blocked_call + 1}:
+                target = "src/a.ts" if count == 1 else "src/b.ts"
+                yield from _resolved_clarification_classification(profile_id, target)
+                return
+            yield ModelDelta.text(profile_id=profile_id, sequence=1, text="Scoped response")
+            yield ModelDelta.done(profile_id=profile_id, sequence=2, finish_reason="stop")
+
+    provider = ReclassifyingProvider()
+    service = build_local_service(tmp_path, provider_registry=ProviderRegistry((provider,)))
+    try:
+        selection = service.invoke(
+            "models.selection.update",
+            {
+                "mode": "manual",
+                "model_id": QWEN_FREE_MODEL_ID,
+                "allow_free_fallback": False,
+                "zero_data_retention": False,
+                "expected_revision": 0,
+                "idempotency_key": "select",
+            },
+        )
+        selection = service.invoke("models.selection.get", {})
+        task = _scratch_task(service, "Update src/a.ts")
+        turn = service.invoke(
+            "assistant.turns.create",
+            {
+                "task_id": task["id"],
+                "idempotency_key": "steering-reclassify",
+                "model_selection": {
+                    key: selection[key] for key in ("mode", "model_id", "revision")
+                },
+            },
+        )
+        service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
+        assert provider.started.wait(timeout=5)
+        service.invoke(
+            "assistant.turns.steer",
+            {
+                "turn_id": turn["id"],
+                "instruction": "Update src/b.ts instead",
+                "expected_revision": 1,
+                "idempotency_key": "steer:b",
+            },
+        )
+        provider.release.set()
+        wait_for_turn(service, turn["id"])
+        interpretation = service.invoke(
+            "assistant.turns.interpretation.get", {"turn_id": turn["id"]}
+        )
+        assert interpretation["targets"] == ["src/b.ts"]
+        assert interpretation["revision"] == blocked_call + 1
+        assert len(provider.requests) == blocked_call + 2
+        assert "Update src/b.ts instead" in provider.requests[blocked_call].messages[-1].content
     finally:
         provider.release.set()
         service.close()
@@ -352,9 +441,7 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(
         assert interpretation["revision"] == 1
         assert background["current"][0]["status"] == "waiting_for_input"
         assert background["current"][0]["attention_code"] == "clarification_required"
-        assert background["current"][0]["public_error"] == (
-            "Which file should Fairy update?"
-        )
+        assert background["current"][0]["public_error"] == ("Which file should Fairy update?")
         assert any(
             event["event_type"] == "assistant.turn.clarification_requested"
             and event["payload"].get("turn_id") == turn["id"]
@@ -372,13 +459,15 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(
         assert len(provider.requests) == 4
         assert "PRIOR_INTERPRETATION" in provider.requests[1].messages[0].content
         clarification_payload = json.loads(provider.requests[1].messages[-1].content)
-        assert "".join(
-            segment["text"] for segment in clarification_payload["segments"]
-        ) == "Maybe the app file."
+        assert (
+            "".join(segment["text"] for segment in clarification_payload["segments"])
+            == "Maybe the app file."
+        )
         resolved_payload = json.loads(provider.requests[2].messages[-1].content)
-        assert "".join(
-            segment["text"] for segment in resolved_payload["segments"]
-        ) == "Update src/app.ts."
+        assert (
+            "".join(segment["text"] for segment in resolved_payload["segments"])
+            == "Update src/app.ts."
+        )
     finally:
         service.close()
 
@@ -442,7 +531,7 @@ def test_clarification_wait_survives_core_restart(tmp_path: Path) -> None:
                     text="Completed after clarification and restart.",
                 ),
                 ModelDelta.done(profile_id=profile_id, sequence=2, finish_reason="stop"),
-            )
+            ),
         ],
         profile_id=profile_id,
         model_id=QWEN_FREE_MODEL_ID,

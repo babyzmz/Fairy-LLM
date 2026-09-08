@@ -6,6 +6,9 @@ from statistics import median
 from threading import Barrier, Lock
 from time import monotonic, sleep
 from typing import Any
+from uuid import UUID
+
+import pytest
 
 from fairy_core.assistant.candidates import ToolCandidate
 from fairy_core.assistant.parallel_tools import _candidate_batches
@@ -15,6 +18,55 @@ from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.transports.stdio import build_local_service
 from tests.assistant.support import RecordingToolExecutor, ScriptedProvider
 from tests.assistant.test_application import _scratch_task, _turn
+
+
+@pytest.mark.parametrize(
+    "user_text",
+    [
+        "Review the project; do not save memories or change anything.",
+        "解释这段内容，不要修改文件或保存记忆。",  # noqa: RUF001 - real Chinese input
+    ],
+)
+def test_readonly_intent_never_executes_model_requested_mutation(tmp_path: Path, user_text: str):
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="unexpected-write",
+                    tool_name="memory.suggest",
+                    arguments_fragment='{"content":"Remember this forever",'
+                    '"proposed_namespace":"conversation_draft"}',
+                ),
+                ModelDelta.done(profile_id="scripted", sequence=2, finish_reason="tool_calls"),
+            ),
+            (
+                ModelDelta.text(profile_id="scripted", sequence=1, text="Review only."),
+                ModelDelta.done(profile_id="scripted", sequence=2, finish_reason="stop"),
+            ),
+        ]
+    )
+    executor = RecordingToolExecutor()
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((provider,)),
+        tool_executor=executor,
+    )
+    try:
+        task = _scratch_task(service, user_text)
+        turn = _turn(service, task, "readonly-intent")
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        assert completed["status"] == "completed"
+        with service._unit_of_work_factory() as unit_of_work:
+            invocations = unit_of_work.assistant.list_tool_invocations(UUID(turn["id"]))
+        assert not invocations, [(item.status.value, item.error_code) for item in invocations]
+        names = {tool.name for tool in provider.requests[0].tools}
+        assert "memory.suggest" not in names
+        assert "web.search" in names
+        assert "research.build" in names
+    finally:
+        service.close()
 
 
 class _ParallelReadExecutor:

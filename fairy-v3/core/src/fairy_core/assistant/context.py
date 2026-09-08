@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from fairy_core.assistant.execution_intent_policy import readonly_intent_issue
 from fairy_core.assistant.models import (
     AssistantTurn,
     ImportedMessage,
@@ -12,6 +13,7 @@ from fairy_core.assistant.models import (
     MessageVisibility,
     ToolInvocationStatus,
 )
+from fairy_core.assistant.system_intent import explicit_system_actions
 from fairy_core.assistant.tools import model_tools_for_definitions
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.domain.models import ScopeContract, Task
@@ -157,6 +159,7 @@ class AssistantContextBuilder:
                 if turn.active_interpretation_revision is not None
                 else None
             )
+            execution_intent = unit_of_work.assistant.get_execution_intent(turn.id)
             if turn.active_interpretation_revision is not None and interpretation is None:
                 raise ValueError("Assistant Turn interpretation revision is unavailable")
             if current_user_message is not None and all(
@@ -208,6 +211,11 @@ class AssistantContextBuilder:
             else ()
         )
         manifest_tool_definitions = len(tool_definitions)
+        tool_definitions = tuple(
+            definition
+            for definition in tool_definitions
+            if readonly_intent_issue(execution_intent, definition) is None
+        )
         requested_system_actions = _requested_system_actions(
             current_user_message.content if current_user_message is not None else ""
         )
@@ -510,42 +518,7 @@ def _completion_handoff(plan_steps) -> bool:
 
 
 def _requested_system_actions(user_text: str) -> frozenset[str]:
-    normalized = " ".join(user_text.casefold().split())
-    requested: set[str] = set()
-    patterns = {
-        "system.copy_text": (
-            "clipboard",
-            "copy to clipboard",
-            "复制到剪贴板",
-            "拷贝到剪贴板",
-        ),
-        "system.notify": ("notify me", "notification", "通知我", "提醒我"),
-        "system.reveal_path": (
-            "file explorer",
-            "show in explorer",
-            "open in explorer",
-            "资源管理器",
-            "打开所在位置",
-        ),
-        "system.open_settings": (
-            "windows settings",
-            "system settings",
-            "windows 设置",
-            "系统设置",
-        ),
-        "system.open_url": (
-            "open in browser",
-            "external browser",
-            "default browser",
-            "系统浏览器",
-            "默认浏览器",
-            "打开链接",
-        ),
-    }
-    for name, phrases in patterns.items():
-        if any(phrase in normalized for phrase in phrases):
-            requested.add(name)
-    return frozenset(requested)
+    return explicit_system_actions(user_text)
 
 
 def _interpretation_instruction(interpretation) -> str:

@@ -47,6 +47,9 @@ class ExecutionIntentSnapshot(BaseModel):
     user_constraints: tuple[UserConstraint, ...] = Field(max_length=64)
     confidence: InterpretationConfidence
     disposition: InterpretationDisposition
+    source_prohibitions: tuple[
+        Literal["mutation", "execution", "notification", "memory", "publication"], ...
+    ] = ()
 
     @model_validator(mode="after")
     def validate_objective_dependencies(self) -> ExecutionIntentSnapshot:

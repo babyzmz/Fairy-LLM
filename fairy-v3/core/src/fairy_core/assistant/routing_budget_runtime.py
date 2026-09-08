@@ -48,7 +48,10 @@ class RoutingBudgetRuntimeMixin:
                         "estimated_cost_usd": decision.estimated_cost_usd,
                         "execution_model_count": len(set(decision.execution_model_ids)),
                     },
-                    idempotency_key=f"assistant:{turn.id}:model-budget",
+                    idempotency_key=(
+                        f"assistant:{turn.id}:model-budget:"
+                        f"{turn.active_interpretation_revision or 0}"
+                    ),
                 ),
                 profile=policy.profile,
                 capability_overrides=dict(policy.capability_overrides),
