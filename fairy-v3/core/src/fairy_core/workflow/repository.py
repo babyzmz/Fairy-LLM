@@ -1049,50 +1049,35 @@ class SqlAlchemyWorkflowRepository(
                 )
 
     def _promote_dependents(self, run_id: UUID, revision: int, *, now: datetime) -> None:
-        target_ids = (
-            self._connection.execute(
-                select(workflow_edges.c.to_node_id).where(
-                    workflow_edges.c.tenant_id == self._tenant_id,
-                    workflow_edges.c.run_id == str(run_id),
-                    workflow_edges.c.plan_revision == revision,
-                )
-            )
-            .scalars()
-            .all()
+        parent = workflow_nodes.alias("dependency_parent")
+        scope = (
+            workflow_edges.c.tenant_id == self._tenant_id,
+            workflow_edges.c.run_id == str(run_id),
+            workflow_edges.c.plan_revision == revision,
+            workflow_edges.c.to_node_id == workflow_nodes.c.id,
         )
-        for target_id in set(target_ids):
-            source_statuses = (
-                self._connection.execute(
-                    select(workflow_nodes.c.status)
-                    .join(
-                        workflow_edges,
-                        and_(
-                            workflow_edges.c.tenant_id == workflow_nodes.c.tenant_id,
-                            workflow_edges.c.from_node_id == workflow_nodes.c.id,
-                        ),
-                    )
-                    .where(
-                        workflow_edges.c.tenant_id == self._tenant_id,
-                        workflow_edges.c.run_id == str(run_id),
-                        workflow_edges.c.plan_revision == revision,
-                        workflow_edges.c.to_node_id == target_id,
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            if source_statuses and all(
-                status == WorkflowNodeStatus.SUCCEEDED.value for status in source_statuses
-            ):
-                self._connection.execute(
-                    update(workflow_nodes)
-                    .where(
-                        workflow_nodes.c.tenant_id == self._tenant_id,
-                        workflow_nodes.c.id == target_id,
-                        workflow_nodes.c.status == WorkflowNodeStatus.PENDING.value,
-                    )
-                    .values(status=WorkflowNodeStatus.READY.value, updated_at=now)
-                )
+        has_parent = (
+            select(workflow_edges.c.from_node_id).where(*scope).correlate(workflow_nodes).exists()
+        )
+        unfinished_parent = (
+            select(workflow_edges.c.from_node_id)
+            .join(parent, and_(
+                parent.c.tenant_id == workflow_edges.c.tenant_id,
+                parent.c.id == workflow_edges.c.from_node_id,
+            ))
+            .where(*scope, parent.c.status != WorkflowNodeStatus.SUCCEEDED.value)
+            .correlate(workflow_nodes)
+            .exists()
+        )
+        self._connection.execute(
+            update(workflow_nodes).where(
+                workflow_nodes.c.tenant_id == self._tenant_id,
+                workflow_nodes.c.run_id == str(run_id),
+                workflow_nodes.c.plan_revision == revision,
+                workflow_nodes.c.status == WorkflowNodeStatus.PENDING.value,
+                has_parent, ~unfinished_parent,
+            ).values(status=WorkflowNodeStatus.READY.value, updated_at=now)
+        )
 
     def _settle_run(self, run_id: UUID, *, now: datetime) -> None:
         run = run_from_row(self._locked_run(run_id))

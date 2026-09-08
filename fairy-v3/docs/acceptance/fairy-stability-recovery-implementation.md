@@ -304,6 +304,8 @@
 - Adapter只能拿到当前宿主实际领取的Claim；检查点写入经过Run/Revision/租约/Fence校验，可与领域UoW原子提交。首次记录后不可替换，完全相同重放不增加写入；过期/取消/其他tenant不能写入。检查点不代表节点已完成，也不会提前释放依赖。
 - 实库验证检查点提交后中断/重领、关闭重开、域写入同事务回滚、冲突检查点拒绝和当前Claim投递；模型/工具实际“不重发”要等新Adapter接线后再验证，不以原语测试代替。
 - 已加入record_checkpoint及可选execute_claimed入口，检查点采用规范JSON并限制2 MiB，不改变无检查点Adapter接口。中断/重领后结果仍在、旧Fence失效、重开与tenant隔离、不可覆盖、非JSON/超限拒绝及领域写入回滚通过；Workflow/Assistant控制54项通过（44.05秒），Ruff通过。新Assistant仍未默认切换，尚未宣称真实模型重启不重发已验。
+- 真实工具节点接线前收窄依赖推进：以一条受tenant/Run/Revision约束的SQL更新替代对每个后继的读取/更新；所有父节点成功后才可READY，不能提前解锁fan-in。100分支实库SELECT数量、阻塞父节点、双Run/tenant及现有并发回归验证，不把SQL往返减少描述为已测端到端延迟。
+- 100分支失败基线111次SELECT，集合式依赖更新后为9次；根完成释放100分支而join仍阻塞。Workflow/Assistant控制/Media/Knowledge83项通过（75.73秒），相关Ruff通过；既有暂停、恢复、并行和Steering断言未放宽，PostgreSQL实际执行仍待环境门禁。
 
 ### Phase 3B：事件提交唤醒与推送验收契约
 
