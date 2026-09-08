@@ -159,6 +159,8 @@ class AssistantTurnWorkflowAdapter:
         )
 
     def _raise_preparation_boundary(self, turn: AssistantTurn) -> None:
+        if turn.status is AssistantTurnStatus.CANCELLED:
+            raise WorkflowCancelled
         if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
             raise WorkflowWaitingForApproval(
                 {

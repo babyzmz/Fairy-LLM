@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 
 from fairy_core.assistant.routing import QWEN_FREE_MODEL_ID
+from fairy_core.assistant.workflow_plan import ASSISTANT_REQUEST_INTERPRET_NODE_KIND
 from fairy_core.domain.errors import (
     IdempotencyConflictError,
     InvalidTransitionError,
@@ -23,6 +24,7 @@ from fairy_core.providers import (
     ProviderRegistry,
 )
 from fairy_core.transports.stdio import build_local_service
+from fairy_core.workflow.scheduler import WorkflowCancelled
 from tests.assistant.support import ScriptedProvider, wait_for_turn
 from tests.assistant.test_application import BlockingProvider, _scratch_task, _turn
 
@@ -49,6 +51,26 @@ def test_stale_cancel_cannot_signal_or_stop_the_current_workflow(tmp_path: Path)
         assert wait_for_turn(service, turn["id"])["status"] == "completed"
     finally:
         provider.release.set()
+        service.close()
+
+
+def test_late_preparation_node_preserves_cancellation_instead_of_failing_workflow(tmp_path: Path):
+    provider = ScriptedProvider([])
+    service = build_local_service(tmp_path, provider_registry=ProviderRegistry((provider,)))
+    try:
+        task = _scratch_task(service, "Hello")
+        turn = _turn(service, task, "late-preparation-cancel")
+        with service._unit_of_work_factory() as unit:
+            snapshot = unit.workflows.get(UUID(turn["workflow_run_id"]))
+            node = next(item for item in snapshot.nodes
+                        if item.kind == ASSISTANT_REQUEST_INTERPRET_NODE_KIND)
+        service.invoke("assistant.turns.cancel", {
+            "turn_id": turn["id"], "expected_cancellation_revision": 0,
+        })
+        with pytest.raises(WorkflowCancelled):
+            service._workflow_adapters.require(node.kind).execute(node, CancellationToken())
+        assert provider.requests == []
+    finally:
         service.close()
 
 
