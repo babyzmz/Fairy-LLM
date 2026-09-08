@@ -282,6 +282,7 @@ class SqlAlchemyWorkflowRepository(
         limit: int,
         blocking_parent_kinds: frozenset[str] = frozenset(),
         reserve_child_slot: bool = False,
+        reconciliation_phases: Mapping[str, str] | None = None,
     ) -> tuple[WorkflowAttemptClaim, ...]:
         now = datetime.now(UTC)
         if not worker_id.strip() or limit < 1 or lease_until <= now:
@@ -317,7 +318,10 @@ class SqlAlchemyWorkflowRepository(
         selected: list[Mapping[str, Any]] = []
         selected_child = False
         selected_blocking_parent = False
-        for row in ready_candidates(self._connection, tenant_id=self._tenant_id, now=now):
+        for row in ready_candidates(
+            self._connection, tenant_id=self._tenant_id, now=now,
+            reconciliation_phases=reconciliation_phases,
+        ):
             run_id = str(row["run_id"])
             budget_limit = int(row["max_parallel_nodes"])
             active = active_by_run[run_id]
@@ -660,7 +664,9 @@ class SqlAlchemyWorkflowRepository(
         assert snapshot is not None
         return snapshot
 
-    def abandon(self, claim: WorkflowAttemptClaim) -> bool:
+    def abandon(
+        self, claim: WorkflowAttemptClaim, *, disable_reconciliation: bool = False,
+    ) -> bool:
         now = datetime.now(UTC)
         predicates = self._claim_predicates(claim, require_live=False)
         attempt = (
@@ -707,6 +713,12 @@ class SqlAlchemyWorkflowRepository(
             next_status = WorkflowNodeStatus.READY
         else:
             next_status = WorkflowNodeStatus.FAILED
+        checkpoint = node["result"]
+        if disable_reconciliation and isinstance(checkpoint, dict):
+            # Retain immutable receipt identity, but remove dispatch eligibility
+            # when the Adapter reports that no pending outcome can be reconciled.
+            checkpoint = {key: value for key, value in checkpoint.items()
+                          if key != "reconciliation_phase"}
         self._connection.execute(
             update(workflow_nodes)
             .where(
@@ -716,6 +728,7 @@ class SqlAlchemyWorkflowRepository(
             )
             .values(
                 status=next_status.value,
+                result=checkpoint,
                 error_code="WORKER_INTERRUPTED",
                 updated_at=now,
                 completed_at=now if next_status in _NODE_TERMINAL else None,

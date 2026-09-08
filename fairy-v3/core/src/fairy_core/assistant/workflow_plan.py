@@ -174,6 +174,14 @@ def apply_pending_assistant_steering(unit_of_work, run_id: UUID) -> bool:
     if len(pending) != 1:
         raise ValueError("Assistant Workflow has conflicting pending instructions")
     instruction = pending[0]
+    turn = unit_of_work.assistant.get_turn(UUID(snapshot.run.owner_id))
+    if snapshot.run.engine_version == 4 and turn is not None and any(
+        invocation.status is ToolInvocationStatus.RUNNING
+        for invocation in unit_of_work.assistant.list_tool_invocations(turn.id)
+    ):
+        # A deferred domain operation has no active parent worker, but its
+        # outcome still belongs to this revision. Never supersede its receipt.
+        return False
     next_revision = snapshot.run.active_plan_revision + 1
     if snapshot.run.engine_version == 4:
         planner = assistant_step_workflow_plan
@@ -195,7 +203,6 @@ def apply_pending_assistant_steering(unit_of_work, run_id: UUID) -> bool:
         nodes=nodes,
         edges=edges,
     )
-    turn = unit_of_work.assistant.get_turn(UUID(snapshot.run.owner_id))
     if (
         turn is not None and turn.status is AssistantTurnStatus.WAITING_FOR_TOOL
         and turn.budget_approval_run_id is None

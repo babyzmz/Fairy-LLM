@@ -153,6 +153,11 @@ class AssistantStepWorkflowAdapter:
     def execute(self, node, cancellation):
         raise WorkflowFenceError("Version-4 nodes require a live Workflow claim")
 
+    def paused_reconciliation_phase(self, kind):
+        from fairy_core.assistant.workflow_tool_steps import MEDIA_RECONCILIATION_PHASE
+
+        return MEDIA_RECONCILIATION_PHASE if kind == ASSISTANT_STEP_TOOL_KIND else None
+
     def heartbeat(self, node):
         return self._ledger.renew_turn_command_leases(
             UUID(node.payload["turn_id"]),
@@ -178,7 +183,10 @@ class AssistantStepWorkflowAdapter:
         cancellation.raise_if_cancelled()
         if turn.status is AssistantTurnStatus.CANCELLED:
             raise WorkflowCancelled
-        self._application._raise_if_workflow_paused(turn_id)
+        from fairy_core.assistant.workflow_tool_steps import can_reconcile_while_paused
+
+        if not can_reconcile_while_paused(self, node, turn):
+            self._application._raise_if_workflow_paused(turn_id)
         if node.kind == STEP_ROUTE:
             prepared = self._application.prepare_turn(turn_id, cancellation)
             self._preparation._raise_preparation_boundary(prepared)

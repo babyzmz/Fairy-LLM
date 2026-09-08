@@ -4,7 +4,7 @@ from collections.abc import Iterator, Mapping
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Connection
 
 from fairy_core.storage.schema import workflow_nodes, workflow_runs
@@ -12,11 +12,29 @@ from fairy_core.storage.schema import workflow_nodes, workflow_runs
 CLAIM_CANDIDATE_BATCH_SIZE = 128
 
 
+def dispatchable_run_predicate(reconciliation_phases: Mapping[str, str]):
+    normal = and_(
+        workflow_runs.c.status.in_(("queued", "running")),
+        workflow_runs.c.pause_requested.is_(False),
+    )
+    if not reconciliation_phases:
+        return normal
+    return or_(normal, and_(
+        workflow_runs.c.status.in_(("paused", "pausing")),
+        workflow_runs.c.pause_requested.is_(True),
+        or_(*(and_(
+            workflow_nodes.c.kind == kind,
+            workflow_nodes.c.result["reconciliation_phase"].as_string() == phase,
+        ) for kind, phase in reconciliation_phases.items())),
+    ))
+
+
 def ready_candidates(
     connection: Connection,
     *,
     tenant_id: str,
     now: datetime,
+    reconciliation_phases: Mapping[str, str] | None = None,
 ) -> Iterator[Mapping[str, Any]]:
     # Interleave one candidate per Run before taking its second candidate. This
     # prevents a large older Run from hiding every other Run behind a SQL LIMIT.
@@ -50,8 +68,7 @@ def ready_candidates(
         .join(ranked, ranked.c.id == workflow_nodes.c.id)
         .where(
             workflow_nodes.c.tenant_id == tenant_id,
-            workflow_runs.c.status.in_(("queued", "running")),
-            workflow_runs.c.pause_requested.is_(False),
+            dispatchable_run_predicate(reconciliation_phases or {}),
         )
         .order_by(
             ranked.c.fair_rank,

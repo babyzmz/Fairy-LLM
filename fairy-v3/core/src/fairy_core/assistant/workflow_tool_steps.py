@@ -6,7 +6,11 @@ from uuid import UUID
 
 from fairy_core.assistant.candidates import ToolCandidate
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
-from fairy_core.assistant.tools import ToolExecutionDeferred, uses_deferred_media
+from fairy_core.assistant.tools import (
+    DEFERRED_MEDIA_TOOLS,
+    ToolExecutionDeferred,
+    uses_deferred_media,
+)
 from fairy_core.assistant.workflow_step_nodes import STEP_MODEL, step_node
 from fairy_core.assistant.workflow_tool_plan import ASSISTANT_STEP_TOOL_KIND
 from fairy_core.commanding import CommandStatus
@@ -22,6 +26,32 @@ _TERMINAL = {
     ToolInvocationStatus.REJECTED,
     ToolInvocationStatus.FAILED,
 }
+
+MEDIA_RECONCILIATION_PHASE = "existing-media-outcome-v1"
+
+
+def can_reconcile_while_paused(adapter, node, turn):
+    if (
+        node.kind != ASSISTANT_STEP_TOOL_KIND or node.result is None
+        or node.result.get("reconciliation_phase") != MEDIA_RECONCILIATION_PHASE
+    ):
+        return False
+    with adapter._factory() as unit:
+        invocation = unit.assistant.get_tool_invocation(UUID(node.payload["invocation_id"]))
+        if (
+            invocation is None or invocation.turn_id != turn.id
+            or invocation.task_id != turn.task_id or invocation.scope_digest != turn.scope_digest
+            or invocation.tool_name not in DEFERRED_MEDIA_TOOLS
+        ):
+            return False
+        if invocation.status in _TERMINAL:
+            return True
+        command = (unit.commands.get_run(invocation.command_run_id)
+                   if invocation.command_run_id else None)
+        return (
+            invocation.status is ToolInvocationStatus.RUNNING
+            and command is not None and uses_deferred_media(command)
+        )
 
 
 def execute_tool_step(adapter, node, claim, cancellation, turn):
@@ -101,7 +131,10 @@ def _execute_invocation(adapter, node, claim, cancellation, turn):
         return _execute_invocation_attempt(adapter, node, claim, cancellation, turn)
     except ToolExecutionDeferred:
         return WorkflowNodeResult(
-            output={"turn_id": str(turn.id), "invocation_id": node.payload["invocation_id"]},
+            output={
+                "turn_id": str(turn.id), "invocation_id": node.payload["invocation_id"],
+                "reconciliation_phase": MEDIA_RECONCILIATION_PHASE,
+            },
             available_at=datetime.now(UTC) + timedelta(seconds=1),
             public_summary="Waiting for the existing Media Workflow without occupying a worker",
         )
@@ -119,6 +152,13 @@ def _execute_invocation_attempt(adapter, node, claim, cancellation, turn):
             or invocation.scope_digest != turn.scope_digest
         ):
             raise WorkflowFenceError("Tool node does not own this Invocation")
+        if invocation.tool_name in DEFERRED_MEDIA_TOOLS and (
+            node.result is None or "reconciliation_phase" in node.result
+        ):
+            # Persist before dispatch: a lost handoff/defer receipt must still
+            # allow *only* reconciliation after pause. Runtime checks additionally
+            # require the original RUNNING Invocation and governed Command.
+            checkpoint["reconciliation_phase"] = MEDIA_RECONCILIATION_PHASE
         unit.workflows.record_checkpoint(claim, result=checkpoint)
         unit.commit()
     app = adapter._application

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import and_, func, select, union_all
 
 from fairy_core.storage.schema import workflow_attempts, workflow_nodes, workflow_runs
+from fairy_core.workflow.claim_candidates import dispatchable_run_predicate
 
 
 class WorkflowWakeRepositoryMixin:
@@ -14,7 +16,10 @@ class WorkflowWakeRepositoryMixin:
             return (func.julianday(column) - 2440587.5) * 86400.0
         return func.extract("epoch", column)
 
-    def next_wake_delay(self, *, now: datetime, maximum: float) -> float:
+    def next_wake_delay(
+        self, *, now: datetime, maximum: float,
+        reconciliation_phases: Mapping[str, str] | None = None,
+    ) -> float:
         if maximum <= 0:
             raise ValueError("Workflow wake maximum must be positive")
         # Three database aggregates, one round trip; never hydrate plans or histories.
@@ -34,8 +39,7 @@ class WorkflowWakeRepositoryMixin:
                 workflow_nodes.c.tenant_id == self._tenant_id,
                 workflow_nodes.c.status == "ready",
                 workflow_nodes.c.available_at > now,
-                workflow_runs.c.status.in_(("queued", "running")),
-                workflow_runs.c.pause_requested.is_(False),
+                dispatchable_run_predicate(reconciliation_phases or {}),
             ),
             select(func.min(self._epoch(workflow_attempts.c.lease_until))).where(
                 workflow_attempts.c.tenant_id == self._tenant_id,

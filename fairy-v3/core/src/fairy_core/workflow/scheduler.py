@@ -97,6 +97,15 @@ class WorkflowAdapterRegistry:
             if bool(getattr(adapter, "may_wait_for_child_workflow", False))
         )
 
+    def reconciliation_phases(self) -> dict[str, str]:
+        phases = {}
+        for kind, adapter in self._adapters.items():
+            policy = getattr(adapter, "paused_reconciliation_phase", None)
+            phase = policy(kind) if callable(policy) else None
+            if isinstance(phase, str) and phase:
+                phases[kind] = phase
+        return phases
+
 
 @dataclass(frozen=True, slots=True)
 class _ActiveNode:
@@ -316,6 +325,7 @@ class WorkflowScheduler:
                     due = unit_of_work.workflows.next_wake_delay(
                         now=datetime.now(UTC),
                         maximum=idle_delay,
+                        reconciliation_phases=self._adapters.reconciliation_phases(),
                     )
                 delay = max(self._poll_interval, due)
                 with self._lock:
@@ -384,6 +394,7 @@ class WorkflowScheduler:
                 limit=capacity,
                 blocking_parent_kinds=blocking_parent_kinds,
                 reserve_child_slot=reserve_child_slot,
+                reconciliation_phases=self._adapters.reconciliation_phases(),
             )
             claim_nodes = {}
             for claim in claims:
@@ -506,7 +517,7 @@ class WorkflowScheduler:
             except Exception:
                 logger.exception("Workflow Run %s could not be cancelled", claim.run_id)
         except WorkflowPaused:
-            abandoned = self._abandon(claim)
+            abandoned = self._abandon(claim, disable_reconciliation=True)
             settled = abandoned
         except ProviderCancelledError:
             if active.cancellation.is_interrupted:
@@ -612,10 +623,14 @@ class WorkflowScheduler:
             with self._lock:
                 self._resume_after_boundary.discard(run_id)
 
-    def _abandon(self, claim: WorkflowAttemptClaim) -> bool:
+    def _abandon(
+        self, claim: WorkflowAttemptClaim, *, disable_reconciliation: bool = False,
+    ) -> bool:
         try:
             with self._unit_of_work_factory() as unit_of_work:
-                abandoned = unit_of_work.workflows.abandon(claim)
+                abandoned = unit_of_work.workflows.abandon(
+                    claim, disable_reconciliation=disable_reconciliation,
+                )
                 if abandoned:
                     unit_of_work.commit()
                 return abandoned

@@ -18,7 +18,10 @@ from fairy_core.workflow.models import (
 
 
 class WorkflowRepository(Protocol):
-    def next_wake_delay(self, *, now: datetime, maximum: float) -> float: ...
+    def next_wake_delay(
+        self, *, now: datetime, maximum: float,
+        reconciliation_phases: Mapping[str, str] | None = None,
+    ) -> float: ...
 
     def create(
         self,
@@ -61,6 +64,7 @@ class WorkflowRepository(Protocol):
         limit: int,
         blocking_parent_kinds: frozenset[str] = frozenset(),
         reserve_child_slot: bool = False,
+        reconciliation_phases: Mapping[str, str] | None = None,
     ) -> tuple[WorkflowAttemptClaim, ...]: ...
 
     def renew(self, claim: WorkflowAttemptClaim, *, lease_until: datetime) -> bool: ...
@@ -134,7 +138,9 @@ class WorkflowRepository(Protocol):
 
     def fail(self, claim: WorkflowAttemptClaim, *, error_code: str) -> WorkflowSnapshot: ...
 
-    def abandon(self, claim: WorkflowAttemptClaim) -> bool: ...
+    def abandon(
+        self, claim: WorkflowAttemptClaim, *, disable_reconciliation: bool = False,
+    ) -> bool: ...
 
     def request_pause(self, run_id: UUID) -> WorkflowSnapshot: ...
 
