@@ -307,6 +307,13 @@
 - 真实工具节点接线前收窄依赖推进：以一条受tenant/Run/Revision约束的SQL更新替代对每个后继的读取/更新；所有父节点成功后才可READY，不能提前解锁fan-in。100分支实库SELECT数量、阻塞父节点、双Run/tenant及现有并发回归验证，不把SQL往返减少描述为已测端到端延迟。
 - 100分支失败基线111次SELECT，集合式依赖更新后为9次；根完成释放100分支而join仍阻塞。Workflow/Assistant控制/Media/Knowledge83项通过（75.73秒），相关Ruff通过；既有暂停、恢复、并行和Steering断言未放宽，PostgreSQL实际执行仍待环境门禁。
 
+### Phase 6C：真实工具节点与审批恢复边界
+
+- 工具批次由模型叶节点扩展为真实工具节点及一个有序 join；节点只保存 Invocation ID、定义摘要、解释版本和作用域摘要，不复制工具参数。节点身份由父节点与 Invocation 稳定派生，恢复不能创建第二批身份。显式安全读取可并行；serial 工具前后形成依赖屏障，共享资源仍交给 Kernel 仲裁。用真实 SQLite claim/complete 验证读取并行、写入屏障、乱序完成后的 join、关闭重开、两个 Turn/tenant 隔离；编译协议通过不等于 Assistant 运行时已接线。
+
+- 工具节点接线前补齐审批定义边界：包括 builtin 在内，审批等待期间定义被替换或移除，都必须产生持久失败工具结果，不执行新定义、不让整个恢复链因缺失定义抛内部异常。旧 builtin 摘要仅在精确匹配当前定义的 legacy digest 时兼容；不能将所有 builtin 无条件视为可信。正式回归使用真实 Registry、Command Bus、审批与 SQLite，脚本 Provider/无外部副作用执行器仅隔离网络和系统通知。
+- 新增两个失败回归分别观察到执行了新 builtin 定义、移除定义后 Turn 内部失败；修复后审批恢复/Workflow控制/Assistant应用21项通过（31.06秒），原审批只执行一次与重启恢复断言保持。尚未以此宣称新引擎完成切换。
+
 ### Phase 3B：事件提交唤醒与推送验收契约
 
 - 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event
@@ -116,6 +117,44 @@ def test_standard_profile_approval_resumes_one_tool_effect_once(tmp_path: Path) 
             "response",
         ]
         assert all(step["status"] == "succeeded" for step in trace["steps"])
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("change", ["replaced", "removed"])
+def test_builtin_approval_does_not_authorize_a_changed_or_removed_definition(tmp_path, change):
+    provider = _approval_provider(final_text="The original action was not executed")
+    executor = RecordingToolExecutor()
+    service = build_local_service(
+        tmp_path, provider_registry=ProviderRegistry((provider,)), tool_executor=executor,
+    )
+    try:
+        task = _scratch_task(service, "Notify me after approval")
+        turn = _turn(service, task, "changed-builtin")
+        assert service.invoke("assistant.turns.run", {"turn_id": turn["id"]})[
+            "status"
+        ] == "waiting_for_tool"
+        approval = service.invoke("approvals.list", {"task_id": task["id"]})["items"][0]
+        definitions = tuple(
+            replace(item, description="Changed notification behavior")
+            if item.name == "system.notify" else item
+            for item in service._registry.definitions()
+            if item.name.startswith("system.")
+            and (change != "removed" or item.name != "system.notify")
+        )
+        service._registry.replace_namespace("system.", definitions)
+        service.invoke("approvals.decide", {"approval_id": approval["id"], "approved": True})
+        completed = wait_for_turn(service, turn["id"])
+        assert executor.calls == []
+        assert completed["status"] == "completed"
+        with service._unit_of_work_factory() as unit:
+            invocation = unit.assistant.list_tool_invocations(UUID(turn["id"]))[0]
+            command = unit.commands.get_run(invocation.command_run_id)
+        assert invocation.status is ToolInvocationStatus.FAILED
+        assert invocation.error_code == "MCP_SCHEMA_CHANGED"
+        assert command.status is CommandStatus.INTERRUPTED
+        assert provider.requests[-1].messages[-1].tool_call_id == "call-notify"
+        assert "changed" in provider.requests[-1].messages[-1].content.lower()
     finally:
         service.close()
 

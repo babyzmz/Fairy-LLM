@@ -87,13 +87,13 @@ class AssistantToolApprovalMixin:
             if command is None:
                 raise RuntimeError("pending Tool Invocation CommandRun is missing")
             definition = self._registry.get(invocation.tool_name)
-            if definition is None:
-                raise RuntimeError("pending Tool Invocation definition is missing")
             expected_definition_digest = command.input_payload.get("definition_digest")
-            if (
-                definition.source != "builtin"
-                and expected_definition_digest != definition.definition_digest
-            ):
+            accepted_digests = (
+                (definition.definition_digest, definition.legacy_definition_digest)
+                if definition is not None and definition.source == "builtin"
+                else (definition.definition_digest,) if definition is not None else ()
+            )
+            if expected_definition_digest not in accepted_digests:
                 expected_status = invocation.status
                 invocation.fail(error_code="MCP_SCHEMA_CHANGED")
                 unit_of_work.assistant.update_tool_invocation(
@@ -127,6 +127,7 @@ class AssistantToolApprovalMixin:
                 )
                 unit_of_work.commit()
                 return False
+            assert definition is not None
             task = require_task(unit_of_work, turn.task_id)
             scope = self._scope_resolver(unit_of_work.state, task)
 
