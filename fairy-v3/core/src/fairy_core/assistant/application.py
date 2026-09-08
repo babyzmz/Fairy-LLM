@@ -586,7 +586,7 @@ class AssistantApplication(
                     if boundary is not None:
                         boundary.draft(
                             turn_id=turn_id, run=current_run, model_round=model_round,
-                            content="".join(round_text), cited_evidence_receipt_ids=(),
+                            content="".join(round_text), cited_evidence_receipt_ids=None,
                             source_messages=request.messages,
                             published=decision is None or decision.reviewer_model_id is None,
                             usage=usage, chunk_index=chunk_index,

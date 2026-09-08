@@ -10,6 +10,7 @@ from fairy_core.assistant.tools import ToolCandidateError
 from fairy_core.assistant.workflow_step_nodes import (
     STEP_FINALIZE,
     STEP_MODEL,
+    STEP_REVIEW,
     STEP_ROUTE,
     STEP_VERIFY,
     step_node,
@@ -23,7 +24,7 @@ from fairy_core.assistant.workflow_tool_plan import (
     ASSISTANT_STEP_TOOL_KIND,
 )
 from fairy_core.commanding import CommandStatus
-from fairy_core.providers import ProviderCancelledError
+from fairy_core.providers import ModelMessage, ModelRole, ProviderCancelledError
 from fairy_core.workflow.errors import WorkflowFenceError
 from fairy_core.workflow.models import WorkflowNodeStatus
 from fairy_core.workflow.scheduler import WorkflowCancelled, WorkflowNodeResult
@@ -44,6 +45,7 @@ class _ModelBoundary:
         self.checkpoint = None
         with factory() as unit:
             turn = unit.assistant.get_turn(UUID(node.payload["turn_id"]))
+        self.turn = turn
         self.images = application._image_attachments.tool_images.take(
             turn.id,
             turn.task_id,
@@ -59,12 +61,26 @@ class _ModelBoundary:
             "model_round": payload["model_round"],
             "usage": dict(payload["usage"]),
             "chunk_index": payload["chunk_index"],
-            "cited_evidence_receipt_ids": list(payload["cited_evidence_receipt_ids"]),
+            "cited_evidence_receipt_ids": list(payload["cited_evidence_receipt_ids"] or ()),
+            "citations_explicit": self.node.payload.get(
+                "citations_explicit",
+                payload["cited_evidence_receipt_ids"] is not None,
+            ),
+            "reviewed": self.node.kind == STEP_REVIEW,
             "published": payload["published"],
             "feedback": list(self.feedback),
             "verification_issues": list(self.node.payload.get("verification_issues", ())),
             "invalid_tool_retry_used": self.invalid_tool_retry_used,
         }
+        if (
+            self.node.kind == STEP_MODEL
+            and self.turn.routing_decision is not None
+            and self.turn.routing_decision.reviewer_model_id is not None
+        ):
+            checkpoint["review_source"] = [
+                {"role": message.role.value, "content": message.content}
+                for message in self.application._review_source_messages(payload["source_messages"])
+            ]
         self._save(checkpoint)
 
     def _save(self, checkpoint):
@@ -170,7 +186,7 @@ class AssistantStepWorkflowAdapter:
                 next_nodes=(child,),
                 public_summary="Governed route prepared",
             )
-        if node.kind == STEP_MODEL:
+        if node.kind in {STEP_MODEL, STEP_REVIEW}:
             checkpoint = node.result
             if checkpoint is None:
                 boundary = _ModelBoundary(
@@ -181,7 +197,32 @@ class AssistantStepWorkflowAdapter:
                     self._application,
                 )
                 try:
-                    stopped = self._application.run_turn(turn_id, cancellation, boundary=boundary)
+                    if node.kind == STEP_REVIEW:
+                        draft = self._draft(node)
+                        stopped = self._application._review_and_complete(
+                            turn_id=turn_id,
+                            decision=turn.routing_decision,
+                            source_messages=tuple(
+                                ModelMessage.create(
+                                    role=ModelRole(item["role"]),
+                                    content=item["content"],
+                                )
+                                for item in draft["review_source"]
+                            ),
+                            draft=draft["content"],
+                            model_round=boundary.model_round,
+                            chunk_index=boundary.chunk_index,
+                            usage=boundary.usage,
+                            cancellation=cancellation,
+                            boundary=boundary,
+                            cited_evidence_receipt_ids=tuple(draft["cited_evidence_receipt_ids"]),
+                        )
+                    else:
+                        stopped = self._application.run_turn(
+                            turn_id,
+                            cancellation,
+                            boundary=boundary,
+                        )
                 except AssistantModelYield:
                     checkpoint = boundary.checkpoint
                 else:
@@ -220,15 +261,21 @@ class AssistantStepWorkflowAdapter:
                 issue = self._application._execution_completion_issue(
                     turn_id,
                     candidate_content=draft["content"],
-                    cited_evidence_receipt_ids=tuple(draft["cited_evidence_receipt_ids"]),
+                    cited_evidence_receipt_ids=(
+                        tuple(draft["cited_evidence_receipt_ids"])
+                        if draft.get("citations_explicit", True)
+                        else None
+                    ),
                 )
                 issues = draft.get("verification_issues", [])
                 if issue is not None and (issue in issues or len(issues) >= 3):
+                    from fairy_core.assistant.application import _completion_error_code
+
                     command = self._command(turn, draft)
                     self._application._fail_turn(
                         turn_id,
                         command,
-                        error_code="WORKER_INTERRUPTED",
+                        error_code=_completion_error_code(issue),
                     )
                     raise RuntimeError("Response verification did not converge")
                 decision = (
@@ -258,8 +305,38 @@ class AssistantStepWorkflowAdapter:
                     unit.commit()
             if decision.get("type") == "retry":
                 return self._retry_result(node, turn, decision)
-            if turn.routing_decision is not None and turn.routing_decision.reviewer_model_id:
-                raise RuntimeError("Experimental engine reviewer integration is not enabled")
+            if (
+                turn.routing_decision is not None
+                and turn.routing_decision.reviewer_model_id
+                and not draft.get("reviewed")
+            ):
+                command = self._command(turn, draft)
+                if command.status is CommandStatus.RUNNING:
+                    self._application._complete_model_round(command, output={"draft_ready": True})
+                elif command.status is not CommandStatus.SUCCEEDED:
+                    raise RuntimeError("Primary draft Command cannot be reviewed")
+                child = step_node(
+                    node,
+                    STEP_REVIEW,
+                    model_node_id=node.payload["model_node_id"],
+                    model_round=draft["model_round"] + 1,
+                    **{
+                        key: draft[key]
+                        for key in (
+                            "usage",
+                            "chunk_index",
+                            "feedback",
+                            "verification_issues",
+                            "invalid_tool_retry_used",
+                            "citations_explicit",
+                        )
+                    },
+                )
+                return WorkflowNodeResult(
+                    output=dict(decision),
+                    next_nodes=(child,),
+                    public_summary="Verified primary candidate ready for review",
+                )
             return WorkflowNodeResult(
                 output=dict(decision),
                 next_nodes=(
@@ -350,7 +427,7 @@ class AssistantStepWorkflowAdapter:
         )
         if (
             source is None
-            or source.kind != STEP_MODEL
+            or source.kind not in {STEP_MODEL, STEP_REVIEW}
             or source.plan_revision != node.plan_revision
             or source.status is not WorkflowNodeStatus.SUCCEEDED
             or source.payload["turn_id"] != node.payload["turn_id"]

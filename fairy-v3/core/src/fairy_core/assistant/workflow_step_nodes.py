@@ -7,6 +7,7 @@ from fairy_core.workflow.models import WorkflowNode
 
 STEP_ROUTE = "assistant.step.route"
 STEP_MODEL = "assistant.step.model"
+STEP_REVIEW = "assistant.step.review"
 STEP_VERIFY = "assistant.step.verify"
 STEP_FINALIZE = "assistant.step.finalize"
 
@@ -18,6 +19,7 @@ def step_node(source: WorkflowNode, kind: str, **payload: object) -> WorkflowNod
         payload={"turn_id": source.payload["turn_id"], **payload},
         public_summary={
             STEP_MODEL: "Running one model round",
+            STEP_REVIEW: "Reviewing the candidate response",
             STEP_VERIFY: "Verifying the response contract",
             STEP_FINALIZE: "Finalizing the unique response",
         }[kind],

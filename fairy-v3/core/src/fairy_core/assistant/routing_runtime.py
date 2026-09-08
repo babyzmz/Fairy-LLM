@@ -17,6 +17,7 @@ from fairy_core.assistant.interpretation import (
     fallback_interpretation,
     interpretation_from_classifier,
 )
+from fairy_core.assistant.model_boundary import AssistantModelBoundary
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -520,6 +521,7 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
         usage: dict[str, int],
         cancellation: CancellationToken,
         cited_evidence_receipt_ids: tuple[str, ...] = (),
+        boundary: AssistantModelBoundary | None = None,
     ) -> AssistantTurn:
         if decision.reviewer_model_id is None:
             raise ValueError("reviewer model is not configured")
@@ -619,6 +621,14 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
                     run,
                     error_code="PROVIDER_PROTOCOL_ERROR",
                 )
+            if boundary is not None:
+                boundary.draft(
+                    turn_id=turn_id, run=run, model_round=model_round,
+                    content="".join(reviewed),
+                    cited_evidence_receipt_ids=cited_evidence_receipt_ids,
+                    source_messages=(), published=True, usage=usage, chunk_index=chunk_index,
+                )
+                raise RuntimeError("Reviewer boundary returned without yielding")
             return self._complete_turn(
                 turn_id=turn_id,
                 run=run,

@@ -294,6 +294,7 @@ def register_assistant_workflow_adapter(
     from fairy_core.assistant.workflow_step_nodes import (
         STEP_FINALIZE,
         STEP_MODEL,
+        STEP_REVIEW,
         STEP_ROUTE,
         STEP_VERIFY,
     )
@@ -308,7 +309,7 @@ def register_assistant_workflow_adapter(
     for kind in ASSISTANT_CONTINUATION_NODE_KINDS:
         adapters.register(kind, adapter)
     steps = AssistantStepWorkflowAdapter(application, ledger, unit_of_work_factory, adapter)
-    for kind in (STEP_ROUTE, STEP_MODEL, STEP_VERIFY, STEP_FINALIZE):
+    for kind in (STEP_ROUTE, STEP_MODEL, STEP_REVIEW, STEP_VERIFY, STEP_FINALIZE):
         adapters.register(kind, steps)
     adapters.register(ASSISTANT_STEP_JOIN_KIND, steps)
     tool_steps = AssistantStepWorkflowAdapter(application, ledger, unit_of_work_factory, adapter)
