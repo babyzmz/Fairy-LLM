@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useState } from "react";
 
+import type { DesktopPreferences } from "../settings/client";
 import { ChatWorkspace } from "../chat/ChatWorkspace";
 import { Composer } from "../chat/Composer";
 import { HistorySidebar } from "./HistorySidebar";
@@ -23,8 +24,10 @@ import "./project-manager.css";
 
 interface WorkspaceShellProps {
   model: WorkspaceModel;
+  preferences?: DesktopPreferences | null;
+  fairyEyeActive?: boolean;
 }
-export function WorkspaceShell({ model }: WorkspaceShellProps) {
+export function WorkspaceShell({ model, preferences, fairyEyeActive = true }: WorkspaceShellProps) {
   const [projectName, setProjectName] = useState("");
   const [importPath, setImportPath] = useState("");
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
@@ -89,6 +92,9 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             data-inspector-collapsed={chatInspectorCollapsed}
           >
             <ChatWorkspace
+              fairyEyeEnabled={preferences != null && (preferences.chat_fairy_eye_enabled ?? true)}
+              fairyEyeReducedMotion={preferences?.reduced_motion ?? false}
+              fairyEyeActive={fairyEyeActive}
               conversationAvailable={model.selectedChatConversation !== null}
               contentState={model.conversationContentState}
               messages={model.messages}

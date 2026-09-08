@@ -1,0 +1,8 @@
+/* SVG has no native capsule backdrop. Use an explicitly opaque input surface;
+   leave positioning, dimensions, hit testing and the liquid-glass form unchanged. */
+.presence-input-window[data-pet-form="hdd_eye"][data-layout="compact"] .presence-input {
+  background: rgb(18 24 36 / 96%);
+}
+.presence-input-window[data-pet-form="hdd_eye"][data-layout="compact"][data-reduced-transparency="true"] .presence-input {
+  background: rgb(18 24 36);
+}

@@ -1,3 +1,4 @@
+import { isScopedEyePlayback } from "../fairyEye/playback";
 import { LoaderCircle, Mic, Square, Volume2 } from "lucide-react";
 import {
   createContext,
@@ -550,6 +551,12 @@ export function VoiceController({
 export function useVoicePlaybackState(turnId: string): PlaybackState {
   const voice = useContext(VoiceContext);
   return voice?.speakingTurnId === turnId ? voice.playbackState : "idle";
+}
+
+/** Read-only presentation hook: preparing/ambient/other-turn audio is not speech. */
+export function useConversationEyePlayback(turnIds: readonly string[]): boolean {
+  const voice = useContext(VoiceContext);
+  return isScopedEyePlayback(voice, turnIds);
 }
 
 export function useVoicePresence(): {

@@ -80,6 +80,7 @@ import {
 } from "./presenceInputPresentation";
 import "../presence.css";
 import "./presence-input.css";
+import "../../fairyEye/eyeInput.css";
 
 interface PresenceInputAppProps {
   channel?: PresenceChannel;
@@ -993,6 +994,7 @@ export function PresenceInputApp({
   return (
     <main
       className="presence-input-window"
+      data-pet-form={preferences?.pet_form ?? "liquid_glass"}
       style={{
         "--presence-compact-width": `${compactSize.width}px`,
         "--presence-compact-height": `${compactSize.height}px`,

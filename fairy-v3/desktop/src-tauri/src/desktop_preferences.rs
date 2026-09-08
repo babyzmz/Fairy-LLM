@@ -10,12 +10,24 @@ use crate::realtime_privacy::{normalize_excluded_applications, RealtimeCaptureMo
 const PREFERENCES_FILE: &str = "preferences/desktop.json";
 const SCHEMA_VERSION: u32 = 11;
 
+#[cfg(test)]
+#[path = "fairy_eye_preferences_tests.rs"]
+mod fairy_eye_preferences_tests;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemePreference {
     System,
     Dark,
     Light,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PetForm {
+    #[default]
+    LiquidGlass,
+    HddEye,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -169,6 +181,10 @@ pub struct DesktopPreferences {
     #[serde(default = "default_true")]
     pub pet_remember_position: bool,
     #[serde(default)]
+    pub pet_form: PetForm,
+    #[serde(default = "default_true")]
+    pub chat_fairy_eye_enabled: bool,
+    #[serde(default)]
     pub pet_renderer_mode: PetRendererMode,
     #[serde(default)]
     pub pet_optics_mode: PetOpticsMode,
@@ -227,6 +243,8 @@ impl Default for DesktopPreferences {
             ambient_dialogue_voice_enabled: false,
             ambient_generated_dialogue_enabled: false,
             pet_remember_position: true,
+            pet_form: PetForm::LiquidGlass,
+            chat_fairy_eye_enabled: true,
             pet_renderer_mode: PetRendererMode::Auto,
             pet_optics_mode: PetOpticsMode::Standard,
             pet_activation_style: PetActivationStyle::FluidResponse,

@@ -55,6 +55,8 @@ import {
 } from "../host/rendererHealthHost";
 import { usePresenceAccessibilityPreferences } from "../host/usePresenceAccessibility";
 import { PresenceRendererCanvas } from "./PresenceRendererCanvas";
+import { PetFairyEye } from "../../fairyEye/PetFairyEye";
+import { eyeMayMount, nativeFormAllowed } from "../../fairyEye/nativePolicy";
 import {
   NativePresenceRendererHost,
   type NativePresenceRendererHostOptions,
@@ -129,6 +131,14 @@ export function PresenceRenderApp({
   const [renderSettings, setRenderSettings] = useState<PresenceRenderSettings>(
     DEFAULT_PRESENCE_RENDER_SETTINGS,
   );
+  const [renderSettingsReady, setRenderSettingsReady] = useState(false);
+  const petForm = renderSettings.form ?? "liquid_glass";
+  const petFormRef = useRef(petForm);
+  const formEpochRef = useRef(0);
+  if (petFormRef.current !== petForm) {
+    petFormRef.current = petForm;
+    formEpochRef.current += 1;
+  }
   const [runtimePolicy, setRuntimePolicy] = useState<PresenceRuntimePolicy>(
     DEFAULT_PRESENCE_RUNTIME_POLICY,
   );
@@ -142,7 +152,10 @@ export function PresenceRenderApp({
   const documentVisible = useDocumentVisible();
   const targetFrameRate = targetFpsOverride ?? renderSettings.target_frame_rate;
   const handleRendererHealth = useCallback((health: PresenceRendererHealth) => {
+    if (!nativeFormAllowed(petFormRef.current)) return;
+    const epoch = formEpochRef.current;
     void rendererHealthHost.report(health).then((directive) => {
+      if (epoch !== formEpochRef.current || !nativeFormAllowed(petFormRef.current)) return;
       if (directive === "force_compatibility") setForcedCompatibility(true);
       if (directive === "disable_pet") setSessionDisabled(true);
     });
@@ -193,12 +206,21 @@ export function PresenceRenderApp({
   );
 
   useEffect(() => {
-    const stop = renderSettingsChannel.onSettings(setRenderSettings);
     let disposed = false;
+    let receivedLiveSettings = false;
+    const stop = renderSettingsChannel.onSettings((settings) => {
+      if (disposed) return;
+      receivedLiveSettings = true;
+      setRenderSettings(settings);
+      setRenderSettingsReady(true);
+    });
     void loadNativePresenceRenderSettings().then((settings) => {
-      if (!disposed && settings !== null) setRenderSettings(settings);
+      if (!disposed && !receivedLiveSettings && settings !== null) setRenderSettings(settings);
     }).finally(() => {
-      if (!disposed) renderSettingsChannel.request();
+      if (!disposed) {
+        setRenderSettingsReady(true);
+        renderSettingsChannel.request();
+      }
     });
     return () => {
       disposed = true;
@@ -321,6 +343,8 @@ export function PresenceRenderApp({
         void nativeRendererHost.stop();
         return;
       }
+      // A late drag/display callback must not resume the native form after an SVG switch.
+      if (!nativeFormAllowed(petFormRef.current)) return;
       if (signal.reason === "drag_ended") {
         nativeRendererHost.refreshNativeSurface(renderSnapshotRef.current);
         return;
@@ -337,6 +361,7 @@ export function PresenceRenderApp({
   }, [nativeLifecycleSource, nativeRendererHost]);
 
   const nativeRendererRequested =
+    renderSettingsReady && nativeFormAllowed(petForm) &&
     !sessionDisabled &&
     documentVisible &&
     interactionReady &&
@@ -350,8 +375,8 @@ export function PresenceRenderApp({
   );
 
   useEffect(() => {
-    nativeRendererHost.setSnapshot(renderSnapshot);
-  }, [nativeRendererHost, renderSnapshot]);
+    if (nativeFormAllowed(petForm)) nativeRendererHost.setSnapshot(renderSnapshot);
+  }, [nativeRendererHost, renderSnapshot, petForm]);
 
   useEffect(() => {
     if (nativeRendererRequested) {
@@ -418,16 +443,20 @@ export function PresenceRenderApp({
       data-native-renderer-state={nativeRendererState}
       data-fallback-occluded={String(fallbackOccluded)}
       data-experiment-mode={experimentMode}
+      data-pet-form={petForm}
+      data-render-settings-ready={String(renderSettingsReady)}
       data-testid="presence-render-surface"
     >
-      {!sessionDisabled && !fallbackOccluded && (
-        <PresenceRendererCanvas
+      {renderSettingsReady && (petForm === "hdd_eye" ? (
+        eyeMayMount(nativeRendererState) && <PetFairyEye snapshot={renderSnapshot} active={documentVisible} />
+      ) : (
+        !sessionDisabled && !fallbackOccluded && <PresenceRendererCanvas
           requestedMode={requestedMode}
           experimentMode={experimentMode}
           onHealth={handleCompatibilityRendererHealth}
           snapshot={renderSnapshot}
         />
-      )}
+      ))}
     </main>
   );
 }

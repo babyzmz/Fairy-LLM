@@ -1,3 +1,4 @@
+import { FairyEyeSettings } from "../fairyEye/FairyEyeSettings";
 import {
   ArrowLeft,
   Bot,
@@ -799,23 +800,24 @@ function SettingsCategory(props: SettingsCategoryProps) {
     case "extensions": return <ExtensionsPanel {...props} />;
     case "knowledge": return <KnowledgePrivacyPanel {...props} />;
     case "pet": return <Category title="Pet" subtitle="Companion behavior">
+      <FairyEyeSettings preferences={data.preferences} disabled={busy} onChange={updatePreferences} />
       <SettingToggle label="Enable Fairy pet" checked={data.preferences.pet_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_enabled: value })} />
       <SettingToggle label="Always on top" checked={data.preferences.pet_always_on_top} disabled={busy} onChange={(value) => void updatePreferences({ pet_always_on_top: value })} />
       <SettingToggle label="Mute pet" checked={data.preferences.pet_muted} disabled={busy} onChange={(value) => void updatePreferences({ pet_muted: value })} />
-      <SettingSelect icon={<PawPrint size={17} />} label="Renderer" value={data.preferences.pet_renderer_mode} disabled={busy} onChange={(value) => void updatePreferences({ pet_renderer_mode: value as DesktopPreferences["pet_renderer_mode"] })} options={[{ value: "auto", label: "Automatic" }, { value: "liquid", label: "Liquid Glass" }, { value: "compatibility", label: "Compatibility" }]} />
+      <SettingSelect icon={<PawPrint size={17} />} label="Renderer" value={data.preferences.pet_renderer_mode} disabled={busy || data.preferences.pet_form === "hdd_eye"} onChange={(value) => void updatePreferences({ pet_renderer_mode: value as DesktopPreferences["pet_renderer_mode"] })} options={[{ value: "auto", label: "Automatic" }, { value: "liquid", label: "Liquid Glass" }, { value: "compatibility", label: "Compatibility" }]} />
       <HealthRow
         icon={<Gauge size={17} />}
-        label="Active renderer"
+        label={data.preferences.pet_form === "hdd_eye" ? "Liquid renderer (inactive)" : "Active renderer"}
         status={rendererHealthLabel(data.rendererHealth)}
         tone={rendererHealthTone(data.rendererHealth)}
       />
-      <SettingSelect icon={<ShieldCheck size={17} />} label="Glass privacy" detail={data.preferences.pet_optics_mode === "standard" ? "No desktop capture; uses a procedural optical environment" : "GPU-acquires the active monitor while enabled; samples only the pet area and never saves or uploads pixels"} value={data.preferences.pet_optics_mode} disabled={busy || data.preferences.pet_renderer_mode === "compatibility"} onChange={(value) => void updatePreferences({ pet_optics_mode: value as DesktopPreferences["pet_optics_mode"] })} options={[{ value: "standard", label: "Standard privacy" }, { value: "enhanced", label: "Enhanced refraction" }]} />
-      <SettingSelect icon={<Sparkles size={17} />} label="Material response" value={data.preferences.pet_activation_style} disabled={busy || !data.preferences.pet_motion_enabled} onChange={(value) => void updatePreferences({ pet_activation_style: value as DesktopPreferences["pet_activation_style"] })} options={[{ value: "fluid_response", label: "Fluid response" }, { value: "classic", label: "Classic" }]} />
+      <SettingSelect icon={<ShieldCheck size={17} />} label="Glass privacy" detail={data.preferences.pet_form === "hdd_eye" ? "Inactive for SVG; the saved glass privacy choice is preserved" : data.preferences.pet_optics_mode === "standard" ? "No desktop capture; uses a procedural optical environment" : "GPU-acquires the active monitor while enabled; samples only the pet area and never saves or uploads pixels"} value={data.preferences.pet_optics_mode} disabled={busy || data.preferences.pet_form === "hdd_eye" || data.preferences.pet_renderer_mode === "compatibility"} onChange={(value) => void updatePreferences({ pet_optics_mode: value as DesktopPreferences["pet_optics_mode"] })} options={[{ value: "standard", label: "Standard privacy" }, { value: "enhanced", label: "Enhanced refraction" }]} />
+      <SettingSelect icon={<Sparkles size={17} />} label="Material response" value={data.preferences.pet_activation_style} disabled={busy || data.preferences.pet_form === "hdd_eye" || !data.preferences.pet_motion_enabled} onChange={(value) => void updatePreferences({ pet_activation_style: value as DesktopPreferences["pet_activation_style"] })} options={[{ value: "fluid_response", label: "Fluid response" }, { value: "classic", label: "Classic" }]} />
       <SettingSelect icon={<Gauge size={17} />} label="Animation frame rate" value={String(data.preferences.pet_target_fps)} disabled={busy || !data.preferences.pet_motion_enabled} onChange={(value) => void updatePreferences({ pet_target_fps: Number(value) as DesktopPreferences["pet_target_fps"] })} options={[{ value: "60", label: "60 FPS" }, { value: "144", label: "144 FPS" }, { value: "300", label: "300 FPS" }]} />
       <SettingRange label="Size" value={data.preferences.pet_size_percent} min={75} max={150} step={5} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ pet_size_percent: value })} />
       <SettingRange label="Opacity" value={data.preferences.pet_opacity_percent} min={40} max={100} step={2} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ pet_opacity_percent: value })} />
-      <SettingToggle label="Animate liquid motion" checked={data.preferences.pet_motion_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_motion_enabled: value })} />
-      <SettingToggle label="Show particles" checked={data.preferences.pet_particles_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_particles_enabled: value })} />
+      <SettingToggle label={data.preferences.pet_form === "hdd_eye" ? "Animate eye" : "Animate liquid motion"} checked={data.preferences.pet_motion_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_motion_enabled: value })} />
+      <SettingToggle label={data.preferences.pet_form === "hdd_eye" ? "Eye decorative effects" : "Show particles"} checked={data.preferences.pet_particles_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_particles_enabled: value })} />
       <SettingToggle label="Expand on hover" checked={data.preferences.pet_hover_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_hover_enabled: value })} />
       <SettingRange label="Hover dwell" value={data.preferences.pet_hover_dwell_ms} min={100} max={1000} step={50} suffix=" ms" disabled={busy || !data.preferences.pet_hover_enabled} onCommit={(value) => void updatePreferences({ pet_hover_dwell_ms: value })} />
       <SettingToggle label="Do not disturb" checked={data.preferences.pet_do_not_disturb} disabled={busy} onChange={(value) => void updatePreferences({ pet_do_not_disturb: value })} />

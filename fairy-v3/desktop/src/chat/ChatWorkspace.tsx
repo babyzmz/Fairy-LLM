@@ -29,6 +29,7 @@ import type { PendingImageAttachment } from "../perception/CaptureControl";
 import type { BackgroundTaskAction } from "../app/workspaceTypes";
 import { BackgroundTasksPopover } from "./BackgroundTasksPopover";
 import { Composer } from "./Composer";
+import { ChatFairyEye } from "../fairyEye/ChatFairyEye";
 import { MessageList } from "./MessageList";
 import type { ScheduleCardActions } from "./ScheduleCard";
 import type { ScheduleRuleDraft } from "./scheduleRules";
@@ -40,6 +41,9 @@ import "./streaming.css";
 import "./requestInterpretation.css";
 
 export interface ChatWorkspaceProps {
+  fairyEyeEnabled?: boolean;
+  fairyEyeReducedMotion?: boolean;
+  fairyEyeActive?: boolean;
   conversationAvailable: boolean;
   contentState?: "idle" | "loading" | "ready" | "error";
   messages: Message[];
@@ -358,6 +362,21 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           </button>
         </div>
       </header>
+      {props.fairyEyeEnabled === true && <ChatFairyEye
+        key={props.conversationId ?? "no-conversation"}
+        conversationId={props.conversationId ?? null}
+        turnId={props.turn?.id ?? null}
+        turnConversationId={props.turn?.conversation_id ?? null}
+        turnStatus={props.turn?.status ?? null}
+        messageTurnIds={props.messages.flatMap(message => message.turn_id ? [message.turn_id] : [])}
+        busy={props.isBusy}
+        waiting={pendingApproval !== null || waitingForClarification || workflowSummary?.status === "paused"}
+        error={Boolean(props.error) || props.offline || !providerAvailable}
+        loading={contentState === "loading"}
+        empty={props.messages.length === 0 && !props.streamedText && !props.pendingUserMessage}
+        reducedMotion={props.fairyEyeReducedMotion}
+        active={props.fairyEyeActive ?? true}
+      />}
       {backgroundTasksOpen ? (
         <BackgroundTasksPopover
           page={props.backgroundTasks ?? EMPTY_BACKGROUND_TASKS}

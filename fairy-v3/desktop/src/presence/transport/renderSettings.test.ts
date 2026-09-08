@@ -23,7 +23,8 @@ describe("presence render settings", () => {
         target_frame_rate: 300,
       };
     })).resolves.toEqual({
-      schema_version: 4,
+      schema_version: 5,
+      form: "liquid_glass",
       mode: "liquid",
       optics_mode: "enhanced",
       activation_style: "fluid_response",
@@ -53,7 +54,8 @@ describe("presence render settings", () => {
   it("projects only bounded renderer fields from desktop preferences", () => {
     const projected = safeRenderSettingsFromPreferences(preferences());
     expect(projected).toEqual({
-      schema_version: 4,
+      schema_version: 5,
+      form: "liquid_glass",
       mode: "liquid",
       optics_mode: "standard",
       activation_style: "fluid_response",

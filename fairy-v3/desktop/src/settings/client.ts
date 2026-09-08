@@ -58,6 +58,7 @@ import { CoreRpcError, type InvokeFunction } from "../core/tauriTransport";
 import type { PresenceRendererHealth } from "../presence/transport/rendererHealth";
 
 export type ThemePreference = "system" | "dark" | "light";
+export type PetForm = "liquid_glass" | "hdd_eye";
 export type PetRendererMode = "auto" | "liquid" | "compatibility";
 export type PetOpticsMode = "standard" | "enhanced";
 export type PetActivationStyle = "classic" | "fluid_response";
@@ -113,6 +114,9 @@ export interface DesktopPreferences {
   ambient_dialogue_voice_enabled: boolean;
   ambient_generated_dialogue_enabled: boolean;
   pet_remember_position: boolean;
+  /** Additive preference fields: absent in older schema-11 snapshots. */
+  pet_form?: PetForm;
+  chat_fairy_eye_enabled?: boolean;
   pet_renderer_mode: PetRendererMode;
   pet_optics_mode: PetOpticsMode;
   pet_activation_style: PetActivationStyle;

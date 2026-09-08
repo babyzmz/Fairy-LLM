@@ -1,0 +1,38 @@
+/* Geometry/layout adapted from Fairy-DSH, Copyright 2026 Chengzhibense (Apache-2.0).
+   All motion is mount-owned JavaScript. No independent CSS or SMIL timelines. */
+.fairy-eye-host { position: relative; width: 100%; height: 100%; pointer-events: none; }
+.fairy-eye { position: relative; width: 100%; height: 100%; overflow: visible; pointer-events: none; user-select: none; --dsh-fairy-outer-halo-color: #c9f8ff; --fairy-eye-opacity: 1; --fairy-eye-effect-scale: 1; }
+.fairy-eye, .fairy-eye * { box-sizing: border-box; }
+.fairy-eye svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.fairy-eye .dsh-fairy-main { position: relative; z-index: 1; opacity: var(--fairy-eye-opacity); }
+.fairy-eye .dsh-fairy-pulse-layer { position: absolute; left: -100%; top: -100%; width: 300%; height: 300%; z-index: 0; opacity: calc(var(--fairy-eye-opacity) * .92); transform: scale(var(--fairy-eye-effect-scale)); }
+.fairy-eye .dsh-fairy-halo-layer { position: absolute; left: -112.5%; top: -43.75%; width: 325%; height: 200%; z-index: 0; opacity: calc(var(--fairy-eye-opacity) * .92); color: #c9efff; transform: scale(var(--fairy-eye-effect-scale)); }
+.fairy-eye .dsh-fairy-sclera, .fairy-eye .dsh-fairy-corners,
+.fairy-eye .dsh-fairy-layer-three, .fairy-eye .dsh-fairy-layer-two,
+.fairy-eye .dsh-fairy-layer-one, .fairy-eye .dsh-fairy-eye,
+.fairy-eye .dsh-fairy-lash-pulse-wave { transform-box: view-box; transform-origin: 80px 80px; }
+.fairy-eye .dsh-fairy-thinking-clip-shape, .fairy-eye .dsh-fairy-comforting-clip-shape { transform-box: view-box; transform-origin: 80px 60px; }
+.fairy-eye .dsh-fairy-eye-flicker { display: none; }
+.fairy-eye .dsh-fairy-glitch-blocks { display: none; }
+.fairy-eye[data-effects="false"] .dsh-fairy-halo-layer,
+.fairy-eye[data-effects="false"] .dsh-fairy-pulse-layer { display: none; }
+.fairy-eye[data-low-power="true"] .dsh-fairy-sclera-halo,
+.fairy-eye[data-low-power="true"] .dsh-fairy-highlight-halo { display: none; }
+.fairy-eye-pet { position: absolute; pointer-events: none; }
+.fairy-eye-chat { position: relative; flex: 0 0 auto; display: flex; align-items: center; gap: 16px; min-height: 76px; padding: 8px 30px; overflow: hidden; }
+.fairy-eye-chat[data-empty="true"] { min-height: 156px; justify-content: center; }
+.fairy-eye-chat-visual { flex: 0 0 auto; width: 58px; height: 58px; }
+.fairy-eye-chat[data-empty="true"] .fairy-eye-chat-visual { width: 112px; height: 112px; }
+.fairy-eye-chat-copy { z-index: 1; display: grid; gap: 4px; pointer-events: none; }
+.fairy-eye-chat-copy strong { font-size: 12px; letter-spacing: .14em; }
+.fairy-eye-chat-copy small { font-size: 11px; opacity: .65; }
+.fairy-eye-settings { margin: 12px 0; display: grid; grid-template-columns: minmax(0,1fr) 112px; align-items: center; gap: 16px; padding: 12px 16px; border: 1px solid #697e9a40; border-radius: 10px; }
+.fairy-eye-settings-controls { display: grid; gap: 12px; }
+.fairy-eye-settings-controls label { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.fairy-eye-settings-controls select { color: inherit; background: inherit; padding: 6px 8px; border: 1px solid #697e9a80; border-radius: 6px; }
+.fairy-eye-settings-controls option { color: CanvasText; background: Canvas; }
+.fairy-eye-settings-controls small { display: block; opacity: .65; font-size: 11px; }
+.fairy-eye-settings-preview { width: 72px; height: 72px; margin: 20px; }
+@media (max-height: 660px) { .fairy-eye-chat[data-empty="true"] { min-height: 76px; } .fairy-eye-chat[data-empty="true"] .fairy-eye-chat-visual { width: 58px; height: 58px; } }
+@media (max-width: 460px) { .fairy-eye-chat { padding-inline: 20px; } .fairy-eye-settings { grid-template-columns: minmax(0,1fr); } .fairy-eye-settings-preview { display: none; } }
+@media (prefers-reduced-motion: reduce) { .fairy-eye .dsh-fairy-pulse-layer { display: none; } }

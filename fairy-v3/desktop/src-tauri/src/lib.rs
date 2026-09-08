@@ -200,6 +200,7 @@ const fn main_window_close_action(minimize_to_tray: bool) -> MainWindowCloseActi
 #[derive(Clone, Debug, serde::Serialize)]
 struct PetRenderSettings {
     schema_version: u16,
+    form: desktop_preferences::PetForm,
     mode: desktop_preferences::PetRendererMode,
     optics_mode: desktop_preferences::PetOpticsMode,
     activation_style: desktop_preferences::PetActivationStyle,
@@ -213,7 +214,8 @@ struct PetRenderSettings {
 impl From<&DesktopPreferences> for PetRenderSettings {
     fn from(preferences: &DesktopPreferences) -> Self {
         Self {
-            schema_version: 4,
+            schema_version: 5,
+            form: preferences.pet_form,
             mode: preferences.pet_renderer_mode.clone(),
             optics_mode: preferences.pet_optics_mode,
             activation_style: preferences.pet_activation_style,
@@ -4593,6 +4595,10 @@ fn native_gpu_config(
     let preferences = DesktopPreferencesStore::new(&state.data_dir)
         .load()
         .map_err(|_| "PRESENCE_NATIVE_GPU_PREFERENCES_UNAVAILABLE".to_owned())?;
+    // Shared by start and rebind: an SVG form never starts desktop acquisition.
+    if preferences.pet_form == desktop_preferences::PetForm::HddEye {
+        return Err("PRESENCE_NATIVE_GPU_FORM_INACTIVE".to_owned());
+    }
     if preferences.pet_optics_mode != desktop_preferences::PetOpticsMode::Enhanced {
         return Err("PRESENCE_NATIVE_GPU_PRIVACY_MODE".to_owned());
     }
