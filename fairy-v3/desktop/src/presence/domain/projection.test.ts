@@ -335,3 +335,13 @@ describe("PresenceProjection", () => {
     expect(afk.status_text).toBe("Standing by");
   });
 });
+it.each([
+  "Fairy is preparing", "Fairy is loading the local model", "Fairy is connecting",
+  "Fairy is listening", "Fairy is observing", "Fairy is thinking", "Fairy is searching",
+  "Fairy is speaking", "Fairy is standing by", "Realtime privacy pause is active",
+  "Realtime resources are limited", "Realtime companion needs attention",
+])("transports the fixed Realtime status: %s", (status_text) => {
+  expect(presenceProjectionStateSchema.safeParse({
+    ...PresenceProjection.initial(), status_text,
+  }).success).toBe(true);
+});
