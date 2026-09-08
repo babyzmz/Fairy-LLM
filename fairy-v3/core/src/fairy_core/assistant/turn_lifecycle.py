@@ -347,57 +347,54 @@ class AssistantTurnLifecycleMixin:
         error_code: str,
     ) -> AssistantTurn:
         with self._unit_of_work_factory() as unit_of_work:
-            turn = require_turn(unit_of_work, turn_id)
-            if turn.status not in {
-                AssistantTurnStatus.COMPLETED,
-                AssistantTurnStatus.CANCELLED,
-                AssistantTurnStatus.FAILED,
-            }:
-                expected_status = turn.status
-                expected_revision = turn.cancellation_revision
-                turn.fail(error_code=error_code)
-                unit_of_work.assistant.update_turn(
-                    turn,
-                    expected_status=expected_status,
-                    expected_cancellation_revision=expected_revision,
-                )
-            self._trace.finish_active_steps_in_unit(
-                unit_of_work,
-                turn_id=turn.id,
-                run=run,
-                status=TraceStepStatus.FAILED,
-                public_detail=_public_failure_detail(error_code),
-            )
-            self._trace.complete_trace_in_unit(unit_of_work, turn_id=turn.id)
-            if run is not None:
-                persisted_run = unit_of_work.commands.get_run(run.id)
-                if persisted_run is not None and persisted_run.status is CommandStatus.RUNNING:
-                    unit_of_work.commands.append_event(
-                        run_id=run.id,
-                        event_type="assistant.turn.failed",
-                        visibility=EventVisibility.USER,
-                        message="Assistant turn failed",
-                        payload={"turn_id": str(turn.id), "error_code": error_code},
-                        lease_owner=run.lease_owner,
-                        lease_fence=run.lease_fence,
-                    )
-                    self._command_bus(unit_of_work.commands).fail(
-                        run.id,
-                        error_code=error_code,
-                        lease_owner=run.lease_owner,
-                        lease_fence=run.lease_fence,
-                    )
-            task = require_task(unit_of_work, turn.task_id)
-            if task.status in _ACTIVE_TASK_STATUSES:
-                task.transition_to(TaskStatus.FAILED)
-                unit_of_work.state.save_task(task)
-            self._release_failed_scratch_draft(unit_of_work, task)
-            self._finish_execution_plan(
-                unit_of_work,
-                task_id=turn.task_id,
-                status=ExecutionPlanStatus.FAILED,
+            turn = self._fail_turn_in_unit(
+                unit_of_work, turn_id, run, error_code=error_code,
             )
             unit_of_work.commit()
+        return turn
+
+    def _fail_turn_in_unit(
+        self, unit_of_work, turn_id: UUID, run: CommandRun | None, *, error_code: str,
+    ) -> AssistantTurn:
+        turn = require_turn(unit_of_work, turn_id)
+        if turn.status not in {
+            AssistantTurnStatus.COMPLETED,
+            AssistantTurnStatus.CANCELLED,
+            AssistantTurnStatus.FAILED,
+        }:
+            expected_status = turn.status
+            expected_revision = turn.cancellation_revision
+            turn.fail(error_code=error_code)
+            unit_of_work.assistant.update_turn(
+                turn, expected_status=expected_status,
+                expected_cancellation_revision=expected_revision,
+            )
+        self._trace.finish_active_steps_in_unit(
+            unit_of_work, turn_id=turn.id, run=run, status=TraceStepStatus.FAILED,
+            public_detail=_public_failure_detail(error_code),
+        )
+        self._trace.complete_trace_in_unit(unit_of_work, turn_id=turn.id)
+        if run is not None:
+            persisted_run = unit_of_work.commands.get_run(run.id)
+            if persisted_run is not None and persisted_run.status is CommandStatus.RUNNING:
+                unit_of_work.commands.append_event(
+                    run_id=run.id, event_type="assistant.turn.failed",
+                    visibility=EventVisibility.USER, message="Assistant turn failed",
+                    payload={"turn_id": str(turn.id), "error_code": error_code},
+                    lease_owner=run.lease_owner, lease_fence=run.lease_fence,
+                )
+                self._command_bus(unit_of_work.commands).fail(
+                    run.id, error_code=error_code,
+                    lease_owner=run.lease_owner, lease_fence=run.lease_fence,
+                )
+        task = require_task(unit_of_work, turn.task_id)
+        if task.status in _ACTIVE_TASK_STATUSES:
+            task.transition_to(TaskStatus.FAILED)
+            unit_of_work.state.save_task(task)
+        self._release_failed_scratch_draft(unit_of_work, task)
+        self._finish_execution_plan(
+            unit_of_work, task_id=turn.task_id, status=ExecutionPlanStatus.FAILED,
+        )
         return turn
 
     @staticmethod

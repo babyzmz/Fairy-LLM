@@ -407,6 +407,7 @@ class WorkflowScheduler:
     def _execute(self, active: _ActiveNode) -> None:
         claim = active.claim
         settled = False
+        adapter = None
         try:
             with self._unit_of_work_factory() as unit_of_work:
                 snapshot = unit_of_work.workflows.get(claim.run_id)
@@ -502,6 +503,9 @@ class WorkflowScheduler:
                 try:
                     with self._unit_of_work_factory() as unit_of_work:
                         unit_of_work.workflows.fail(claim, error_code=error_code)
+                        on_failure = getattr(adapter, "settle_failure_in_unit", None)
+                        if callable(on_failure):
+                            on_failure(unit_of_work, node, claim, error_code)
                         unit_of_work.commit()
                     settled = True
                 except Exception:

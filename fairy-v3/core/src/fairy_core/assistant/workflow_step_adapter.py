@@ -228,6 +228,7 @@ class AssistantStepWorkflowAdapter:
                 else:
                     if stopped.status is AssistantTurnStatus.CANCELLED:
                         raise WorkflowCancelled
+                    self._preparation._raise_preparation_boundary(stopped)
                     raise RuntimeError(stopped.error_code or "Model step did not yield")
                 finally:
                     from fairy_core.perception.tool_images import zero_images
@@ -277,7 +278,9 @@ class AssistantStepWorkflowAdapter:
                         command,
                         error_code=_completion_error_code(issue),
                     )
-                    raise RuntimeError("Response verification did not converge")
+                    from fairy_core.assistant.workflow_adapter import AssistantWorkflowError
+
+                    raise AssistantWorkflowError(_completion_error_code(issue))
                 decision = (
                     {"type": "verified"}
                     if issue is None
@@ -439,3 +442,31 @@ class AssistantStepWorkflowAdapter:
 
     def replan_after_pause(self, node):
         return self._preparation.replan_after_pause(node)
+
+    def settle_failure_in_unit(self, unit, node, claim, error_code):
+        # Called only after Kernel.fail accepted this live Fence, in the same transaction.
+        turn = unit.assistant.get_turn(UUID(node.payload["turn_id"]))
+        if (
+            turn is None
+            or turn.workflow_run_id != claim.run_id
+            or node.run_id != claim.run_id
+            or turn.execution_engine_version != 4
+        ):
+            return
+        if turn.is_terminal:
+            return
+        command = None
+        for step in reversed(unit.assistant.list_trace_steps(turn.id)):
+            if step.command_run_id is None:
+                continue
+            candidate = unit.commands.get_run(step.command_run_id)
+            if (
+                candidate is not None
+                and candidate.status is CommandStatus.RUNNING
+                and candidate.input_payload.get("turn_id") == str(turn.id)
+                and candidate.task_id == turn.task_id
+                and candidate.scope_digest == turn.scope_digest
+            ):
+                command = candidate
+                break
+        self._application._fail_turn_in_unit(unit, turn.id, command, error_code=error_code)
