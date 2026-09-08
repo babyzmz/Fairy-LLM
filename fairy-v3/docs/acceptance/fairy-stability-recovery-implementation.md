@@ -223,6 +223,9 @@
 - TypeScript通过；Commands/ChatWorkspace/Shell/App63项通过（12.80秒）；Core原领域命令14项通过（16.17秒）。原斜线测试按已批准的权威迁移改为断言调用onCommand而不是直接onNewConversation，继续保留“不进入模型”；Composer既有trim契约未改。原生键盘及取消物理完成仍待联合验收，桌宠输入直接键入斜线命令尚待接线。
 - 独立日常错误复核：等待澄清时，前端优先将所有输入当作澄清文本，显式 `/stop` 无法进入取消分发。增加失败回归后调整为仅普通文本进入澄清，裸斜线命令仍走Core；引用/代码中的命令不作为操作。保留原多轮澄清和Line Sidebar断言。
 - 已复现并修复：已知裸命令优先进入Core，未知斜线开头在澄清期间仍作为数据（例如Unix绝对路径），反引号中的 `/stop` 保持数据。TypeScript通过；ChatWorkspace/Composer/Commands27项通过（6.80秒），原多轮澄清测试不修改。该错误单独提交，不涉及模型内容过滤。
+- 桌宠命令契约：快捷输入中的裸斜线走受限宿主→同一Core dispatcher，不进入模型。新建/清空回执以原宿主Revision绑定；Stop只能附加宿主当前Turn；权限命令只打开主窗口权限设置供用户确认，桌宠不能直接改档。项目导航扩展现有带sequence的主窗口请求，而非依赖Broadcast。命令提示只在当前输入表面短暂显示，不伪造持久Message或Core回复。
+- 已接入 `pet_chat_command`；消息与命令使用独立幂等键空间，宿主添加当前Conversation及Stop目标，不允许Pet自报目标或任意RPC。Core的新聊天回执仍经宿主Revision和scratch校验；权限仅导航Permissions设置，未执行改档。MainViewRequest新增可空workspace_mode，兼容旧请求并按已有sequence恢复项目导航。命令结果未知时不提供消息重发/取消快捷键，避免错误地将命令当作普通消息。
+- TypeScript通过；Presence/App/MainView43文件247项通过（25.80秒），包括实际组件中的 `/help` 不提交模型消息、项目导航恢复。Rust宿主14项通过（4.98秒），全targets Clippy通过（9.99秒）。新增命令分流测试先观察到未调用命令通道再修复；真实Core领域命令门禁沿用上一项14项通过，真实原生输入和权限设置导航仍待最终联合验收。
 
 ### Phase 3B：事件提交唤醒与推送验收契约
 

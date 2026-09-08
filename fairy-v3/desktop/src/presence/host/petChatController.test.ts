@@ -52,3 +52,11 @@ it("does not deliver asynchronous results into a closed input surface", async ()
   await Promise.resolve(); await Promise.resolve();
   expect(h.updates).not.toHaveBeenCalled();
 });
+
+it("routes a bare slash command to Core without creating a model message", async () => {
+  const h = harness(); await vi.waitFor(() => expect(h.contexts).toHaveBeenCalled());
+  h.transport.command = vi.fn(async () => ({ notice: "Core help" }));
+  h.controller.send("help", "/help");
+  await vi.waitFor(() => expect(h.transport.command).toHaveBeenCalledWith(0, "help", "/help"));
+  expect(h.transport.submit).not.toHaveBeenCalled(); h.controller.close();
+});

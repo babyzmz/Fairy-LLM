@@ -17,6 +17,7 @@ export class PetChatController {
     private readonly transport: PetChatTransport,
     private readonly onContext: (context: PetChatContext) => void,
     private readonly onUpdate: (update: PresenceSubmissionUpdate) => void,
+    private readonly onCommand: (id: string, notice: string | null) => void = () => undefined,
   ) {}
 
   start() {
@@ -40,6 +41,14 @@ export class PetChatController {
     if (this.closed) return;
     if (this.context === null) { this.update(id, "failed", "offline"); return; }
     if (this.pending && !this.pending.settled) { this.update(id, "failed", "busy"); return; }
+    if (text.trimStart().startsWith("/")) {
+      const command = this.transport.command;
+      if (!command) { this.update(id, "failed", "unavailable"); return; }
+      void command(this.context.revision, id, text).then((result) => {
+        if (!this.closed) this.onCommand(id, result.notice);
+      }).catch(() => this.update(id, "failed", "uncertain"));
+      return;
+    }
     const pending: PendingSubmission = { id, revision: this.context.revision, registered: false,
       settled: false, cancelRequested: false, cancelAccepted: false, cancelling: false, turnId: null };
     this.pending = pending;

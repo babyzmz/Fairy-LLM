@@ -64,6 +64,7 @@ function Workspace({
     sequence: number;
     conversationId: string | null;
     turnId: string | null;
+    mode: "chat" | "project" | null;
   };
   backgroundNotificationHost?: BackgroundTaskNotificationHost;
   workspaceVisible: boolean;
@@ -72,14 +73,13 @@ function Workspace({
   const lastNavigationSequence = useRef(-1);
   useEffect(() => {
     if (
-      navigationRequest.conversationId === null
+      (navigationRequest.conversationId === null && navigationRequest.mode === null)
       || navigationRequest.sequence <= lastNavigationSequence.current
     ) return;
     lastNavigationSequence.current = navigationRequest.sequence;
-    model.openBackgroundTaskLocation(
-      navigationRequest.conversationId,
-      navigationRequest.turnId,
-    );
+    if (navigationRequest.conversationId !== null) {
+      model.openBackgroundTaskLocation(navigationRequest.conversationId, navigationRequest.turnId);
+    } else if (navigationRequest.mode !== null) model.setMode(navigationRequest.mode);
   }, [model, navigationRequest]);
   useBackgroundTaskNotifications({
     page: model.backgroundTasks,
@@ -237,6 +237,7 @@ export function App({
     sequence: 0,
     conversationId: null as string | null,
     turnId: null as string | null,
+    mode: null as "chat" | "project" | null,
   });
   const focusReturnRef = useRef<HTMLElement | null>(null);
   const mainViewRef = useRef<MainView>("workspace");
@@ -278,11 +279,12 @@ export function App({
       showSettings(request.settings_category ?? undefined, request.sequence);
     } else {
       showWorkspace();
-      if (request.conversation_id !== null) {
+      if (request.conversation_id !== null || request.workspace_mode != null) {
         setWorkspaceNavigation({
           sequence: request.sequence,
           conversationId: request.conversation_id,
           turnId: request.turn_id ?? null,
+          mode: request.workspace_mode ?? null,
         });
       }
     }

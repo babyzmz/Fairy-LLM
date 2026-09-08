@@ -7,6 +7,7 @@ import type {
 import type { PresenceSubmissionCard } from "./PresencePanel";
 
 export interface PresenceSubmissionState {
+  kind?: "message" | "command";
   id: string;
   text: string;
   phase: PresenceSubmissionCard["phase"];
@@ -25,6 +26,7 @@ export function toSubmissionCard(
   submission: PresenceSubmissionState | null,
 ): PresenceSubmissionCard | null {
   if (submission?.phase !== "failed") return null;
+  if (submission.kind === "command") return card(submission, "Command outcome is not confirmed", "Check the main workspace before trying again", false);
   if (submission.failure === "uncertain") {
     if (submission.text === "") return card(submission, "Chat creation is not confirmed", "Check the chat list before trying again", false);
     return card(submission, "Delivery is not confirmed", "Check the chat before sending again, or stop this request", true);

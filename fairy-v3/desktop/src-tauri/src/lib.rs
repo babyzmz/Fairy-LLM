@@ -141,6 +141,13 @@ enum MainView {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+enum MainWorkspaceMode {
+    Chat,
+    Project,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 enum SettingsCategoryId {
     General,
     Appearance,
@@ -161,6 +168,7 @@ struct MainViewRequest {
     settings_category: Option<SettingsCategoryId>,
     conversation_id: Option<String>,
     turn_id: Option<String>,
+    workspace_mode: Option<MainWorkspaceMode>,
 }
 
 impl Default for MainViewRequest {
@@ -172,6 +180,7 @@ impl Default for MainViewRequest {
             settings_category: None,
             conversation_id: None,
             turn_id: None,
+            workspace_mode: None,
         }
     }
 }
@@ -184,6 +193,8 @@ struct MainViewNavigateInput {
     conversation_id: Option<String>,
     #[serde(default)]
     turn_id: Option<String>,
+    #[serde(default)]
+    workspace_mode: Option<MainWorkspaceMode>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1653,6 +1664,104 @@ async fn pet_chat_cancel(
     wake_pet_chat_events(&state);
     Ok(json!({"accepted": true, "binding_revision": revision,
         "turn_id": turn.get("id"), "cancellation_pending": turn.get("cancellation_pending")}))
+}
+
+#[tauri::command]
+async fn pet_chat_command(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    revision: u64,
+    request_id: String,
+    text: String,
+) -> Result<Value, String> {
+    authorize_pet_input_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    let params = state
+        .pet_chat
+        .command_request(revision, &request_id, &text)?;
+    let result = pet_chat_core_result(
+        call_core(
+            &state,
+            json!({
+                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
+                "method": "assistant.commands.dispatch", "params": params,
+            }),
+        )
+        .await,
+    )?;
+    if state.pet_chat.context()?.revision != revision {
+        return Err("PET_CHAT_BINDING_CHANGED".into());
+    }
+    let mut notice = result["notice"]
+        .as_str()
+        .map(|text| text.chars().take(1200).collect::<String>());
+    if !result["conversation"].is_null() {
+        let preference = pet_chat_core_result(
+            call_core(
+                &state,
+                json!({
+                    "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
+                    "method": "models.selection.get", "params": {},
+                }),
+            )
+            .await,
+        )?;
+        let conversation_id = serde_json::from_value(result["conversation"]["id"].clone())
+            .map_err(|_| "PET_CHAT_RESPONSE_INVALID")?;
+        state.pet_chat.bind(
+            pet_chat_broker::PetChatBindingInput {
+                expected_revision: revision,
+                conversation_id,
+                profile_id: None,
+                model_selection: Some(pet_chat_broker::PetModelSelection::from_preference(
+                    &preference,
+                )?),
+            },
+            &result["conversation"],
+        )?;
+        ensure_pet_chat_events(&app, &state)?;
+        notice = Some("New chat ready".into());
+    }
+    if !result["turn"].is_null() {
+        state.pet_chat.accept_turn(revision, &result["turn"])?;
+        notice = Some("Stop request accepted".into());
+    }
+    match result["ui_action"]["kind"].as_str() {
+        Some("show_project") => {
+            request_main_view(
+                &app,
+                &state,
+                MainViewNavigateInput {
+                    view: MainView::Workspace,
+                    workspace_mode: Some(MainWorkspaceMode::Project),
+                    conversation_id: None,
+                    turn_id: None,
+                    settings_category: None,
+                },
+            )?;
+            notice = Some("Opened project workspace".into());
+        }
+        Some("request_permission") => {
+            // Pet never changes permission profiles. Confirmation stays in the main settings surface.
+            request_main_view(
+                &app,
+                &state,
+                MainViewNavigateInput {
+                    view: MainView::Settings,
+                    settings_category: Some(SettingsCategoryId::Permissions),
+                    workspace_mode: None,
+                    conversation_id: None,
+                    turn_id: None,
+                },
+            )?;
+            notice = Some("Confirm the requested permission profile in Settings".into());
+        }
+        Some(_) => return Err("PET_CHAT_RESPONSE_INVALID".into()),
+        None => {}
+    }
+    publish_pet_chat_context(&app, &state);
+    wake_pet_chat_events(&state);
+    Ok(json!({"notice": notice}))
 }
 
 #[tauri::command]
@@ -3392,6 +3501,11 @@ fn update_main_view_request(
     } else {
         None
     };
+    request.workspace_mode = if input.view == MainView::Workspace {
+        input.workspace_mode
+    } else {
+        None
+    };
     Ok(request.clone())
 }
 
@@ -3418,6 +3532,7 @@ fn background_task_notify(
                 settings_category: None,
                 conversation_id: Some(conversation_id.clone()),
                 turn_id: turn_id.clone(),
+                workspace_mode: None,
             },
         );
     })
@@ -3514,6 +3629,7 @@ async fn open_realtime_main_chat(
             settings_category: None,
             conversation_id: Some(conversation_id.to_owned()),
             turn_id: None,
+            workspace_mode: None,
         },
     )
     .map(|_| ())
@@ -4791,6 +4907,7 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent)
                         settings_category: None,
                         conversation_id: None,
                         turn_id: None,
+                        workspace_mode: None,
                     },
                 );
             }
@@ -4875,6 +4992,7 @@ async fn open_settings_window(
             settings_category: category,
             conversation_id: None,
             turn_id: None,
+            workspace_mode: None,
         },
     )
     .map(|_| ())
@@ -6045,6 +6163,7 @@ pub fn run() {
             pet_chat_submit,
             pet_chat_new,
             pet_chat_cancel,
+            pet_chat_command,
             pet_chat_submission_cancel,
             core_events_open,
             core_events_next,

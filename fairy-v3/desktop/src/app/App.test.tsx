@@ -482,6 +482,19 @@ describe("App", () => {
     expect(screen.getByTestId("workspace-view")).not.toHaveAttribute("hidden");
   });
 
+  it("restores a sequenced project-mode command after main WebView reload", async () => {
+    window.localStorage.setItem("fairy.workspace.mode", "chat");
+    const request: MainViewRequest = { schema_version: 1, sequence: 10, view: "workspace",
+      settings_category: null, conversation_id: null, workspace_mode: "project" };
+    const mainViewHost: MainViewHost = { get: vi.fn(async () => request), navigate: vi.fn(async () => request),
+      subscribe: vi.fn(async () => () => undefined) };
+    const client = createClient(async () => ({ status: "ok", service: "fairy-core", protocol: "core-service-v1" }), [project], { scratch: true });
+    render(<App client={client} mainViewHost={mainViewHost} />);
+    await waitFor(() => expect(window.localStorage.getItem("fairy.workspace.mode")).toBe("project"));
+    expect(await screen.findByLabelText("History navigation")).toBeVisible();
+    expect(screen.queryByLabelText("Chat workspace")).not.toBeInTheDocument();
+  });
+
   it("refreshes history before opening a Realtime-linked conversation created outside the main WebView", async () => {
     let navigate: ((request: MainViewRequest) => void) | undefined;
     const request = {

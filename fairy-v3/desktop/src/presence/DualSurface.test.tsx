@@ -1263,6 +1263,23 @@ describe("dual presence surfaces", () => {
     expect(host.host.chat.submit).toHaveBeenCalledOnce();
   });
 
+  it("shows Core command help without submitting a message or depending on the main bridge", async () => {
+    const channel = channelHarness(); const host = hostHarness();
+    host.host.chat = {
+      getContext: vi.fn(async () => ({ revision: 0, projection_revision: 0, conversation_id: null,
+        connection_available: false, turn: null, reply: null, submission: null })),
+      onContext: vi.fn(async () => () => undefined), command: vi.fn(async () => ({ notice: "/new | /stop | /help" })),
+      submit: vi.fn(), cancelSubmission: vi.fn(), cancel: vi.fn(), newChat: vi.fn(),
+    };
+    render(<PresenceInputApp channel={channel.channel} host={host.host} storage={storage} />);
+    await waitFor(() => expect(host.host.chat?.getContext).toHaveBeenCalled());
+    act(() => host.requestInput());
+    const input = await screen.findByLabelText("Quick message to Fairy");
+    fireEvent.change(input, { target: { value: "/help" } }); fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("/new | /stop | /help")).toBeInTheDocument();
+    expect(host.host.chat.submit).not.toHaveBeenCalled(); expect(channel.channel.requestChatSend).not.toHaveBeenCalled();
+  });
+
   it("shows offline failure without duplicating a reply and retries the same text", async () => {
     const channel = channelHarness();
     const host = hostHarness();

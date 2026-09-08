@@ -120,6 +120,26 @@ pub struct PetChatBroker {
 }
 
 impl PetChatBroker {
+    pub fn command_request(&self, revision: u64, id: &str, text: &str) -> Result<Value, String> {
+        let text = text.trim();
+        if !valid_request_id(id) || !text.starts_with('/') || text.chars().count() > 512 {
+            return Err("PET_CHAT_INPUT_INVALID".into());
+        }
+        let context = self.context()?;
+        if context.revision != revision {
+            return Err("PET_CHAT_BINDING_CHANGED".into());
+        }
+        let mut params = json!({"text": text, "idempotency_key": format!("pet-command:{id}"),
+            "conversation_id": context.conversation_id});
+        if text == "/stop" {
+            let target = self.cancel_request(revision)?;
+            params["turn_id"] = target["turn_id"].clone();
+            params["expected_cancellation_revision"] =
+                target["expected_cancellation_revision"].clone();
+        }
+        Ok(params)
+    }
+
     // Register before the first Core await, including creation of an unbound chat.
     // This is a bounded host identity cache; the cancellation fact belongs to Core.
     pub fn begin_submission(&self, revision: u64, id: &str, text: &str) -> Result<(), String> {
@@ -546,6 +566,40 @@ mod tests {
 
     fn conversation(id: Uuid) -> Value {
         json!({"id": id, "workspace_type": "chat_scratch", "project_id": null})
+    }
+
+    #[test]
+    fn domain_commands_use_only_host_conversation_and_turn_context() {
+        let broker = PetChatBroker::default();
+        assert!(broker.command_request(0, "bad", "plain text").is_err());
+        assert!(broker.command_request(0, "stop", "/stop").is_err());
+        let id = Uuid::new_v4();
+        let context = broker.bind(input(0, id), &conversation(id)).unwrap();
+        assert_eq!(
+            broker
+                .command_request(context.revision, "new", " /new ")
+                .unwrap(),
+            json!({"text": "/new", "idempotency_key": "pet-command:new", "conversation_id": id})
+        );
+        let ticket = broker
+            .prepare_submission(context.revision, "send", "Hello")
+            .unwrap();
+        let turn_id = Uuid::new_v4();
+        broker
+            .finish_submission(
+                &ticket,
+                &json!({"id": turn_id, "conversation_id": id,
+            "cancellation_revision": 4, "cancellation_pending": false, "status": "running"}),
+            )
+            .unwrap();
+        assert_eq!(
+            broker
+                .command_request(context.revision, "stop", "/stop")
+                .unwrap(),
+            json!({"text": "/stop", "idempotency_key": "pet-command:stop", "conversation_id": id,
+                "turn_id": turn_id, "expected_cancellation_revision": 4})
+        );
+        assert!(broker.command_request(0, "old", "/clear").is_err());
     }
 
     #[test]

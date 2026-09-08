@@ -10,6 +10,7 @@ export interface MainViewRequest {
   settings_category: SettingsCategoryId | null;
   conversation_id: string | null;
   turn_id?: string | null;
+  workspace_mode?: "chat" | "project" | null;
 }
 
 export interface MainViewHost {

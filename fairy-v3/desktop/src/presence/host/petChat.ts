@@ -20,6 +20,7 @@ const contextSchema = z.object({
 
 export type PetChatContext = z.infer<typeof contextSchema>;
 export interface PetChatTransport {
+  command?(revision: number, requestId: string, text: string): Promise<{ notice: string | null }>;
   getContext(): Promise<unknown>;
   onContext(listener: (value: unknown) => void): Promise<() => void>;
   submit(revision: number, submissionId: string, text: string): Promise<{ binding_revision: number; turn_id: string }>;
@@ -31,6 +32,7 @@ export interface PetChatTransport {
 export function createPetChatTransport(): PetChatTransport | null {
   if (!isTauri()) return null;
   return {
+    command: (revision, requestId, text) => invoke("pet_chat_command", { revision, requestId, text }),
     getContext: () => invoke("pet_chat_context_get"),
     onContext: (listener) => listen("pet-chat-context-changed", (event) => listener(event.payload)),
     submit: (revision, submissionId, text) => invoke("pet_chat_submit", { revision, submissionId, text }),

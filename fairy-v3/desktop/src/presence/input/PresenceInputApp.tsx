@@ -147,6 +147,9 @@ export function PresenceInputApp({
     PresenceProjection.initial(),
   );
   const [hostChat, setHostChat] = useState<{ context: PetChatContext; updatedAt: number } | null>(null);
+  const [commandReply, setCommandReply] = useState<{ id: string; text: string; at: number } | null>(null);
+  const currentCommandId = useRef<string | null>(null);
+  const lastHostChatRevision = useRef(-1);
   const chatController = useRef<PetChatController | null>(null);
   const lastNewChatRequestId = useRef<string | null>(null);
   const requestNewChat = useCallback(() => {
@@ -155,7 +158,12 @@ export function PresenceInputApp({
     lastNewChatRequestId.current = id;
     chatController.current?.newChat(id);
   }, [host, channel]);
-  const projection = mergePetChatProjection(baseProjection, hostChat?.context ?? null, hostChat?.updatedAt ?? 0);
+  const hostProjection = mergePetChatProjection(baseProjection, hostChat?.context ?? null, hostChat?.updatedAt ?? 0);
+  const projection: PresenceProjectionState = commandReply !== null && !hostProjection.realtime_active &&
+    hostProjection.notice === null && ["idle", "ready"].includes(hostProjection.work_state)
+    ? { ...hostProjection, updated_at_ms: commandReply.at, activity: "ready", work_state: "ready", status_text: "Ready for review",
+      reply: { id: commandReply.id, text: commandReply.text, kind: "task_notice", streaming: false } }
+    : hostProjection;
   const motionSnapshot = useRef<FairyMotionSnapshot>(
     DEFAULT_FAIRY_MOTION_SNAPSHOT,
   );
@@ -299,6 +307,8 @@ export function PresenceInputApp({
   useEffect(() => {
     if (!host.chat) return;
     const controller = new PetChatController(host.chat, (context) => {
+      if (context.revision !== lastHostChatRevision.current) setCommandReply(null);
+      lastHostChatRevision.current = context.revision;
       const updatedAt = now();
       setHostChat({ context, updatedAt });
       setClock(updatedAt);
@@ -307,7 +317,11 @@ export function PresenceInputApp({
         return { id: update.submission_id, text: "", phase: "failed", failure: update.failure };
       }
       return applySubmissionUpdate(current, update);
-    }));
+    }), (id, notice) => {
+      if (currentCommandId.current !== id) return;
+      setSubmission((current) => current?.id === id ? null : current);
+      if (notice) setCommandReply({ id: `command:${id}`, text: notice, at: now() });
+    });
     chatController.current = controller;
     controller.start();
     return () => { controller.close(); chatController.current = null; };
@@ -584,7 +598,7 @@ export function PresenceInputApp({
     (hostChat?.context.turn != null && (
       hostChat.context.turn.cancellation_pending ||
       !["completed", "cancelled", "failed"].includes(hostChat.context.turn.status)
-    )) || submission?.phase === "sending" || submission?.phase === "cancelling"
+    )) || (submission?.kind !== "command" && (submission?.phase === "sending" || submission?.phase === "cancelling"))
   );
   const menuBlocked =
     view.notice !== null ||
@@ -1001,7 +1015,10 @@ export function PresenceInputApp({
 
   function sendMessage(text: string) {
     const id = createPresenceSubmissionId();
-    setSubmission({ id, text, phase: "sending", failure: null });
+    const kind = host.chat && text.trimStart().startsWith("/") ? "command" : "message";
+    currentCommandId.current = kind === "command" ? id : null;
+    setCommandReply(null);
+    setSubmission({ id, text, kind, phase: "sending", failure: null });
     if (host.chat) chatController.current?.send(id, text);
     else channel.requestChatSend(text, id);
   }
