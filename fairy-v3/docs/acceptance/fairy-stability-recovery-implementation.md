@@ -262,6 +262,14 @@
 - 已补齐同事务事件；Schedule事件/Trigger/Service/Repository/Ledger共21项通过（17.34秒），Ruff通过。新建重放不重复通知，事件失败会回滚定义变更且不唤醒，关闭重开和tenant隔离已验，重复pending租约不发无变化事件。前端新增回归实际复现10秒内5次列表请求，以及Schedule/Turn/审批事件不刷新后台投影，随后接入事件优先、30秒恢复兜底。
 - 前端已接入Schedule、Turn状态和审批事件；后台列表包含其他聊天，因此跨聊天刷新列表，但Schedule Card仅失效所属聊天缓存，不触发Provider或消息刷新。TypeScript通过，App/Shell/Scheduling/Invalidation/ScheduleCard共62项通过（12.23秒）；10秒稳态请求由5次降为1次，30秒执行一次恢复读取，离开聊天模式后停止。事件推送和Windows原生通知仍归最终联合门禁。
 
+### Phase 5E：Knowledge目录元数据投影
+
+- 目录、概览和Graph不读取Knowledge正文、frontmatter或provenance，不构造要求全文哈希校验的KnowledgeRevision；显式read/search及Snapshot绑定继续使用完整不可变Revision。
+- 入库时记录UTF-8字节数，SQLite已有行一次性回填，PostgreSQL提供匹配的增量迁移和降级；不改既有content/revision hash。只在临时测试库执行迁移，用户库上线前仍要求一致性备份。
+- 双项目、双tenant、更新/删除后的当前指针、关闭重开、空目录、Unicode字节数和SQL所选字段验证；列表/图的watermark保持一致。真正PostgreSQL执行与大Vault原生耗时另记未验，不以离线DDL替代。
+- 已使用独立Metadata类型并持久化UTF-8字节数；数MB正文场景先复现3次目录/概览/Graph查询都读取全文，修复后不选择content/frontmatter/provenance。22项Knowledge/Obsidian/Harness回归通过（12.30秒），包含旧Snapshot、改名、删除和同步；41项Cloud部署契约通过（3.68秒），相关Ruff通过。
+- SQLite升级/重开/Unicode及中断回滚已验。故障注入曾复现DDL已提交但回填失败，现显式事务保护并在锁内再次检查，避免半迁移和并发启动重复加列。Cloud新增0058，原单head断言随已批准增量迁移更新，保留全部历史链断言；实际PostgreSQL未运行，用户数据库尚未迁移。
+
 ### Phase 3B：事件提交唤醒与推送验收契约
 
 - 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。

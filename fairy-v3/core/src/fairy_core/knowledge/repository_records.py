@@ -63,6 +63,7 @@ def revision_values(tenant_id: str, revision: KnowledgeRevision) -> dict[str, An
         "title": revision.title,
         "kind": revision.kind,
         "content": revision.content,
+        "byte_length": len(revision.content.encode("utf-8")),
         "content_hash": revision.content_hash,
         "revision_hash": revision.revision_hash,
         "links": list(revision.links),

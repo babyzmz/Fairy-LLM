@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260909_0057"]
+    assert scripts.get_heads() == ["20260909_0058"]
+    assert scripts.get_revision("20260909_0058").down_revision == "20260909_0057"
     assert scripts.get_revision("20260909_0057").down_revision == "20260909_0056"
     assert scripts.get_revision("20260909_0056").down_revision == "20260909_0055"
     assert scripts.get_revision("20260909_0055").down_revision == "20260908_0054"
@@ -43,6 +44,21 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
     assert scripts.get_revision("20260711_0012").down_revision == "20260711_0011"
     assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
+
+
+def test_knowledge_catalog_length_upgrade_and_downgrade() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260909_0057:20260909_0058", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert "ADD COLUMN BYTE_LENGTH BIGINT" in ddl
+    assert "OCTET_LENGTH(CONVERT_TO(CONTENT, 'UTF8'))" in ddl
+    assert "ALTER COLUMN BYTE_LENGTH SET NOT NULL" in ddl
+    assert "DISABLE ROW LEVEL SECURITY" not in ddl
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260909_0058:20260909_0057", sql=True)
+    assert "DROP COLUMN byte_length" in output.getvalue()
 
 
 def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:

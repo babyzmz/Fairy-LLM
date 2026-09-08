@@ -102,6 +102,7 @@ knowledge_revisions = Table(
     Column("title", String(200), nullable=False),
     Column("kind", String(64), nullable=False),
     Column("content", Text, nullable=False),
+    Column("byte_length", BigInteger, nullable=False, server_default="0"),
     Column("content_hash", String(64), nullable=False),
     Column("revision_hash", String(64), nullable=False),
     Column("links", JSON, nullable=False),

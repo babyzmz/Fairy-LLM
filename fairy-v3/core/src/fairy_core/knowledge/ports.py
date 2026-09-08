@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from fairy_core.knowledge.catalog import KnowledgeRevisionMetadata
 from fairy_core.knowledge.models import (
     HarnessContextManifest,
     KnowledgeCollection,
@@ -78,6 +79,11 @@ class KnowledgeRepository(Protocol):
     ) -> KnowledgeSyncDelta: ...
 
     def current_revisions(self, project_id: UUID) -> tuple[KnowledgeRevision, ...]: ...
+
+    def current_revision_metadata(
+        self,
+        project_id: UUID,
+    ) -> tuple[KnowledgeRevisionMetadata, ...]: ...
 
     def append_snapshot(
         self,

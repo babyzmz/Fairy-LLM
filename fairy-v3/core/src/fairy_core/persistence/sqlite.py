@@ -15,6 +15,7 @@ from fairy_core.commanding.sqlite_migrations import (
 )
 from fairy_core.documents.sqlite_fts import initialize_document_sqlite_fts
 from fairy_core.knowledge.schema import knowledge_metadata
+from fairy_core.knowledge.sqlite_migrations import migrate_knowledge_catalog_length
 from fairy_core.memory.schema import memory_metadata
 from fairy_core.memory.sqlite_fts import initialize_sqlite_fts
 from fairy_core.persistence.sqlite_split_migration import import_split_sqlite_databases
@@ -88,6 +89,7 @@ def create_sqlite_core_engine(
         command_metadata.create_all(engine)
         memory_metadata.create_all(engine)
         knowledge_metadata.create_all(engine)
+        migrate_knowledge_catalog_length(engine)
         migrate_knowledge_manifest_tools(engine)
         migrate_harness_persona(engine)
         migrate_harness_persona_instruction(engine)

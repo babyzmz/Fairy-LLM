@@ -14,6 +14,7 @@ from sqlalchemy.engine import Connection, Engine, RowMapping
 
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 from fairy_core.domain.ids import new_id
+from fairy_core.knowledge.catalog import KnowledgeRevisionMetadata
 from fairy_core.knowledge.models import (
     HarnessContextManifest,
     KnowledgeCollection,
@@ -717,6 +718,59 @@ class SqlAlchemyKnowledgeRepository:
                 .all()
             )
         return tuple(revision_from_row(row) for row in rows)
+
+    def current_revision_metadata(
+        self,
+        project_id: UUID,
+    ) -> tuple[KnowledgeRevisionMetadata, ...]:
+        revisions = knowledge_revisions.c
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(
+                        revisions.id,
+                        revisions.source_id,
+                        revisions.project_id,
+                        revisions.revision,
+                        revisions.relative_path,
+                        revisions.title,
+                        revisions.content_hash,
+                        revisions.revision_hash,
+                        revisions.byte_length,
+                        revisions.links,
+                    )
+                    .join(
+                        knowledge_items,
+                        and_(
+                            knowledge_items.c.tenant_id == revisions.tenant_id,
+                            knowledge_items.c.current_revision_id == revisions.id,
+                        ),
+                    )
+                    .where(
+                        revisions.tenant_id == self._tenant_id,
+                        revisions.project_id == str(project_id),
+                        knowledge_items.c.tombstoned_at.is_(None),
+                    )
+                    .order_by(revisions.source_id, revisions.relative_path, revisions.id)
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            KnowledgeRevisionMetadata(
+                id=UUID(row["id"]),
+                source_id=UUID(row["source_id"]),
+                project_id=UUID(row["project_id"]),
+                revision=int(row["revision"]),
+                relative_path=row["relative_path"],
+                title=row["title"],
+                content_hash=row["content_hash"],
+                revision_hash=row["revision_hash"],
+                byte_length=int(row["byte_length"]),
+                links=tuple(row["links"]),
+            )
+            for row in rows
+        )
 
     def append_snapshot(
         self,

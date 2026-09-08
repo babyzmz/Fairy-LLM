@@ -33,6 +33,7 @@ from fairy_core.contracts.knowledge import (
 )
 from fairy_core.domain.execution import Artifact
 from fairy_core.domain.models import Conversation, Project, Task
+from fairy_core.knowledge.catalog import KnowledgeRevisionMetadata
 from fairy_core.knowledge.models import (
     KnowledgeRevision,
     KnowledgeSnapshot,
@@ -51,7 +52,7 @@ class _ProjectContext:
     conversations: tuple[Conversation, ...]
     tasks: tuple[Task, ...]
     artifacts: tuple[Artifact, ...]
-    revisions: tuple[KnowledgeRevision, ...]
+    revisions: tuple[KnowledgeRevisionMetadata, ...]
     sources: tuple[KnowledgeSource, ...]
     claims: tuple[MemoryClaim, ...]
     watermark: str
@@ -218,7 +219,7 @@ class ProjectKnowledgeApplication:
                 for task in tasks
                 for artifact in unit_of_work.state.artifacts_for_task(task.id)
             )
-            revisions = unit_of_work.knowledge.current_revisions(project.id)
+            revisions = unit_of_work.knowledge.current_revision_metadata(project.id)
             sources = unit_of_work.knowledge.list_sources(project.id)
             claims = tuple(
                 unit_of_work.memory.claims_for_scope(
@@ -490,7 +491,7 @@ class ProjectKnowledgeApplication:
 
     def _revision_items(
         self,
-        revisions: tuple[KnowledgeRevision, ...],
+        revisions: tuple[KnowledgeRevisionMetadata, ...],
     ) -> tuple[KnowledgeItemModel, ...]:
         return tuple(
             KnowledgeItemModel.model_validate(
@@ -521,7 +522,7 @@ class ProjectKnowledgeApplication:
         )
 
     @staticmethod
-    def _revision_node(revision: KnowledgeRevision) -> KnowledgeGraphNodeModel:
+    def _revision_node(revision: KnowledgeRevisionMetadata) -> KnowledgeGraphNodeModel:
         return KnowledgeGraphNodeModel(
             id=f"knowledge-revision:{revision.id}",
             project_id=revision.project_id,
@@ -529,7 +530,7 @@ class ProjectKnowledgeApplication:
             title=revision.title,
             relative_path=revision.relative_path,
             content_hash=revision.content_hash,
-            byte_length=len(revision.content.encode("utf-8")),
+            byte_length=revision.byte_length,
             revision=revision.revision,
             source_id=revision.source_id,
             revision_id=revision.id,
@@ -622,7 +623,7 @@ class ProjectKnowledgeApplication:
         conversations: tuple[Conversation, ...],
         tasks: tuple[Task, ...],
         artifacts: tuple[Artifact, ...],
-        revisions: tuple[KnowledgeRevision, ...],
+        revisions: tuple[KnowledgeRevisionMetadata, ...],
         sources: tuple[KnowledgeSource, ...],
         claims: tuple[MemoryClaim, ...],
     ) -> str:
