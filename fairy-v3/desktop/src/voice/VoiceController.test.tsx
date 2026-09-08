@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -27,6 +27,79 @@ import {
 afterEach(cleanup);
 
 describe("VoiceController", () => {
+  it.each([["chat-a", "chat-b"], ["chat-b", "chat-a"]])(
+    "cancels recording when switching from %s to %s without transcribing into the new chat",
+    async (first, second) => {
+      const session = recordingSession();
+      const transcribe = vi.fn<VoiceClient["voice"]["transcribe"]>();
+      const fixture = scopedRecording(voiceClient({ transcribe }), environment({
+        startRecording: async () => session,
+      }));
+      const view = render(fixture.tree(first));
+      fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+      await screen.findByRole("button", { name: "Stop recording" });
+      view.rerender(fixture.tree(second));
+      expect(session.cancel).toHaveBeenCalledOnce();
+      expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+      expect(transcribe).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["switch", "unmount"])("releases microphone permission resolving after %s", async (action) => {
+    const permission = deferred<RecordingSession>();
+    const session = recordingSession();
+    const fixture = scopedRecording(voiceClient(), environment({ startRecording: () => permission.promise }));
+    const view = render(fixture.tree("chat-a"));
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    if (action === "switch") view.rerender(fixture.tree("chat-b"));
+    else view.unmount();
+    await act(async () => { permission.resolve(session); });
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Stop recording" })).not.toBeInTheDocument();
+  });
+
+  it("does not submit audio when recorder stop completes after a conversation switch", async () => {
+    const stopped = deferred<Blob>();
+    const session = { ...recordingSession(), stop: () => stopped.promise };
+    const transcribe = vi.fn<VoiceClient["voice"]["transcribe"]>();
+    const fixture = scopedRecording(voiceClient({ transcribe }), environment({ startRecording: async () => session }));
+    const view = render(fixture.tree("chat-a"));
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop recording" }));
+    view.rerender(fixture.tree("chat-b"));
+    await act(async () => { stopped.resolve(new Blob(["old audio"])); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled());
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(fixture.onTranscript).not.toHaveBeenCalled();
+  });
+
+  it("ignores a late transcript without resetting a new recording", async () => {
+    const pending = deferred<Awaited<ReturnType<VoiceClient["voice"]["transcribe"]>>>();
+    const transcribe = vi.fn(() => pending.promise);
+    const fixture = scopedRecording(voiceClient({ transcribe }), environment({ startRecording: async () => recordingSession() }));
+    const view = render(fixture.tree("chat-a"));
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop recording" }));
+    await waitFor(() => expect(transcribe).toHaveBeenCalledOnce());
+    view.rerender(fixture.tree("chat-b"));
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    await screen.findByRole("button", { name: "Stop recording" });
+    await act(async () => { pending.resolve({ conversation_id: "chat-a", profile_id: "voice", text: "old transcript", language: null, segments: [] }); });
+    expect(fixture.onTranscript).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Stop recording" })).toBeEnabled();
+  });
+
+  it.each(["profile", "task"])("cancels recording when the %s binding changes in the same chat", async (changed) => {
+    const session = recordingSession();
+    const fixture = scopedRecording(voiceClient(), environment({ startRecording: async () => session }));
+    const view = render(fixture.tree("chat-a", "voice-a", "task-a"));
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    await screen.findByRole("button", { name: "Stop recording" });
+    view.rerender(fixture.tree("chat-a", changed === "profile" ? "voice-b" : "voice-a", changed === "task" ? "task-b" : "task-a"));
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled();
+  });
+
   it("records through MediaRecorder and sends bounded audio to Core transcription", async () => {
     const onTranscript = vi.fn();
     const session: RecordingSession = {
@@ -447,6 +520,29 @@ function AmbientVoiceProbe() {
       <span data-testid="ambient-speaking">{voice.speakingAmbient ? "yes" : "no"}</span>
     </>
   );
+}
+
+function recordingSession(): RecordingSession {
+  return { mediaType: "audio/webm", stop: async () => new Blob(["audio"], { type: "audio/webm" }), cancel: vi.fn() };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => { resolve = complete; });
+  return { promise, resolve };
+}
+
+function scopedRecording(client: VoiceClient, voiceEnvironment: VoiceEnvironment) {
+  const onTranscript = vi.fn();
+  return {
+    onTranscript,
+    tree: (conversationId: string, profileId = "voice", taskId = "task") => (
+      <VoiceController client={client} environment={voiceEnvironment} conversationId={conversationId}
+        profile={{ ...provider(), id: profileId }} health={health()} turn={{ task_id: taskId } as AssistantTurn}>
+        <VoiceRecordControl onTranscript={onTranscript} />
+      </VoiceController>
+    ),
+  };
 }
 
 function renderVoice(

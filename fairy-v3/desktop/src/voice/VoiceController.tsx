@@ -6,6 +6,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -44,6 +45,16 @@ export interface RecordingSession {
   mediaType: string;
   stop(): Promise<Blob>;
   cancel(): void;
+}
+
+interface ScopedRecording {
+  generation: number;
+  conversationId: string;
+  taskId: string | null;
+  profileId: string;
+  onTranscript(text: string): void;
+  session: RecordingSession | null;
+  stopping: boolean;
 }
 
 export interface AudioPlayback {
@@ -115,8 +126,8 @@ export function VoiceController({
   const [recordingStatusMessage, setRecordingStatusMessage] = useState<string | null>(null);
   const [voiceRepliesEnabled, setVoiceRepliesEnabled] = useState(false);
   const [petMuted, setPetMuted] = useState(false);
-  const recordingRef = useRef<RecordingSession | null>(null);
-  const transcriptRef = useRef<((text: string) => void) | null>(null);
+  const recordingRef = useRef<ScopedRecording | null>(null);
+  const recordingGeneration = useRef(0);
   const playbackRef = useRef<AudioPlayback | null>(null);
   const voiceRequestRef = useRef<AbortController | null>(null);
   const playbackEpoch = useRef(0);
@@ -181,25 +192,50 @@ export function VoiceController({
     if (!voiceRepliesEnabled) stopSpeaking();
   }, [stopSpeaking, voiceRepliesEnabled]);
 
-  useEffect(() => {
+  const recordingScope = JSON.stringify([conversationId, turn?.task_id ?? null, profile]);
+  useLayoutEffect(() => {
     stopSpeaking();
-  }, [conversationId, stopSpeaking]);
+    setRecordingState("idle");
+    setRecordingStatusMessage(null);
+    return () => {
+      recordingGeneration.current += 1;
+      const recording = recordingRef.current;
+      recordingRef.current = null;
+      recording?.session?.cancel();
+    };
+  }, [recordingScope, environment, client, sttAvailable, stopSpeaking]);
 
   const startRecording = useCallback(
     async (onTranscript: (text: string) => void) => {
-      if (!sttAvailable) {
+      if (!sttAvailable || conversationId === null || profile === null) {
         setRecordingStatusMessage("Speech transcription unavailable");
         return;
       }
+      if (recordingRef.current !== null) return;
+      const recording: ScopedRecording = {
+        generation: ++recordingGeneration.current,
+        conversationId,
+        taskId: turn?.task_id ?? null,
+        profileId: profile.id,
+        onTranscript,
+        session: null,
+        stopping: false,
+      };
+      recordingRef.current = recording;
       stopSpeaking();
       setRecordingStatusMessage(null);
       setRecordingState("requesting");
       try {
         const session = await environment.startRecording();
-        recordingRef.current = session;
-        transcriptRef.current = onTranscript;
+        if (recording.generation !== recordingGeneration.current) {
+          session.cancel();
+          return;
+        }
+        recording.session = session;
         setRecordingState("recording");
       } catch (error) {
+        if (recording.generation !== recordingGeneration.current) return;
+        recordingRef.current = null;
         setRecordingState("idle");
         setRecordingStatusMessage(
           isPermissionDenied(error)
@@ -208,36 +244,42 @@ export function VoiceController({
         );
       }
     },
-    [environment, stopSpeaking, sttAvailable],
+    [environment, stopSpeaking, sttAvailable, conversationId, profile, turn?.task_id],
   );
 
   const stopRecording = useCallback(async () => {
-    const session = recordingRef.current;
-    const onTranscript = transcriptRef.current;
-    if (session === null || profile === null || conversationId === null) return;
-    recordingRef.current = null;
-    transcriptRef.current = null;
+    const recording = recordingRef.current;
+    if (recording === null || recording.session === null || recording.stopping) return;
+    const session = recording.session;
+    recording.stopping = true;
+    const isCurrent = () => recording.generation === recordingGeneration.current;
     setRecordingState("transcribing");
     setRecordingStatusMessage(null);
     try {
       const blob = await session.stop();
+      if (!isCurrent()) return;
       if (blob.size === 0 || blob.size > MAX_RECORDING_BYTES) {
         throw new Error("Recording exceeds the supported size");
       }
+      const audioBase64 = await blobToBase64(blob);
+      if (!isCurrent()) return;
       const result = await client.voice.transcribe({
-        conversation_id: conversationId,
-        profile_id: profile.id,
+        conversation_id: recording.conversationId,
+        profile_id: recording.profileId,
         media_type: recordingMediaType(session.mediaType || blob.type),
-        audio_base64: await blobToBase64(blob),
+        audio_base64: audioBase64,
         language: null,
       });
-      onTranscript?.(result.text);
+      if (isCurrent()) recording.onTranscript(result.text);
     } catch (error) {
-      setRecordingStatusMessage(errorMessage(error, "Transcription failed"));
+      if (isCurrent()) setRecordingStatusMessage(errorMessage(error, "Transcription failed"));
     } finally {
-      setRecordingState("idle");
+      if (isCurrent()) {
+        recordingRef.current = null;
+        setRecordingState("idle");
+      }
     }
-  }, [client.voice, conversationId, profile]);
+  }, [client.voice]);
 
   const speak = useCallback(
     async (message: Message) => {
@@ -497,7 +539,6 @@ export function VoiceController({
 
   useEffect(
     () => () => {
-      recordingRef.current?.cancel();
       playbackRef.current?.stop();
       voiceRequestRef.current?.abort();
       playbackEpoch.current += 1;
