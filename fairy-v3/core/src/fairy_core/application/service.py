@@ -454,12 +454,13 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             execution_policy=self._execution_policy,
             execution_completion_hook=self._finalize_assistant_execution,
         )
-        assistant_workflow.register_assistant_workflow_adapter(
+        failure_projection = assistant_workflow.register_assistant_workflow_adapter(
             self._workflow_adapters,
             unit_of_work_factory=unit_of_work_factory,
             application=self._assistant_application,
             ledger=self._assistant_ledger,
         )
+        failure_projection.recover(unit_of_work_factory)
         self._workflow_scheduler.start()
         self._assistant_scheduler = AssistantTurnScheduler(
             ledger=self._assistant_ledger,

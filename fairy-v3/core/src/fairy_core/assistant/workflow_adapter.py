@@ -24,6 +24,7 @@ from fairy_core.assistant.workflow_plan import (
     ASSISTANT_WORKFLOW_PREPARE_NODE_KIND,
     apply_pending_assistant_steering,
 )
+from fairy_core.assistant.workflow_settlement import AssistantWorkflowFailureProjection
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.providers import CancellationToken
 from fairy_core.workflow.models import WorkflowNode
@@ -289,7 +290,7 @@ def register_assistant_workflow_adapter(
     unit_of_work_factory,
     application: AssistantApplication,
     ledger: AssistantLedgerApplication,
-) -> None:
+) -> AssistantWorkflowFailureProjection:
     from fairy_core.assistant.workflow_step_adapter import AssistantStepWorkflowAdapter
     from fairy_core.assistant.workflow_step_nodes import (
         STEP_FINALIZE,
@@ -304,16 +305,26 @@ def register_assistant_workflow_adapter(
     )
 
     adapter = AssistantTurnWorkflowAdapter(application, ledger, unit_of_work_factory)
+    projection = AssistantWorkflowFailureProjection(application)
+    for version in (2, 3, 4):
+        adapters.register_failure_handler("assistant_turn", version, projection.settle)
     adapters.register(ASSISTANT_WORKFLOW_PREPARE_NODE_KIND, adapter)
     adapters.register(ASSISTANT_WORKFLOW_NODE_KIND, adapter)
     for kind in ASSISTANT_CONTINUATION_NODE_KINDS:
         adapters.register(kind, adapter)
-    steps = AssistantStepWorkflowAdapter(application, ledger, unit_of_work_factory, adapter)
+    steps = AssistantStepWorkflowAdapter(
+        application, ledger, unit_of_work_factory, adapter,
+        failure_handler=adapters.settle_failed_run,
+    )
     for kind in (STEP_ROUTE, STEP_MODEL, STEP_REVIEW, STEP_VERIFY, STEP_FINALIZE):
         adapters.register(kind, steps)
     adapters.register(ASSISTANT_STEP_JOIN_KIND, steps)
-    tool_steps = AssistantStepWorkflowAdapter(application, ledger, unit_of_work_factory, adapter)
+    tool_steps = AssistantStepWorkflowAdapter(
+        application, ledger, unit_of_work_factory, adapter,
+        failure_handler=adapters.settle_failed_run,
+    )
     adapters.register(ASSISTANT_STEP_TOOL_KIND, tool_steps)
+    return projection
 
 
 def resumable_assistant_turn_ids(ledger: AssistantLedgerApplication) -> tuple[UUID, ...]:

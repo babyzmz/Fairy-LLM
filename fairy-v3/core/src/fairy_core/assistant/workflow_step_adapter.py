@@ -144,11 +144,12 @@ class _ModelBoundary:
 class AssistantStepWorkflowAdapter:
     """Version-4 execution; opt-in until all recovery and domain gates pass."""
 
-    def __init__(self, application, ledger, factory, preparation_adapter):
+    def __init__(self, application, ledger, factory, preparation_adapter, *, failure_handler):
         self._application = application
         self._ledger = ledger
         self._factory = factory
         self._preparation = preparation_adapter
+        self._failure_handler = failure_handler
 
     def execute(self, node, cancellation):
         raise WorkflowFenceError("Version-4 nodes require a live Workflow claim")
@@ -176,7 +177,10 @@ class AssistantStepWorkflowAdapter:
                 or claim.run_id != node.run_id
             ):
                 raise WorkflowFenceError("Model step does not belong to this Workflow Turn")
-            renewed = unit.workflows.renew(claim, lease_until=assistant_command_lease_until())
+            renewed = unit.workflows.renew(
+                claim, lease_until=assistant_command_lease_until(),
+                on_failed=lambda run: self._failure_handler(unit, run),
+            )
             unit.commit()
         if not renewed:
             raise WorkflowFenceError("Workflow model step lost its lease")

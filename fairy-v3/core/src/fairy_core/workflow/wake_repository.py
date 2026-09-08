@@ -8,13 +8,12 @@ from sqlalchemy import and_, func, select, union_all
 
 from fairy_core.storage.schema import workflow_attempts, workflow_nodes, workflow_runs
 from fairy_core.workflow.claim_candidates import dispatchable_run_predicate
+from fairy_core.workflow.time_queries import run_deadline_epoch, timestamp_epoch
 
 
 class WorkflowWakeRepositoryMixin:
     def _epoch(self, column: Any) -> Any:
-        if self._connection.dialect.name == "sqlite":
-            return (func.julianday(column) - 2440587.5) * 86400.0
-        return func.extract("epoch", column)
+        return timestamp_epoch(self._connection, column)
 
     def next_wake_delay(
         self, *, now: datetime, maximum: float,
@@ -47,7 +46,7 @@ class WorkflowWakeRepositoryMixin:
             ),
             select(
                 func.min(
-                    self._epoch(workflow_runs.c.created_at) + workflow_runs.c.max_duration_seconds,
+                    run_deadline_epoch(self._connection),
                 )
             ).where(
                 workflow_runs.c.tenant_id == self._tenant_id,

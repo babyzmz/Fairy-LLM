@@ -38,6 +38,8 @@
 
 ### Phase 6：领域结果与中途修订边界
 
+- 模型Command失败收尾只重新领取已过期租约，不借用仍有效的新持有者身份，也不重放Provider；提交`d1039e1af`，16项定向回归通过，见[专项证据](workflow-model-failure-settlement.md)。仍活跃的外部命令保留原所有者，不宣称物理停止。
+- Deadline维护与Turn/Task/Trace失败投影在同一事务中结算；空闲领取、心跳、Adapter入口均接线。旧失败Run的残留非终态Turn在启动时每批64条恢复；超时SQL过滤、分批和独立续租期限检查防止积压任务越期执行。11项定向通过；完整Assistant＋Workflow397项通过（312.26秒）。见[专项证据](workflow-deadline-projection.md)。真实PostgreSQL锁竞争未验收；普通重试/等待预算耗尽及审批Steering仍需后续门禁。
 - Trace失败事件不再借用其他Worker的Command租约，提交`0509bc79c`；Assistant完整回归320项通过（250.44秒），见[专项证据](workflow-trace-failure-authority.md)。
 - 媒体操作已派发但结果未定时，Steering保留原计划及结果收尾节点；只有可信Adapter声明的持久收尾阶段可以在暂停中记录既有结果，不派发新操作，不增加线程池。新意图约束未来操作，不把旧操作的已知结果改写为意图过期失败。
 - 正常/回执丢失下的暂停与Steering、派发前暂停防空转、跨Run/tenant、重开/Fence/取消8项通过；Workflow/Media/相关Assistant联合163项通过（131.74秒）。见[专项证据](deferred-media-steering.md)。

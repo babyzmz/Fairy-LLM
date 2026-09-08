@@ -938,6 +938,25 @@ class SqlAlchemyAssistantRepository(
             ).all()
         return tuple(UUID(str(row[0])) for row in rows)
 
+    def unsettled_failed_workflow_ids(self, *, limit: int = 64) -> tuple[UUID, ...]:
+        validate_limit(limit)
+        with self._session.read() as connection:
+            rows = connection.execute(
+                select(workflow_runs.c.id).join(assistant_turns, and_(
+                    assistant_turns.c.tenant_id == workflow_runs.c.tenant_id,
+                    assistant_turns.c.workflow_run_id == workflow_runs.c.id,
+                    assistant_turns.c.id == workflow_runs.c.owner_id,
+                    assistant_turns.c.execution_engine_version == workflow_runs.c.engine_version,
+                )).where(
+                    workflow_runs.c.tenant_id == self._tenant_id,
+                    workflow_runs.c.owner_kind == "assistant_turn",
+                    workflow_runs.c.engine_version.in_((2, 3, 4)),
+                    workflow_runs.c.status == WorkflowRunStatus.FAILED.value,
+                    assistant_turns.c.status.not_in(("completed", "cancelled", "failed")),
+                ).order_by(workflow_runs.c.updated_at, workflow_runs.c.id).limit(limit)
+            ).all()
+        return tuple(UUID(str(row[0])) for row in rows)
+
     def _first(self, statement: Any) -> RowMapping | None:
         with self._session.read() as connection:
             return connection.execute(statement).mappings().first()

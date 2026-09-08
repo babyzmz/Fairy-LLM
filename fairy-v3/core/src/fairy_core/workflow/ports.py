@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
@@ -65,9 +65,13 @@ class WorkflowRepository(Protocol):
         blocking_parent_kinds: frozenset[str] = frozenset(),
         reserve_child_slot: bool = False,
         reconciliation_phases: Mapping[str, str] | None = None,
+        on_failed: Callable[[WorkflowRun], None] | None = None,
     ) -> tuple[WorkflowAttemptClaim, ...]: ...
 
-    def renew(self, claim: WorkflowAttemptClaim, *, lease_until: datetime) -> bool: ...
+    def renew(
+        self, claim: WorkflowAttemptClaim, *, lease_until: datetime,
+        on_failed: Callable[[WorkflowRun], None] | None = None,
+    ) -> bool: ...
 
     def reserve_budget(
         self,

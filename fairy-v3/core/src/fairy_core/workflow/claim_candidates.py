@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Connection
 
 from fairy_core.storage.schema import workflow_nodes, workflow_runs
+from fairy_core.workflow.time_queries import run_deadline_epoch
 
 CLAIM_CANDIDATE_BATCH_SIZE = 128
 
@@ -69,6 +70,7 @@ def ready_candidates(
         .where(
             workflow_nodes.c.tenant_id == tenant_id,
             dispatchable_run_predicate(reconciliation_phases or {}),
+            run_deadline_epoch(connection) > now.timestamp(),
         )
         .order_by(
             ranked.c.fair_rank,

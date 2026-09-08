@@ -77,6 +77,18 @@ class WorkflowPaused(RuntimeError):
 class WorkflowAdapterRegistry:
     def __init__(self, adapters: Mapping[str, WorkflowNodeAdapter] | None = None) -> None:
         self._adapters = dict(adapters or {})
+        self._failure_handlers = {}
+
+    def register_failure_handler(self, owner_kind, engine_version, handler):
+        key = (owner_kind, engine_version)
+        if key in self._failure_handlers or not callable(handler):
+            raise ValueError("Workflow failure handler is invalid or already registered")
+        self._failure_handlers[key] = handler
+
+    def settle_failed_run(self, unit, run):
+        handler = self._failure_handlers.get((run.owner_kind, run.engine_version))
+        if handler is not None:
+            handler(unit, run)
 
     def register(self, kind: str, adapter: WorkflowNodeAdapter) -> None:
         normalized = kind.strip()
@@ -356,6 +368,7 @@ class WorkflowScheduler:
                     renewed = unit_of_work.workflows.renew(
                         item.claim,
                         lease_until=self._new_lease_until(),
+                        on_failed=lambda run: self._adapters.settle_failed_run(unit_of_work, run),
                     )
                     # Renewal also settles expired run budgets, even when this
                     # particular attempt can no longer retain its lease.
@@ -395,6 +408,7 @@ class WorkflowScheduler:
                 blocking_parent_kinds=blocking_parent_kinds,
                 reserve_child_slot=reserve_child_slot,
                 reconciliation_phases=self._adapters.reconciliation_phases(),
+                on_failed=lambda run: self._adapters.settle_failed_run(unit_of_work, run),
             )
             claim_nodes = {}
             for claim in claims:

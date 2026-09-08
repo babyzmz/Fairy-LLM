@@ -214,5 +214,7 @@ class AssistantRepository(Protocol):
 
     def resumable_workflow_turn_ids(self) -> tuple[UUID, ...]: ...
 
+    def unsettled_failed_workflow_ids(self, *, limit: int = 64) -> tuple[UUID, ...]: ...
+
 
 __all__ = ["AssistantRepository"]

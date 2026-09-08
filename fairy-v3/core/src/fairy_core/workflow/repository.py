@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -54,6 +54,7 @@ from fairy_core.workflow.repository_records import (
     string_list,
     validate_plan,
 )
+from fairy_core.workflow.time_queries import run_deadline_epoch
 from fairy_core.workflow.wake_repository import WorkflowWakeRepositoryMixin
 
 _RUN_TERMINAL = {
@@ -283,11 +284,12 @@ class SqlAlchemyWorkflowRepository(
         blocking_parent_kinds: frozenset[str] = frozenset(),
         reserve_child_slot: bool = False,
         reconciliation_phases: Mapping[str, str] | None = None,
+        on_failed: Callable[[WorkflowRun], None] | None = None,
     ) -> tuple[WorkflowAttemptClaim, ...]:
         now = datetime.now(UTC)
         if not worker_id.strip() or limit < 1 or lease_until <= now:
             raise ValueError("Workflow claim parameters are invalid")
-        self._expire_overdue(now)
+        self._expire_overdue(now, on_failed=on_failed)
         self._reclaim_expired(now)
         active_rows = (
             self._connection.execute(
@@ -419,14 +421,25 @@ class SqlAlchemyWorkflowRepository(
             )
         return tuple(claims)
 
-    def renew(self, claim: WorkflowAttemptClaim, *, lease_until: datetime) -> bool:
+    def renew(
+        self, claim: WorkflowAttemptClaim, *, lease_until: datetime,
+        on_failed: Callable[[WorkflowRun], None] | None = None,
+    ) -> bool:
         now = datetime.now(UTC)
         if lease_until <= now:
             raise ValueError("Workflow lease renewal must extend into the future")
-        self._expire_overdue(now)
+        self._expire_overdue(now, on_failed=on_failed, priority_run_id=claim.run_id)
         changed = self._connection.execute(
             update(workflow_attempts)
-            .where(*self._claim_predicates(claim, require_live=True))
+            .where(
+                *self._claim_predicates(claim, require_live=True),
+                workflow_attempts.c.run_id.in_(select(workflow_runs.c.id).where(
+                    workflow_runs.c.tenant_id == self._tenant_id,
+                    workflow_runs.c.id == str(claim.run_id),
+                    workflow_runs.c.status.not_in(tuple(status.value for status in _RUN_TERMINAL)),
+                    run_deadline_epoch(self._connection) > now.timestamp(),
+                )),
+            )
             .values(lease_until=lease_until)
         ).rowcount
         return changed == 1
