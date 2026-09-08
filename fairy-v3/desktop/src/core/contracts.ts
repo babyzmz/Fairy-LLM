@@ -110,6 +110,13 @@ export type ArtifactPage = Schemas["ArtifactPageModel"];
 export type AssistantTurn = Schemas["AssistantTurnModel"];
 export type AssistantTurnCancelInput = Schemas["AssistantTurnCancelInput"];
 export type AssistantTurnCreateInput = Schemas["AssistantTurnCreateInput"];
+export type AssistantMessageSubmitInput = Omit<
+  AssistantTurnCreateInput, "task_id" | "image_attachments"
+> & {
+  conversation_id: string;
+  content: string;
+  source: "chat" | "pet" | "stt";
+};
 export type AssistantTurnInterpretation = Schemas["AssistantRequestInterpretationModel"];
 export interface AssistantTurnInterpretationInput {
   turn_id: string;
@@ -827,6 +834,10 @@ export interface CoreMethodMap {
   "artifacts.read": { params: { artifact_id: string }; result: Artifact };
   "assistant.turns.create": {
     params: AssistantTurnCreateInput;
+    result: AssistantTurn;
+  };
+  "assistant.messages.submit": {
+    params: AssistantMessageSubmitInput;
     result: AssistantTurn;
   };
   "assistant.background_tasks.list": {

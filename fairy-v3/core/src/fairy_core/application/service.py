@@ -34,6 +34,7 @@ from fairy_core.assistant import workflow_adapter as assistant_workflow
 from fairy_core.assistant.application import AssistantApplication
 from fairy_core.assistant.image_inputs import build_image_attachments
 from fairy_core.assistant.ledger import AssistantLedgerApplication
+from fairy_core.assistant.message_ingress import AssistantMessageIngress
 from fairy_core.assistant.models import ToolInvocationStatus
 from fairy_core.assistant.schedule_service import AssistantScheduleService
 from fairy_core.assistant.tools import ToolExecutor
@@ -478,11 +479,17 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             selection_provider=self._model_catalog_service.selection_preference,
         )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
+        self._message_ingress = AssistantMessageIngress(
+            application=application,
+            scheduler=self._assistant_scheduler, providers=self._provider_registry,
+            unit_of_work_factory=unit_of_work_factory, turn_factory=self._create_assistant_turn,
+        )
         self._preview_idle_scheduler = (
             PreviewIdleScheduler(runtime_application) if runtime_application is not None else None
         )
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "ambient.dialogue.evaluate": self._ambient_dialogue.evaluate,
+            "assistant.messages.submit": self._message_ingress.submit,
             "approvals.decide": self._decide_approval,
             "approvals.list": self._list_approvals,
             "artifacts.list": self._list_artifacts,

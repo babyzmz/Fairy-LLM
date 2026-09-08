@@ -172,6 +172,22 @@ versions = Table(
     ),
 )
 
+assistant_message_submissions = Table(
+    "core_assistant_message_submissions", state_metadata,
+    _tenant_id(),
+    Column("key_digest", String(64), primary_key=True),
+    Column("request_digest", String(64), nullable=False),
+    Column("conversation_id", String(ID_LENGTH), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    CheckConstraint("length(key_digest) = 64 AND length(request_digest) = 64",
+                    name="ck_core_message_submission_hashes"),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_message_submission_conversation", ondelete="CASCADE",
+    ),
+)
+
 tasks = Table(
     "core_tasks",
     state_metadata,

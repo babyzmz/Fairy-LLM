@@ -9,6 +9,7 @@ import type {
   ApprovalListInput,
   AssistantScheduleCreateInput,
   AssistantScheduleUpdateInput,
+  AssistantMessageSubmitInput,
   AssistantTurnCancelInput,
   AssistantTurnCreateInput,
   AssistantTurnInterpretationInput,
@@ -730,6 +731,10 @@ export class CoreClient {
   };
 
   readonly assistant = {
+    messages: {
+      submit: (input: AssistantMessageSubmitInput) =>
+        this.transport.call("assistant.messages.submit", input),
+    },
     backgroundTasks: {
       list: (currentConversationId?: string | null) =>
         this.transport.call("assistant.background_tasks.list", {

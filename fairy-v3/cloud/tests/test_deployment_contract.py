@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260908_0054"]
+    assert scripts.get_heads() == ["20260909_0055"]
+    assert scripts.get_revision("20260909_0055").down_revision == "20260908_0054"
     assert scripts.get_revision("20260908_0054").down_revision == "20260809_0053"
     assert scripts.get_revision("20260809_0053").down_revision == "20260808_0052"
     assert scripts.get_revision("20260807_0050").down_revision == "20260807_0049"
@@ -301,6 +302,20 @@ def test_assistant_schedule_operation_mode_migration_is_reversible() -> None:
 
     downgrade_ddl = " ".join(output.getvalue().upper().split())
     assert "DROP COLUMN OPERATION_MODE" in downgrade_ddl
+
+
+def test_message_submission_migration_is_scoped_and_reversible() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260908_0054:20260909_0055", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert "CREATE TABLE CORE_ASSISTANT_MESSAGE_SUBMISSIONS" in ddl
+    assert "PRIMARY KEY (TENANT_ID, KEY_DIGEST)" in ddl
+    assert "REFERENCES CORE_CONVERSATIONS (TENANT_ID, ID) ON DELETE CASCADE" in ddl
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260909_0055:20260908_0054", sql=True)
+    assert "DROP TABLE core_assistant_message_submissions" in output.getvalue()
 
 
 def test_assistant_execution_intent_migration_keeps_legacy_authority_null() -> None:

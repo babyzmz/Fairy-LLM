@@ -61,6 +61,12 @@
       "transport": "local_only"
     },
     {
+      "name": "assistant.messages.submit",
+      "request_model": "AssistantMessageSubmitInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_only"
+    },
+    {
       "name": "assistant.schedules.cancel",
       "request_model": "AssistantScheduleRevisionInput",
       "response_model": "AssistantScheduleModel",

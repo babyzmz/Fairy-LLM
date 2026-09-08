@@ -125,6 +125,7 @@ from fairy_core.contracts.media import (
     MediaVideoJobInput,
     MediaVideoStartInput,
 )
+from fairy_core.contracts.message_ingress import AssistantMessageSubmitInput
 from fairy_core.contracts.method_primitives import (
     CoreMethod,
     CoreMethodTransport,
@@ -304,6 +305,10 @@ from fairy_core.system_actions.models import SystemActionExecution, SystemAction
 
 CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
     {
+        "assistant.messages.submit": CoreMethod(
+            "assistant.messages.submit", AssistantMessageSubmitInput, AssistantTurnModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
         "ambient.dialogue.evaluate": CoreMethod(
             "ambient.dialogue.evaluate",
             AmbientDialogueEvaluateInput,

@@ -48,7 +48,7 @@ from fairy_core.assistant.trace_repository import TurnTraceRepositoryMixin
 from fairy_core.assistant.workflow_projection import attach_workflow_summary
 from fairy_core.commanding.models import CommandStatus
 from fairy_core.commanding.schema import command_runs
-from fairy_core.domain.errors import InvalidTransitionError
+from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
 from fairy_core.model_catalog.models import (
     ModelEndpointKind,
     ModelSelectionMode,
@@ -65,6 +65,7 @@ from fairy_core.storage.pagination import StatePage, validate_limit
 from fairy_core.storage.schema import (
     assistant_imported_messages,
     assistant_message_sequences,
+    assistant_message_submissions,
     assistant_messages,
     assistant_provider_attempts,
     assistant_tool_invocations,
@@ -85,6 +86,31 @@ class SqlAlchemyAssistantRepository(
             raise ValueError(f"unsupported assistant repository dialect: {bind.dialect.name}")
         self._tenant_id = normalize_tenant_id(tenant_id)
         self._session = SqlAlchemySession(bind)
+
+    def message_submission_digest(self, key_digest: str) -> str | None:
+        row = self._first(select(assistant_message_submissions.c.request_digest).where(
+            assistant_message_submissions.c.tenant_id == self._tenant_id,
+            assistant_message_submissions.c.key_digest == key_digest,
+        ))
+        return row["request_digest"] if row is not None else None
+
+    def reserve_message_submission(
+        self, *, key_digest: str, request_digest: str, conversation_id: UUID,
+    ) -> None:
+        statement = self._insert(assistant_message_submissions).values(
+            tenant_id=self._tenant_id, key_digest=key_digest, request_digest=request_digest,
+            conversation_id=str(conversation_id), created_at=datetime.now(UTC),
+        ).on_conflict_do_nothing(index_elements=["tenant_id", "key_digest"])
+        with self._session.write() as connection:
+            connection.execute(statement)
+            actual = connection.execute(select(
+                assistant_message_submissions.c.request_digest,
+            ).where(
+                assistant_message_submissions.c.tenant_id == self._tenant_id,
+                assistant_message_submissions.c.key_digest == key_digest,
+            )).scalar_one()
+            if not hmac.compare_digest(actual, request_digest):
+                raise IdempotencyConflictError("Message idempotency key has a different request")
 
     def save_turn(self, turn: AssistantTurn) -> None:
         scoped_values = {"tenant_id": self._tenant_id, **self._turn_values(turn)}

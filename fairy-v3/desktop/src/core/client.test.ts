@@ -46,6 +46,20 @@ class RecordingTransport implements CoreTransport {
   }
 }
 
+it("submits a conversation-bound message without a frontend task creation chain", async () => {
+  const transport = new RecordingTransport();
+  const client = new CoreClient(transport);
+  const input = {
+    conversation_id: "0198f4de-0114-7000-8000-000000000002",
+    content: "Inspect the current files",
+    source: "pet" as const,
+    profile_id: "local-default",
+    idempotency_key: "pet-submission-once",
+  };
+  await client.assistant.messages.submit(input);
+  expect(transport.requests).toEqual([{ method: "assistant.messages.submit", params: input }]);
+});
+
 describe("CoreClient", () => {
   it("uses a bounded fallback interval rather than 25ms idle polling", () => {
     expect(DEFAULT_EVENT_POLL_MS).toBeGreaterThanOrEqual(250);
