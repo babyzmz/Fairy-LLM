@@ -23,6 +23,14 @@ from fairy_core.storage.pagination import StatePage
 
 
 class AssistantRepository(Protocol):
+    def message_cancellation_requested(
+        self, key_digest: str, conversation_id: UUID | None,
+    ) -> bool: ...
+
+    def request_message_cancellation(
+        self, key_digest: str, conversation_id: UUID | None,
+    ) -> None: ...
+
     def latest_turn_presentation(self, conversation_id: UUID) -> dict[str, Any] | None: ...
 
     def message_submission_digest(self, key_digest: str) -> str | None: ...

@@ -16,12 +16,27 @@ class AssistantTurnReader:
             return require_turn(unit_of_work, turn_id)
 
     def require_active(self, turn_id: UUID) -> None:
-        if self.get(turn_id).status is not AssistantTurnStatus.RUNNING:
+        turn = self.get(turn_id)
+        if turn.status is not AssistantTurnStatus.RUNNING or self.submission_cancelled(turn):
             raise ProviderCancelledError("Assistant Turn is no longer running")
 
     def require_waiting_for_tool(self, turn_id: UUID) -> None:
-        if self.get(turn_id).status is not AssistantTurnStatus.WAITING_FOR_TOOL:
+        turn = self.get(turn_id)
+        if (
+            turn.status is not AssistantTurnStatus.WAITING_FOR_TOOL
+            or self.submission_cancelled(turn)
+        ):
             raise ProviderCancelledError("Assistant Turn is no longer waiting for a tool")
+
+    def submission_cancelled(self, turn: AssistantTurn) -> bool:
+        prefix = "message-turn:"
+        if not turn.idempotency_key.startswith(prefix):
+            return False
+        key = turn.idempotency_key[len(prefix):]
+        if len(key) != 64 or any(char not in "0123456789abcdef" for char in key):
+            return False
+        with self._unit_of_work_factory() as unit:
+            return unit.assistant.message_cancellation_requested(key, turn.conversation_id)
 
     def tool_count(self, turn_id: UUID) -> int:
         with self._unit_of_work_factory() as unit_of_work:

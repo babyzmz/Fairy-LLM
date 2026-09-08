@@ -61,6 +61,13 @@ it("submits a conversation-bound message without a frontend task creation chain"
 });
 
 describe("CoreClient", () => {
+  it("cancels the original submission key before a Turn id is available", async () => {
+    const transport = new RecordingTransport();
+    const client = new CoreClient(transport);
+    const input = { idempotency_key: "pet:pending-id", conversation_id: null };
+    await client.assistant.messages.cancel(input);
+    expect(transport.requests).toEqual([{ method: "assistant.messages.cancel", params: input }]);
+  });
   it("dispatches explicit commands with their fixed conversation and Turn context", async () => {
     const transport = new RecordingTransport();
     const client = new CoreClient(transport);

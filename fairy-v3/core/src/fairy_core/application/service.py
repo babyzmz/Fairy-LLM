@@ -486,6 +486,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             application=application,
             scheduler=self._assistant_scheduler, providers=self._provider_registry,
             unit_of_work_factory=unit_of_work_factory, turn_factory=self._create_assistant_turn,
+            turn_canceller=self._cancel_assistant_turn,
         )
         self._domain_commands = AssistantDomainCommands(
             application=application, units=unit_of_work_factory,
@@ -499,6 +500,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "ambient.dialogue.evaluate": self._ambient_dialogue.evaluate,
             "assistant.messages.submit": self._message_ingress.submit,
+            "assistant.messages.cancel": self._message_ingress.cancel,
             "assistant.commands.dispatch": self._domain_commands.dispatch,
             "assistant.conversations.presentation.get": self._assistant_presentation.get,
             "approvals.decide": self._decide_approval,

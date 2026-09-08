@@ -14,7 +14,9 @@ def _request(key: int, method: str) -> str:
     return json.dumps({"jsonrpc": "2.0", "id": key, "method": method, "params": {}}) + "\n"
 
 
-@pytest.mark.parametrize("control_method", ["assistant.turns.pause", "assistant.turns.cancel"])
+@pytest.mark.parametrize("control_method", [
+    "assistant.turns.pause", "assistant.turns.cancel", "assistant.messages.cancel",
+])
 def test_negotiated_control_and_reads_bypass_a_blocked_serial_request(control_method):
     slow_started, release, control_done, read_done = (Event() for _ in range(4))
 

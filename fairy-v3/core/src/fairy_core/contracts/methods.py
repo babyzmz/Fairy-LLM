@@ -127,7 +127,11 @@ from fairy_core.contracts.media import (
     MediaVideoJobInput,
     MediaVideoStartInput,
 )
-from fairy_core.contracts.message_ingress import AssistantMessageSubmitInput
+from fairy_core.contracts.message_ingress import (
+    AssistantMessageCancelInput,
+    AssistantMessageCancellationResult,
+    AssistantMessageSubmitInput,
+)
 from fairy_core.contracts.method_primitives import (
     CoreMethod,
     CoreMethodTransport,
@@ -307,6 +311,10 @@ from fairy_core.system_actions.models import SystemActionExecution, SystemAction
 
 CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
     {
+        "assistant.messages.cancel": CoreMethod(
+            "assistant.messages.cancel", AssistantMessageCancelInput,
+            AssistantMessageCancellationResult, CoreMethodTransport.LOCAL_ONLY,
+        ),
         "assistant.conversations.presentation.get": CoreMethod(
             "assistant.conversations.presentation.get", ConversationIdInput,
             AssistantConversationPresentation, CoreMethodTransport.LOCAL_ONLY,

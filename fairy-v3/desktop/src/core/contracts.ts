@@ -110,6 +110,10 @@ export type ArtifactPage = Schemas["ArtifactPageModel"];
 export type AssistantTurn = Schemas["AssistantTurnModel"];
 export type AssistantTurnCancelInput = Schemas["AssistantTurnCancelInput"];
 export type AssistantTurnCreateInput = Schemas["AssistantTurnCreateInput"];
+export interface AssistantMessageCancelInput {
+  idempotency_key: string;
+  conversation_id?: string | null;
+}
 export interface AssistantCommandInput {
   text: string;
   idempotency_key: string;
@@ -864,6 +868,10 @@ export interface CoreMethodMap {
   "assistant.messages.submit": {
     params: AssistantMessageSubmitInput;
     result: AssistantTurn;
+  };
+  "assistant.messages.cancel": {
+    params: AssistantMessageCancelInput;
+    result: { accepted: boolean; turn: AssistantTurn | null };
   };
   "assistant.commands.dispatch": {
     params: AssistantCommandInput;

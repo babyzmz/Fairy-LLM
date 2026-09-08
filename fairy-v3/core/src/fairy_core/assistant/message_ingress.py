@@ -9,8 +9,15 @@ from fairy_core.assistant.turn_scheduler import AssistantTurnScheduler
 from fairy_core.assistant.turn_selection import resolve_turn_model_source
 from fairy_core.commanding import EventVisibility
 from fairy_core.contracts.common import ExecutionTarget
-from fairy_core.contracts.message_ingress import AssistantMessageSubmitInput
-from fairy_core.contracts.models import AssistantTurnCreateInput, TaskCreate
+from fairy_core.contracts.message_ingress import (
+    AssistantMessageCancelInput,
+    AssistantMessageSubmitInput,
+)
+from fairy_core.contracts.models import (
+    AssistantTurnCancelInput,
+    AssistantTurnCreateInput,
+    TaskCreate,
+)
 from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
 from fairy_core.domain.models import OperationMode, WorkspaceType
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -26,13 +33,60 @@ class AssistantMessageIngress:
         scheduler: AssistantTurnScheduler, providers: ProviderRegistry,
         unit_of_work_factory: CoreUnitOfWorkFactory,
         turn_factory: Callable[[AssistantTurnCreateInput], AssistantTurn],
+        turn_canceller: Callable[[AssistantTurnCancelInput], AssistantTurn],
     ) -> None:
         self._application = application
         self._scheduler = scheduler
         self._providers = providers
         self._units = unit_of_work_factory
         self._turn_factory = turn_factory
+        self._turn_canceller = turn_canceller
         self._lock = RLock()
+
+    def cancel(self, request: AssistantMessageCancelInput) -> dict:
+        key = sha256(request.idempotency_key.strip().encode("utf-8")).hexdigest()
+        with self._units() as unit:
+            known = unit.assistant.message_submission_conversation(key)
+            if known is not None and request.conversation_id not in {None, known}:
+                raise IdempotencyConflictError("Message belongs to a different conversation")
+            conversation_id = known or request.conversation_id
+            if conversation_id is not None and unit.state.get_conversation(conversation_id) is None:
+                raise KeyError("Message conversation is unavailable")
+            unit.assistant.request_message_cancellation(key, conversation_id)
+            # Re-read after acquiring the database write transaction: a submission
+            # may have committed between the initial lookup and this cancellation.
+            committed = unit.assistant.message_submission_conversation(key)
+            if committed is not None and request.conversation_id not in {None, committed}:
+                raise IdempotencyConflictError("Message belongs to a different conversation")
+            existing = unit.assistant.find_turn_by_idempotency_key(f"message-turn:{key}")
+            if existing is not None and request.conversation_id not in {
+                None, existing.conversation_id,
+            }:
+                raise IdempotencyConflictError("Message Turn belongs to a different conversation")
+            unit.commit()
+        return {"accepted": True, "turn": self._cancel_turn(existing) if existing else None}
+
+    def _cancel_turn(self, turn: AssistantTurn) -> AssistantTurn:
+        with self._units() as unit:
+            current = unit.assistant.get_turn(turn.id)
+        if current is None:
+            raise KeyError("Message Turn is unavailable")
+        if current.is_terminal:
+            return current
+        try:
+            return self._turn_canceller(AssistantTurnCancelInput(
+                turn_id=current.id, expected_cancellation_revision=current.cancellation_revision,
+            ))
+        except InvalidTransitionError:
+            with self._units() as unit:
+                latest = unit.assistant.get_turn(turn.id)
+            if latest is not None and latest.status.value == "cancelled":
+                return latest
+            raise
+
+    def _cancel_requested(self, key: str, conversation_id) -> bool:
+        with self._units() as unit:
+            return unit.assistant.message_cancellation_requested(key, conversation_id)
 
     def submit(self, request: AssistantMessageSubmitInput) -> AssistantTurn:
         with self._lock:
@@ -69,6 +123,8 @@ class AssistantMessageIngress:
                         "Message idempotency key has a different request"
                     )
             else:
+                if unit.assistant.message_cancellation_requested(key, request.conversation_id):
+                    raise InvalidTransitionError("Message submission was cancelled")
                 conversation = unit.state.get_conversation(request.conversation_id)
                 if conversation is None:
                     raise KeyError("Message conversation is unavailable")
@@ -84,6 +140,8 @@ class AssistantMessageIngress:
         if existing is not None:
             # A transport replay acknowledges the original submission. It is not a
             # user request to resume a paused/waiting workflow or retry a failure.
+            if self._cancel_requested(key, request.conversation_id):
+                return self._cancel_turn(existing)
             return existing
 
         selected = request.model_selection
@@ -97,9 +155,13 @@ class AssistantMessageIngress:
         if not self._providers.profile(profile_id).enabled:
             raise ProviderUnavailableError("Selected provider profile is disabled")
         with self._units() as unit:
+            if unit.assistant.message_cancellation_requested(key, request.conversation_id):
+                raise InvalidTransitionError("Message submission was cancelled")
             unit.assistant.reserve_message_submission(
                 key_digest=key, request_digest=digest, conversation_id=request.conversation_id,
             )
+            if unit.assistant.message_cancellation_requested(key, request.conversation_id):
+                raise InvalidTransitionError("Message submission was cancelled")
             unit.commit()
         context = self._application.create_task(TaskCreate(
             conversation_id=request.conversation_id, user_request=request.content,
@@ -118,4 +180,11 @@ class AssistantMessageIngress:
                 payload={"turn_id": str(turn.id), "source": request.source},
             )
             unit.commit()
-        return self._scheduler.start(turn.id)
+        if self._cancel_requested(key, request.conversation_id):
+            return self._cancel_turn(turn)
+        try:
+            return self._scheduler.start(turn.id)
+        except InvalidTransitionError:
+            if self._cancel_requested(key, request.conversation_id):
+                return self._cancel_turn(turn)
+            raise

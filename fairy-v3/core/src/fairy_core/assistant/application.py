@@ -143,6 +143,8 @@ class AssistantApplication(
         if turn.is_terminal:
             self._image_attachments.release(turn_id)
             return turn
+        if self._turns.submission_cancelled(turn):
+            return self._cancel_turn(turn_id, None)
         all_text: list[str] = []
         usage: dict[str, int] = {}
         tool_count = self._turns.tool_count(turn_id)

@@ -10,6 +10,7 @@ import type {
   AssistantScheduleCreateInput,
   AssistantScheduleUpdateInput,
   AssistantMessageSubmitInput,
+  AssistantMessageCancelInput,
   AssistantCommandInput,
   AssistantTurnCancelInput,
   AssistantTurnCreateInput,
@@ -735,6 +736,8 @@ export class CoreClient {
     messages: {
       submit: (input: AssistantMessageSubmitInput) =>
         this.transport.call("assistant.messages.submit", input),
+      cancel: (input: AssistantMessageCancelInput) =>
+        this.transport.call("assistant.messages.cancel", input),
     },
     commands: {
       dispatch: (input: AssistantCommandInput) =>

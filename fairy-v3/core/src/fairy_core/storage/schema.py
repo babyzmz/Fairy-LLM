@@ -188,6 +188,18 @@ assistant_message_submissions = Table(
     ),
 )
 
+assistant_message_cancellations = Table(
+    "core_assistant_message_cancellations", state_metadata,
+    _tenant_id(), Column("key_digest", String(64), primary_key=True),
+    Column("conversation_id", String(ID_LENGTH)),
+    Column("created_at", UTCDateTime(), nullable=False),
+    CheckConstraint("length(key_digest) = 64", name="ck_core_message_cancellation_hash"),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"], [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_message_cancellation_conversation", ondelete="CASCADE",
+    ),
+)
+
 tasks = Table(
     "core_tasks",
     state_metadata,

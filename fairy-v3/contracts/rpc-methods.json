@@ -73,6 +73,12 @@
       "transport": "local_only"
     },
     {
+      "name": "assistant.messages.cancel",
+      "request_model": "AssistantMessageCancelInput",
+      "response_model": "AssistantMessageCancellationResult",
+      "transport": "local_only"
+    },
+    {
       "name": "assistant.messages.submit",
       "request_model": "AssistantMessageSubmitInput",
       "response_model": "AssistantTurnModel",

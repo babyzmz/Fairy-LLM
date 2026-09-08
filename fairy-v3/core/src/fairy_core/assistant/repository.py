@@ -64,6 +64,7 @@ from fairy_core.providers import (
 from fairy_core.storage.pagination import StatePage, validate_limit
 from fairy_core.storage.schema import (
     assistant_imported_messages,
+    assistant_message_cancellations,
     assistant_message_sequences,
     assistant_message_submissions,
     assistant_messages,
@@ -133,6 +134,34 @@ class SqlAlchemyAssistantRepository(
             columns.conversation_id == str(conversation_id),
         ).order_by(columns.created_at.desc(), columns.id.desc()).limit(1))
         return dict(row) if row is not None else None
+
+    def message_cancellation_requested(
+        self, key_digest: str, conversation_id: UUID | None,
+    ) -> bool:
+        row = self._first(select(assistant_message_cancellations.c.conversation_id).where(
+            assistant_message_cancellations.c.tenant_id == self._tenant_id,
+            assistant_message_cancellations.c.key_digest == key_digest,
+        ))
+        if row is None:
+            return False
+        if (row["conversation_id"] is not None and conversation_id is not None
+                and row["conversation_id"] != str(conversation_id)):
+            raise IdempotencyConflictError(
+                "Message cancellation belongs to a different conversation"
+            )
+        return True
+
+    def request_message_cancellation(
+        self, key_digest: str, conversation_id: UUID | None,
+    ) -> None:
+        statement = self._insert(assistant_message_cancellations).values(
+            tenant_id=self._tenant_id, key_digest=key_digest,
+            conversation_id=str(conversation_id) if conversation_id is not None else None,
+            created_at=datetime.now(UTC),
+        ).on_conflict_do_nothing(index_elements=["tenant_id", "key_digest"])
+        with self._session.write() as connection:
+            connection.execute(statement)
+        self.message_cancellation_requested(key_digest, conversation_id)
 
     def save_turn(self, turn: AssistantTurn) -> None:
         scoped_values = {"tenant_id": self._tenant_id, **self._turn_values(turn)}

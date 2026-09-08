@@ -71,6 +71,8 @@ class AssistantPreparationMixin:
         turn = self._turns.get(turn_id)
         if turn.is_terminal:
             return turn
+        if self._turns.submission_cancelled(turn):
+            return self._cancel_turn(turn_id, None)
         if (
             turn.status is AssistantTurnStatus.WAITING_FOR_TOOL
             and turn.budget_approval_run_id is not None

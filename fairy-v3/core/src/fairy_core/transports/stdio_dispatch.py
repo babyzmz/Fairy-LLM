@@ -11,7 +11,9 @@ from fairy_core.transports.stdio_events import EventCursorResyncRequired, StdioE
 
 # Names are audited, not inferred from '.get' or '.cancel' suffixes. Assistant
 # cancellation commits a request; slow runtime stop signals use its bounded owner lane.
-CONTROL_METHODS = frozenset({"health", "assistant.turns.pause", "assistant.turns.cancel"})
+CONTROL_METHODS = frozenset({
+    "health", "assistant.turns.pause", "assistant.turns.cancel", "assistant.messages.cancel",
+})
 READ_METHODS = frozenset(
     {
         "assistant.turns.get",

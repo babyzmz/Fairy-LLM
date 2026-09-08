@@ -5,6 +5,23 @@ from pydantic import Field, model_validator
 
 from fairy_core.contracts.common import ContractModel
 from fairy_core.contracts.model_routing import ModelSelectionSnapshotInput
+from fairy_core.contracts.models import AssistantTurnModel
+
+
+class AssistantMessageCancelInput(ContractModel):
+    idempotency_key: str = Field(min_length=1, max_length=512)
+    conversation_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_key(self) -> "AssistantMessageCancelInput":
+        if not self.idempotency_key.strip():
+            raise ValueError("Message idempotency key must not be blank")
+        return self
+
+
+class AssistantMessageCancellationResult(ContractModel):
+    accepted: bool
+    turn: AssistantTurnModel | None
 
 
 class AssistantMessageSubmitInput(ContractModel):
