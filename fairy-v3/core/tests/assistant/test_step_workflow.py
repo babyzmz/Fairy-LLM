@@ -24,6 +24,34 @@ def _provider():
     )
 
 
+def test_step_checkpoint_preserves_existing_unicode_response_limit(tmp_path):
+    content = "界" * 700_000
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.text(profile_id="scripted", sequence=1, text=content),
+                ModelDelta.done(profile_id="scripted", sequence=2, finish_reason="stop"),
+            ),
+        ]
+    )
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((provider,)),
+        assistant_workflow_engine_version=4,
+    )
+    try:
+        task = _scratch_task(service, "Return a long Unicode answer")
+        turn = _turn(service, task, "unicode-response")
+        result = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        assert result["status"] == "completed"
+        with service._unit_of_work_factory() as unit:
+            message = unit.assistant.message_for_turn(UUID(turn["id"]), MessageRole.ASSISTANT)
+        assert message.content == content
+        assert len(provider.requests) == 1
+    finally:
+        service.close()
+
+
 @pytest.mark.parametrize(
     "lost_completion",
     [None, "assistant.step.model", "assistant.step.finalize"],

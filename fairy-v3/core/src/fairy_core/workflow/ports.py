@@ -88,6 +88,7 @@ class WorkflowRepository(Protocol):
 
     def record_checkpoint(
         self, claim: WorkflowAttemptClaim, *, result: Mapping[str, Any],
+        max_bytes: int = 2 * 1024 * 1024,
     ) -> bool: ...
 
     def complete(

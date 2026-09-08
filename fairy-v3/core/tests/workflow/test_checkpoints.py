@@ -133,3 +133,19 @@ def test_checkpoint_rejects_non_json_or_oversized_payload_without_partial_state(
         assert snapshot.nodes[0].status is WorkflowNodeStatus.RUNNING
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("max_bytes", [True, 0, -1, 1.5, 8 * 1024 * 1024 + 1])
+def test_checkpoint_adapter_cannot_remove_the_global_byte_bound(tmp_path, max_bytes):
+    engine = create_sqlite_core_engine(tmp_path / "adapter-budget.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+    run, claim = _claimed(factory)
+    try:
+        with factory() as unit:
+            with pytest.raises(ValueError):
+                unit.workflows.record_checkpoint(claim, result={"ok": True}, max_bytes=max_bytes)
+            unit.commit()
+        with factory() as unit:
+            assert unit.workflows.get_node(run.id, claim.node_id).result is None
+    finally:
+        engine.dispose()

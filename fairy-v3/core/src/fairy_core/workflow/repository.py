@@ -429,15 +429,20 @@ class SqlAlchemyWorkflowRepository(
 
     def record_checkpoint(
         self, claim: WorkflowAttemptClaim, *, result: Mapping[str, Any],
+        max_bytes: int = 2 * 1024 * 1024,
     ) -> bool:
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not (
+            1 <= max_bytes <= 8 * 1024 * 1024
+        ):
+            raise ValueError("Workflow checkpoint byte budget must be bounded by 8 MiB")
         self._locked_run(claim.run_id)
         now = datetime.now(UTC)
         node = self._require_claim(claim, now=now)
         encoded = json.dumps(
             dict(result), ensure_ascii=False, allow_nan=False, separators=(",", ":"),
         )
-        if len(encoded.encode("utf-8")) > 2 * 1024 * 1024:
-            raise ValueError("Workflow checkpoint exceeds 2 MiB")
+        if len(encoded.encode("utf-8")) > max_bytes:
+            raise ValueError("Workflow checkpoint exceeds its byte budget")
         normalized = json.loads(encoded)
         if node["result"] is not None:
             if node["result"] != normalized:

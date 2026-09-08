@@ -86,7 +86,11 @@ class _ModelBoundary:
     def _save(self, checkpoint):
         try:
             with self.factory() as unit:
-                unit.workflows.record_checkpoint(self.claim, result=checkpoint)
+                # Existing reply limits count Unicode characters, not UTF-8 bytes.
+                # This trusted adapter allowance is not supplied by model arguments.
+                unit.workflows.record_checkpoint(
+                    self.claim, result=checkpoint, max_bytes=8 * 1024 * 1024,
+                )
                 unit.commit()
         except WorkflowFenceError:
             self.cancellation.interrupt()
