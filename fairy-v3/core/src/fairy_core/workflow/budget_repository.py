@@ -10,6 +10,7 @@ from fairy_core.workflow.errors import WorkflowBudgetExceeded
 from fairy_core.workflow.models import (
     WorkflowBudget,
     WorkflowBudgetTier,
+    WorkflowRun,
     WorkflowRunStatus,
     WorkflowSnapshot,
 )
@@ -30,6 +31,14 @@ class WorkflowBudgetRepositoryMixin:
         model_rounds: int = 0,
         tool_invocations: int = 0,
     ) -> WorkflowSnapshot:
+        run = self.reserve_budget_run(
+            run_id, model_rounds=model_rounds, tool_invocations=tool_invocations,
+        )
+        return load_snapshot(self._connection, self._tenant_id, run)
+
+    def reserve_budget_run(
+        self, run_id: UUID, *, model_rounds: int = 0, tool_invocations: int = 0,
+    ) -> WorkflowRun:
         if model_rounds < 0 or tool_invocations < 0 or not (model_rounds or tool_invocations):
             raise ValueError("Workflow budget reservation must be positive")
         run = run_from_row(self._locked_run(run_id))
@@ -61,9 +70,9 @@ class WorkflowBudgetRepositoryMixin:
         )
         if reserved.rowcount != 1:
             raise WorkflowBudgetExceeded("Workflow budget changed before the call was admitted")
-        snapshot = self.get(run_id)
-        assert snapshot is not None
-        return snapshot
+        current = self.get_run(run_id)
+        assert current is not None
+        return current
 
     def upgrade_budget(
         self,
@@ -71,9 +80,13 @@ class WorkflowBudgetRepositoryMixin:
         *,
         budget: WorkflowBudget,
     ) -> WorkflowSnapshot:
+        run = self.upgrade_budget_run(run_id, budget=budget)
+        return load_snapshot(self._connection, self._tenant_id, run)
+
+    def upgrade_budget_run(self, run_id: UUID, *, budget: WorkflowBudget) -> WorkflowRun:
         run = run_from_row(self._locked_run(run_id))
         if run.budget == budget:
-            return load_snapshot(self._connection, self._tenant_id, run)
+            return run
         if (
             run.budget.tier is not WorkflowBudgetTier.NORMAL
             or budget.tier is not WorkflowBudgetTier.DEEP
@@ -100,9 +113,9 @@ class WorkflowBudgetRepositoryMixin:
                 updated_at=datetime.now(UTC),
             )
         )
-        snapshot = self.get(run_id)
-        assert snapshot is not None
-        return snapshot
+        current = self.get_run(run_id)
+        assert current is not None
+        return current
 
 
 __all__ = ["WorkflowBudgetRepositoryMixin"]

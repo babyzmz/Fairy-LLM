@@ -47,6 +47,7 @@ from fairy_core.workflow.repository_records import (
     conflicts,
     insert_plan,
     load_snapshot,
+    node_from_row,
     persist_instruction,
     run_from_row,
     run_record,
@@ -122,6 +123,12 @@ class SqlAlchemyWorkflowRepository(
         return snapshot
 
     def get(self, run_id: UUID) -> WorkflowSnapshot | None:
+        run = self.get_run(run_id)
+        if run is None:
+            return None
+        return load_snapshot(self._connection, self._tenant_id, run)
+
+    def get_run(self, run_id: UUID) -> WorkflowRun | None:
         row = (
             self._connection.execute(
                 select(workflow_runs).where(
@@ -134,7 +141,17 @@ class SqlAlchemyWorkflowRepository(
         )
         if row is None:
             return None
-        return load_snapshot(self._connection, self._tenant_id, run_from_row(row))
+        return run_from_row(row)
+
+    def get_node(self, run_id: UUID, node_id: UUID) -> WorkflowNode | None:
+        row = self._connection.execute(
+            select(workflow_nodes).where(
+                workflow_nodes.c.tenant_id == self._tenant_id,
+                workflow_nodes.c.run_id == str(run_id),
+                workflow_nodes.c.id == str(node_id),
+            )
+        ).mappings().one_or_none()
+        return node_from_row(row) if row is not None else None
 
     def get_by_owner(
         self,

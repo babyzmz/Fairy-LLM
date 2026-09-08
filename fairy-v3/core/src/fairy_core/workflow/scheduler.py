@@ -104,6 +104,7 @@ class _ActiveNode:
     cancellation: CancellationToken
     kind: str
     parent_run_id: UUID | None
+    node: WorkflowNode | None = None
 
 
 class WorkflowScheduler:
@@ -217,10 +218,10 @@ class WorkflowScheduler:
         deadline = time.monotonic() + timeout
         while True:
             with self._unit_of_work_factory() as unit_of_work:
-                snapshot = unit_of_work.workflows.get(run_id)
-            if snapshot is None:
+                run = unit_of_work.workflows.get_run(run_id)
+            if run is None:
                 raise KeyError(f"Workflow Run not found: {run_id}")
-            if snapshot.run.status in {
+            if run.status in {
                 WorkflowRunStatus.COMPLETED,
                 WorkflowRunStatus.CANCELLED,
                 WorkflowRunStatus.FAILED,
@@ -228,7 +229,11 @@ class WorkflowScheduler:
                 WorkflowRunStatus.WAITING_FOR_APPROVAL,
                 WorkflowRunStatus.WAITING_FOR_INPUT,
             }:
-                return snapshot
+                with self._unit_of_work_factory() as unit_of_work:
+                    snapshot = unit_of_work.workflows.get(run_id)
+                if snapshot is not None and snapshot.run.status is run.status:
+                    return snapshot
+                continue
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("Workflow did not settle before its wait deadline")
@@ -331,9 +336,12 @@ class WorkflowScheduler:
                     # Renewal also settles expired run budgets, even when this
                     # particular attempt can no longer retain its lease.
                     unit_of_work.commit()
-                    snapshot = unit_of_work.workflows.get(item.claim.run_id) if renewed else None
-                if renewed and snapshot is not None:
-                    node = next(value for value in snapshot.nodes if value.id == item.claim.node_id)
+                    node = item.node
+                    if renewed and node is None:
+                        node = unit_of_work.workflows.get_node(
+                            item.claim.run_id, item.claim.node_id,
+                        )
+                if renewed and node is not None:
                     heartbeat = getattr(self._adapters.require(node.kind), "heartbeat", None)
                     if callable(heartbeat):
                         renewed = bool(heartbeat(node))
@@ -365,11 +373,11 @@ class WorkflowScheduler:
             )
             claim_nodes = {}
             for claim in claims:
-                snapshot = unit_of_work.workflows.get(claim.run_id)
-                if snapshot is None:
+                run = unit_of_work.workflows.get_run(claim.run_id)
+                node = unit_of_work.workflows.get_node(claim.run_id, claim.node_id)
+                if run is None or node is None:
                     continue
-                node = next(value for value in snapshot.nodes if value.id == claim.node_id)
-                claim_nodes[claim.node_id] = (node.kind, snapshot.run.parent_run_id)
+                claim_nodes[claim.node_id] = (node, run.parent_run_id)
             # claim_ready also performs deadline/expired-lease maintenance.
             # No returned claim does not imply that the transaction was read-only.
             unit_of_work.commit()
@@ -379,12 +387,13 @@ class WorkflowScheduler:
             if claim_node is None:
                 self._abandon(claim)
                 continue
-            kind, parent_run_id = claim_node
+            node, parent_run_id = claim_node
             active = _ActiveNode(
                 claim=claim,
                 cancellation=cancellation,
-                kind=kind,
+                kind=node.kind,
                 parent_run_id=parent_run_id,
+                node=node,
             )
             with self._lock:
                 if self._closed:
@@ -409,11 +418,12 @@ class WorkflowScheduler:
         settled = False
         adapter = None
         try:
-            with self._unit_of_work_factory() as unit_of_work:
-                snapshot = unit_of_work.workflows.get(claim.run_id)
-            if snapshot is None:
-                raise KeyError(f"Workflow Run not found: {claim.run_id}")
-            node = next(node for node in snapshot.nodes if node.id == claim.node_id)
+            node = active.node
+            if node is None:
+                with self._unit_of_work_factory() as unit_of_work:
+                    node = unit_of_work.workflows.get_node(claim.run_id, claim.node_id)
+            if node is None:
+                raise KeyError(f"Workflow Node not found: {claim.node_id}")
             adapter = self._adapters.require(node.kind)
             execute_claimed = getattr(adapter, "execute_claimed", None)
             result = (
@@ -535,10 +545,10 @@ class WorkflowScheduler:
             has_active = any(item.claim.run_id == run_id for item in self._active.values())
         try:
             with self._unit_of_work_factory() as unit_of_work:
-                snapshot = unit_of_work.workflows.get(run_id)
-                if snapshot is None:
+                run = unit_of_work.workflows.get_run(run_id)
+                if run is None:
                     resolved = True
-                elif snapshot.run.status in {
+                elif run.status in {
                     WorkflowRunStatus.WAITING_FOR_APPROVAL,
                     WorkflowRunStatus.WAITING_FOR_INPUT,
                     WorkflowRunStatus.PAUSED,
@@ -548,7 +558,7 @@ class WorkflowScheduler:
                     resolved = True
                 else:
                     resolved = (
-                        snapshot.run.status
+                        run.status
                         in {
                             WorkflowRunStatus.COMPLETED,
                             WorkflowRunStatus.CANCELLED,

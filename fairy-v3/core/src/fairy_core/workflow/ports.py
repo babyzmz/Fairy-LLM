@@ -30,6 +30,10 @@ class WorkflowRepository(Protocol):
 
     def get(self, run_id: UUID) -> WorkflowSnapshot | None: ...
 
+    def get_run(self, run_id: UUID) -> WorkflowRun | None: ...
+
+    def get_node(self, run_id: UUID, node_id: UUID) -> WorkflowNode | None: ...
+
     def get_by_owner(
         self,
         *,
@@ -68,6 +72,12 @@ class WorkflowRepository(Protocol):
         model_rounds: int = 0,
         tool_invocations: int = 0,
     ) -> WorkflowSnapshot: ...
+
+    def reserve_budget_run(
+        self, run_id: UUID, *, model_rounds: int = 0, tool_invocations: int = 0,
+    ) -> WorkflowRun: ...
+
+    def upgrade_budget_run(self, run_id: UUID, *, budget: WorkflowBudget) -> WorkflowRun: ...
 
     def upgrade_budget(
         self,

@@ -21,12 +21,12 @@ class AssistantWorkflowRuntimeMixin:
             task = require_task(unit_of_work, turn.task_id)
             if turn.workflow_run_id is None:
                 return WorkflowBudget.normal()
-            snapshot = unit_of_work.workflows.get(turn.workflow_run_id)
-            if snapshot is None:
+            run = unit_of_work.workflows.get_run(turn.workflow_run_id)
+            if run is None:
                 raise RuntimeError("Assistant Workflow is unavailable")
             if decision is not None and decision.complexity is RoutingComplexity.HIGH:
                 deep_budget = WorkflowBudget.deep()
-                snapshot = unit_of_work.workflows.upgrade_budget(
+                run = unit_of_work.workflows.upgrade_budget_run(
                     turn.workflow_run_id,
                     budget=deep_budget,
                 )
@@ -44,17 +44,17 @@ class AssistantWorkflowRuntimeMixin:
                             expected_revision=expected_revision,
                         )
                 unit_of_work.commit()
-            return snapshot.run.budget
+            return run.budget
 
     def _raise_if_workflow_paused(self, turn_id: UUID) -> None:
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
             if turn.workflow_run_id is None:
                 return
-            snapshot = unit_of_work.workflows.get(turn.workflow_run_id)
-        if snapshot is None:
+            run = unit_of_work.workflows.get_run(turn.workflow_run_id)
+        if run is None:
             raise RuntimeError("Assistant Workflow is unavailable")
-        if snapshot.run.pause_requested:
+        if run.pause_requested:
             raise WorkflowPaused
 
     @staticmethod
@@ -66,7 +66,7 @@ class AssistantWorkflowRuntimeMixin:
         tool_invocations: int = 0,
     ) -> None:
         if turn.workflow_run_id is not None:
-            unit_of_work.workflows.reserve_budget(
+            unit_of_work.workflows.reserve_budget_run(
                 turn.workflow_run_id,
                 model_rounds=model_rounds,
                 tool_invocations=tool_invocations,

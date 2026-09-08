@@ -179,8 +179,8 @@ class AssistantStepWorkflowAdapter:
             prepared = self._application.prepare_turn(turn_id, cancellation)
             self._preparation._raise_preparation_boundary(prepared)
             with self._factory() as unit:
-                snapshot = unit.workflows.get(node.run_id)
-            child = step_node(node, STEP_MODEL, model_round=snapshot.run.model_rounds_used + 1)
+                run = unit.workflows.get_run(node.run_id)
+            child = step_node(node, STEP_MODEL, model_round=run.model_rounds_used + 1)
             return WorkflowNodeResult(
                 output={"turn_id": str(turn_id)},
                 next_nodes=(child,),
@@ -424,10 +424,7 @@ class AssistantStepWorkflowAdapter:
 
     def _draft(self, node):
         with self._factory() as unit:
-            snapshot = unit.workflows.get(node.run_id)
-        source = next(
-            (item for item in snapshot.nodes if str(item.id) == node.payload["model_node_id"]), None
-        )
+            source = unit.workflows.get_node(node.run_id, UUID(node.payload["model_node_id"]))
         if (
             source is None
             or source.kind not in {STEP_MODEL, STEP_REVIEW}
