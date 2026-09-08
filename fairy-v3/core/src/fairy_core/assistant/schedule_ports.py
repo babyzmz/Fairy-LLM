@@ -14,6 +14,10 @@ from fairy_core.assistant.schedule_models import (
 
 
 class AssistantScheduleRepository(Protocol):
+    def occurrences_for_projection(
+        self, *, turn_ids: tuple[UUID, ...], schedule_ids: tuple[UUID, ...],
+    ) -> tuple[AssistantScheduleOccurrence, ...]: ...
+
     def create(self, schedule: AssistantSchedule) -> AssistantSchedule: ...
 
     def get(self, schedule_id: UUID) -> AssistantSchedule | None: ...

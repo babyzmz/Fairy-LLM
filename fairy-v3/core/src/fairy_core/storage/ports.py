@@ -22,6 +22,10 @@ from fairy_core.storage.pagination import StatePage
 
 
 class StateStore(Protocol):
+    def get_conversations_by_ids(self, ids: tuple[UUID, ...]) -> tuple[Conversation, ...]: ...
+
+    def get_tasks_by_ids(self, ids: tuple[UUID, ...]) -> tuple[Task, ...]: ...
+
     def enqueue_media_work(
         self,
         job_id: UUID,

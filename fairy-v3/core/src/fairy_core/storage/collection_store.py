@@ -15,6 +15,24 @@ from fairy_core.storage.schema import approvals, conversations, projects, tasks,
 
 
 class CollectionStateStoreMixin:
+    def get_conversations_by_ids(self, ids: tuple[UUID, ...]) -> tuple[Conversation, ...]:
+        return tuple(
+            self._conversation_from_row(row) for row in self._rows_by_ids(conversations, ids)
+        )
+
+    def get_tasks_by_ids(self, ids: tuple[UUID, ...]) -> tuple[Task, ...]:
+        return tuple(self._task_from_row(row) for row in self._rows_by_ids(tasks, ids))
+
+    def _rows_by_ids(self, table: Table, ids: tuple[UUID, ...]) -> tuple[RowMapping, ...]:
+        if len(ids) > 500:
+            raise ValueError("State projection batch exceeds 500 IDs")
+        if not ids:
+            return ()
+        with self._session.read() as connection:
+            return tuple(connection.execute(select(table).where(
+                table.c.tenant_id == self._tenant_id, table.c.id.in_(tuple(map(str, ids))),
+            )).mappings())
+
     def list_projects(
         self,
         *,

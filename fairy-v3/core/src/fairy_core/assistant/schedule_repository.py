@@ -306,6 +306,26 @@ class SqlAlchemyAssistantScheduleRepository:
         )
         return _occurrence_from_row(row) if row is not None else None
 
+    def occurrences_for_projection(
+        self, *, turn_ids: tuple[UUID, ...], schedule_ids: tuple[UUID, ...],
+    ) -> tuple[AssistantScheduleOccurrence, ...]:
+        if len(turn_ids) + len(schedule_ids) > 500:
+            raise ValueError("Schedule projection batch exceeds 500 IDs")
+        if not turn_ids and not schedule_ids:
+            return ()
+        rows = self._connection.execute(select(assistant_schedule_occurrences).where(
+            assistant_schedule_occurrences.c.tenant_id == self._tenant_id,
+            or_(
+                assistant_schedule_occurrences.c.turn_id.in_(tuple(map(str, turn_ids))),
+                and_(
+                    assistant_schedule_occurrences.c.schedule_id.in_(tuple(map(str, schedule_ids))),
+                    assistant_schedule_occurrences.c.status.in_(("pending", "dispatched")),
+                ),
+            ),
+        ).order_by(assistant_schedule_occurrences.c.scheduled_for.desc(),
+                   assistant_schedule_occurrences.c.id.desc())).mappings()
+        return tuple(_occurrence_from_row(row) for row in rows)
+
     def get_occurrence_by_idempotency_key(
         self,
         *,

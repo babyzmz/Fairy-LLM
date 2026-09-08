@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import UTC, datetime
-from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 
 from fairy_core.assistant.models import AssistantTurn, AssistantWorkflowSummary
 from fairy_core.persistence.session import SqlAlchemySession
@@ -21,10 +21,60 @@ def attach_workflow_summary(
     tenant_id: str,
     turn: AssistantTurn,
 ) -> AssistantTurn:
+    return attach_workflow_summaries(session, tenant_id=tenant_id, turns=(turn,))[0]
+
+
+def attach_workflow_summaries(
+    session: SqlAlchemySession,
+    *,
+    tenant_id: str,
+    turns: tuple[AssistantTurn, ...],
+) -> tuple[AssistantTurn, ...]:
+    run_ids = {str(turn.workflow_run_id) for turn in turns if turn.workflow_run_id is not None}
+    if not run_ids:
+        return turns
+    with session.read() as connection:
+        runs = {
+            str(row["id"]): row
+            for row in connection.execute(
+                select(workflow_runs).where(
+                    workflow_runs.c.tenant_id == tenant_id,
+                    workflow_runs.c.id.in_(run_ids),
+                ),
+            ).mappings()
+        }
+        nodes = defaultdict(list)
+        for row in connection.execute(
+            select(
+                workflow_nodes.c.run_id,
+                workflow_nodes.c.id,
+                workflow_nodes.c.status,
+                workflow_nodes.c.kind,
+                workflow_nodes.c.public_summary,
+            )
+            .join(
+                workflow_runs,
+                and_(
+                    workflow_runs.c.tenant_id == workflow_nodes.c.tenant_id,
+                    workflow_runs.c.id == workflow_nodes.c.run_id,
+                    workflow_runs.c.active_plan_revision == workflow_nodes.c.plan_revision,
+                ),
+            )
+            .where(workflow_nodes.c.tenant_id == tenant_id, workflow_nodes.c.run_id.in_(run_ids)),
+        ).mappings():
+            nodes[str(row["run_id"])].append(row)
+    for turn in turns:
+        if turn.workflow_run_id is None:
+            continue
+        run = runs.get(str(turn.workflow_run_id))
+        if run is None:
+            raise ValueError("Assistant Turn is bound to a missing Workflow Run")
+        _attach_projection(turn, run, nodes[str(turn.workflow_run_id)])
+    return turns
+
+
+def _attach_projection(turn, run, nodes) -> None:
     run_id = turn.workflow_run_id
-    if run_id is None:
-        return turn
-    run, nodes = _load_active_plan(session, tenant_id=tenant_id, run_id=run_id)
     priority = {
         WorkflowNodeStatus.RUNNING.value: 0,
         WorkflowNodeStatus.WAITING_FOR_APPROVAL.value: 1,
@@ -59,42 +109,6 @@ def attach_workflow_summary(
         pause_requested=bool(run["pause_requested"]),
         updated_at=_datetime(run["updated_at"]),
     )
-    return turn
-
-
-def _load_active_plan(
-    session: SqlAlchemySession,
-    *,
-    tenant_id: str,
-    run_id: UUID,
-):
-    with session.read() as connection:
-        run = (
-            connection.execute(
-                select(workflow_runs).where(
-                    workflow_runs.c.tenant_id == tenant_id,
-                    workflow_runs.c.id == str(run_id),
-                )
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if run is None:
-            raise ValueError("Assistant Turn is bound to a missing Workflow Run")
-        nodes = (
-            connection.execute(
-                select(workflow_nodes)
-                .where(
-                    workflow_nodes.c.tenant_id == tenant_id,
-                    workflow_nodes.c.run_id == str(run_id),
-                    workflow_nodes.c.plan_revision == int(run["active_plan_revision"]),
-                )
-                .order_by(workflow_nodes.c.created_at, workflow_nodes.c.id)
-            )
-            .mappings()
-            .all()
-        )
-    return run, nodes
 
 
 def _datetime(value: datetime | str) -> datetime:
@@ -102,4 +116,4 @@ def _datetime(value: datetime | str) -> datetime:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
-__all__ = ["attach_workflow_summary"]
+__all__ = ["attach_workflow_summaries", "attach_workflow_summary"]

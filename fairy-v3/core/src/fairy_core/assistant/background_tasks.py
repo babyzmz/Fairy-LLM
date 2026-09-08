@@ -47,22 +47,64 @@ class AssistantBackgroundTaskProjection:
                 updated_since=recent_since,
                 limit=100,
             )
+            schedules = unit_of_work.assistant_schedules.list(limit=200)
+            turns = (*active_turns, *recent_turns)
+            conversations = {
+                item.id: item
+                for item in unit_of_work.state.get_conversations_by_ids(
+                    tuple(
+                        {turn.conversation_id for turn in turns}
+                        | {schedule.conversation_id for schedule in schedules}
+                    ),
+                )
+            }
+            tasks = {
+                item.id: item
+                for item in unit_of_work.state.get_tasks_by_ids(
+                    tuple({turn.task_id for turn in turns}),
+                )
+            }
+            occurrences = unit_of_work.assistant_schedules.occurrences_for_projection(
+                turn_ids=tuple(turn.id for turn in turns),
+                schedule_ids=tuple(schedule.id for schedule in schedules),
+            )
+            by_turn = {}
+            by_schedule = {}
+            for occurrence in occurrences:
+                if occurrence.turn_id is not None:
+                    if occurrence.turn_id in by_turn:
+                        raise ValueError("Multiple Schedule occurrences are bound to one Turn")
+                    by_turn[occurrence.turn_id] = occurrence
+                if occurrence.status in {
+                    AssistantOccurrenceStatus.PENDING,
+                    AssistantOccurrenceStatus.DISPATCHED,
+                }:
+                    by_schedule.setdefault(occurrence.schedule_id, occurrence)
             active_items = [
-                _turn_item(unit_of_work, turn, request.current_conversation_id)
+                _turn_item(
+                    turn,
+                    request.current_conversation_id,
+                    conversations.get(turn.conversation_id),
+                    tasks.get(turn.task_id),
+                    by_turn.get(turn.id),
+                )
                 for turn in active_turns
             ]
             recent_items = [
-                _turn_item(unit_of_work, turn, request.current_conversation_id)
+                _turn_item(
+                    turn,
+                    request.current_conversation_id,
+                    conversations.get(turn.conversation_id),
+                    tasks.get(turn.task_id),
+                    by_turn.get(turn.id),
+                )
                 for turn in recent_turns
             ]
             represented_active_schedules = {
                 item["schedule_id"] for item in active_items if item["schedule_id"] is not None
             }
-            schedules = unit_of_work.assistant_schedules.list(limit=200)
             for schedule in schedules:
-                occurrence = unit_of_work.assistant_schedules.get_active_occurrence(
-                    schedule_id=schedule.id
-                )
+                occurrence = by_schedule.get(schedule.id)
                 if (
                     occurrence is not None
                     and occurrence.status is AssistantOccurrenceStatus.DISPATCHED
@@ -70,7 +112,7 @@ class AssistantBackgroundTaskProjection:
                 ):
                     continue
                 item = _schedule_item(
-                    unit_of_work,
+                    conversations.get(schedule.conversation_id),
                     schedule,
                     occurrence,
                     request.current_conversation_id,
@@ -104,10 +146,7 @@ class AssistantBackgroundTaskProjection:
         }
 
 
-def _turn_item(unit_of_work, turn: AssistantTurn, current_conversation_id):
-    conversation = unit_of_work.state.get_conversation(turn.conversation_id)
-    task = unit_of_work.state.get_task(turn.task_id)
-    occurrence = unit_of_work.assistant_schedules.get_occurrence_for_turn(turn.id)
+def _turn_item(turn: AssistantTurn, current_conversation_id, conversation, task, occurrence):
     workflow = turn.workflow_summary
     interpretation = turn.interpretation_summary
     workflow_status = workflow.status if workflow is not None else None
@@ -131,8 +170,7 @@ def _turn_item(unit_of_work, turn: AssistantTurn, current_conversation_id):
             occurrence.public_error
             if occurrence is not None
             else interpretation.clarification_question
-            if turn.status is AssistantTurnStatus.WAITING_FOR_INPUT
-            and interpretation is not None
+            if turn.status is AssistantTurnStatus.WAITING_FOR_INPUT and interpretation is not None
             else "The task failed."
             if turn.status is AssistantTurnStatus.FAILED
             else None
@@ -159,12 +197,11 @@ def _turn_item(unit_of_work, turn: AssistantTurn, current_conversation_id):
 
 
 def _schedule_item(
-    unit_of_work,
+    conversation,
     schedule: AssistantSchedule,
     occurrence: AssistantScheduleOccurrence | None,
     current_conversation_id,
 ):
-    conversation = unit_of_work.state.get_conversation(schedule.conversation_id)
     status = (
         "queued"
         if occurrence is not None and occurrence.status is AssistantOccurrenceStatus.PENDING

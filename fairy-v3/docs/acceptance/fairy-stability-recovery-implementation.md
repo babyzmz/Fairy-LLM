@@ -252,6 +252,13 @@
 - Workspace Task查询随后按当前聊天/项目作用域和游标分页接线，跨聊天通知定位不能依赖全量Task缓存；不改Line Sidebar、草稿或Inspector保存策略。
 - 原1千/1万/10万记录回归分别复现18/180/1800次SELECT；新路径在三种规模均为2次有LIMIT查询，最多各解码40条原生/导入消息后合并。双聊天、双tenant及导入消息重开保持原内容/顺序；近期历史、Repository、Context、Tool Dispatch共39项通过（24.82秒），Ruff通过。未修改公开分页或历史消息，不以该测试宣称Workspace全量Task读取已解决。
 
+### Phase 5D：后台列表批量投影
+
+- 后台列表按已有限额批量读取Turn的Workflow摘要、Conversation、Task及Schedule Occurrence，不逐条重新查询。Workflow摘要只读所需节点展示字段，不解码Payload、工具结果或证据正文。
+- 保留当前/其他聊天分组、24小时最近20条、审批/暂停/取消状态和Schedule去重语义。双聊天、双tenant、关闭重开及20项列表SQL预算验证；前端事件驱动与低频恢复轮询在下一项接线，禁止仅降低轮询掩盖N+1。
+- 正式20个工作流及20个Schedule绑定回归先复现123次SELECT；批量投影后为8次，节点读取不再包含Payload或result。批量解释摘要绑定各Turn已读取的确切Revision，不追随另一次并发更正；取消仍区分pending，新增与单条get完全一致的对照测试。
+- Background/Repository/Schedule/Workflow控制43项通过（39.27秒）；补充解释与取消对照、Schedule服务/Trigger/取消回执16项通过（16.32秒），Ruff通过。真实SQLite关闭重开及跨tenant空投影已验；公开API返回字段与上限未变，前端低频兜底仍待接线。
+
 ### Phase 3B：事件提交唤醒与推送验收契约
 
 - 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。

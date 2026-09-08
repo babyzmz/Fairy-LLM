@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Table, and_, insert, or_, select, update
+from sqlalchemy import Table, and_, insert, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection, Engine, RowMapping
@@ -26,6 +26,7 @@ from fairy_core.assistant.evidence import (
 )
 from fairy_core.assistant.interpretation_repository import (
     AssistantInterpretationRepositoryMixin,
+    _interpretation_from_row,
 )
 from fairy_core.assistant.models import (
     AssistantTurn,
@@ -45,7 +46,10 @@ from fairy_core.assistant.routing import (
     routing_decision_record,
 )
 from fairy_core.assistant.trace_repository import TurnTraceRepositoryMixin
-from fairy_core.assistant.workflow_projection import attach_workflow_summary
+from fairy_core.assistant.workflow_projection import (
+    attach_workflow_summaries,
+    attach_workflow_summary,
+)
 from fairy_core.commanding.models import CommandStatus
 from fairy_core.commanding.schema import command_runs
 from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
@@ -69,6 +73,7 @@ from fairy_core.storage.schema import (
     assistant_message_submissions,
     assistant_messages,
     assistant_provider_attempts,
+    assistant_request_interpretations,
     assistant_tool_invocations,
     assistant_turns,
     conversation_moves,
@@ -307,7 +312,7 @@ class SqlAlchemyAssistantRepository(
                 .mappings()
                 .all()
             )
-        return tuple(self._with_workflow_summary(self._turn_from_row(row)) for row in rows)
+        return self._with_workflow_summaries(tuple(self._turn_from_row(row) for row in rows))
 
     def nonterminal_turns_for_tasks(
         self,
@@ -1079,6 +1084,34 @@ class SqlAlchemyAssistantRepository(
                 projected.id,
                 projected.active_interpretation_revision,
             )
+        return projected
+
+    def _with_workflow_summaries(
+        self, turns: tuple[AssistantTurn, ...],
+    ) -> tuple[AssistantTurn, ...]:
+        projected = attach_workflow_summaries(self._session, tenant_id=self._tenant_id, turns=turns)
+        cancelled = {str(turn.id) for turn in turns if turn.status is AssistantTurnStatus.CANCELLED}
+        interpreted = {str(turn.id): turn.active_interpretation_revision for turn in turns
+                       if turn.active_interpretation_revision is not None}
+        with self._session.read() as connection:
+            pending = set(connection.execute(select(assistant_turns.c.id).where(
+                assistant_turns.c.tenant_id == self._tenant_id,
+                assistant_turns.c.id.in_(cancelled), self._pending_operations(assistant_turns.c.id),
+            )).scalars()) if cancelled else set()
+            summaries = {}
+            if interpreted:
+                for row in connection.execute(select(assistant_request_interpretations).where(
+                    assistant_request_interpretations.c.tenant_id == self._tenant_id,
+                    tuple_(assistant_request_interpretations.c.turn_id,
+                           assistant_request_interpretations.c.revision).in_(
+                               tuple(interpreted.items()),
+                           ),
+                )).mappings():
+                    if row["revision"] == interpreted[str(row["turn_id"])]:
+                        summaries[str(row["turn_id"])] = _interpretation_from_row(row)
+        for turn in projected:
+            turn.cancellation_pending = str(turn.id) in pending
+            turn.interpretation_summary = summaries.get(str(turn.id))
         return projected
 
     def _pending_operations(self, turn_id):
