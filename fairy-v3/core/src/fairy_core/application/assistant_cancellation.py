@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
+from fairy_core.assistant.tools import ToolCancellationReceipt
 from fairy_core.contracts.models import AssistantTurnCancelInput
 from fairy_core.domain.errors import InvalidTransitionError, ProjectBusyError
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -113,7 +114,16 @@ class AssistantCancellationMixin:
             return
         for run in runs:
             try:
-                cancel_command(run)
+                receipt = cancel_command(run)
+                if isinstance(receipt, ToolCancellationReceipt):
+                    if receipt.command_id != run.id:
+                        raise ValueError("Tool cancellation receipt belongs to another Command")
+                    receipt.stopped.add_done_callback(
+                        lambda stopped, command=run: (
+                            self._assistant_application.settle_cancelled_domain_tool(command)
+                            if not stopped.cancelled() and stopped.exception() is None else None
+                        )
+                    )
             except Exception as error:
                 if strict:
                     raise ProjectBusyError("A running tool could not be stopped") from error

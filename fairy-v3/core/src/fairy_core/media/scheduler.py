@@ -3,11 +3,18 @@ from __future__ import annotations
 import time
 from uuid import UUID
 
+from fairy_core.assistant.tools import (
+    ToolCancellationReceipt,
+    ToolOutcomeUncertainError,
+    uses_deferred_media,
+)
 from fairy_core.commanding.registry import ToolRegistry
+from fairy_core.domain.errors import WorkerFenceError
 from fairy_core.media.application import MediaApplication, MediaGenerationResult
 from fairy_core.media.workflow import (
     MEDIA_GENERATION_NODE_KINDS,
     MediaGenerationWorkflowAdapter,
+    MediaWorkflowError,
     ensure_media_workflow,
 )
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -67,6 +74,79 @@ class MediaScheduler:
                 unit_of_work.commit()
         self._workflow_scheduler.wake()
 
+    def handoff(self, job_id, command) -> None:
+        """Publish the child Run and release this exact parent lease atomically."""
+        with self._unit_of_work_factory() as unit:
+            job = unit.state.get_media_job(job_id)
+            if (
+                not uses_deferred_media(command) or job is None
+                or job.command_run_id != command.id or job.task_id != command.task_id
+                or job.scope_digest != command.scope_digest
+            ):
+                raise WorkerFenceError("Media handoff does not own this Command")
+            ensure_media_workflow(unit, job)
+            if command.lease_owner is None or not unit.commands.abandon(
+                command.id, lease_owner=command.lease_owner, lease_fence=command.lease_fence,
+            ):
+                raise WorkerFenceError("Media handoff lost its Command lease")
+            unit.commit()
+        self._workflow_scheduler.wake()
+
+    def read_handoff_result(self, scope, command):
+        """Read the existing scoped Job only; never prepare or submit another effect."""
+        with self._unit_of_work_factory() as unit:
+            job = unit.state.find_media_job_by_idempotency_key(f"media-job:{command.id}")
+            if job is None:
+                raise ToolOutcomeUncertainError
+            turn = unit.assistant.get_turn(job.turn_id) if job.turn_id else None
+            if (
+                job.command_run_id != command.id or job.task_id != scope.task_id
+                or job.conversation_id != scope.conversation_id
+                or job.workspace_id != scope.workspace_id
+                or job.project_id != scope.project_id
+                or job.version_id != (scope.target_version_id or scope.base_version_id)
+                or job.scope_digest != command.scope_digest
+                or job.scope_digest != scope.scope_digest
+                or turn is None or turn.execution_engine_version != 4
+                or turn.task_id != job.task_id
+            ):
+                raise WorkerFenceError("Media result does not belong to this Task and Turn")
+            workflow = unit.workflows.get_by_owner(
+                owner_kind="media_generation", owner_id=str(job.id), engine_version=1,
+            )
+            if workflow is None or workflow.run.parent_run_id != turn.workflow_run_id:
+                raise ToolOutcomeUncertainError
+            status = workflow.run.status
+        if status in {WorkflowRunStatus.CANCELLED, WorkflowRunStatus.FAILED}:
+            raise MediaWorkflowError(job.error_code or workflow.run.error_code or "MEDIA_CANCELLED")
+        try:
+            result = self._application.get_result(
+                job.id, include_active_video=command.command_name == "media.videos.start",
+            )
+        except Exception as error:
+            code = getattr(error, "error_code", "MEDIA_GENERATION_FAILED")
+            raise MediaWorkflowError(code) from error
+        if result is not None and not result.job.is_terminal:
+            return result
+        if status is WorkflowRunStatus.COMPLETED:
+            if result is None:
+                raise MediaWorkflowError("MEDIA_RESULT_MISSING")
+            return result
+        return None
+
+    def cancel_command(self, command):
+        with self._unit_of_work_factory() as unit:
+            job = unit.state.find_media_job_by_idempotency_key(f"media-job:{command.id}")
+            if job is None:
+                return
+            if job.command_run_id != command.id or job.scope_digest != command.scope_digest:
+                raise WorkerFenceError("Media cancellation does not own this Job")
+        self.cancel(job.id)
+        run_id = self._workflow_run_id(job.id)
+        return ToolCancellationReceipt(
+            command.id, self._workflow_scheduler.cancelled_run_idle(run_id),
+        )
+
     def run(
         self,
         job_id: UUID,
@@ -101,7 +181,9 @@ class MediaScheduler:
                 # The provider may persist its artifact in submit, before the
                 # remaining wait/poll/archive nodes settle. Do not expose a
                 # synchronous completed reply while its durable Run is active.
-                completed = result or self._application.get_result(job_id)
+                completed = result or self._application.get_result(
+                    job_id, include_active_video=False,
+                )
                 if completed is not None:
                     return completed
                 raise RuntimeError("Media Workflow completed without a durable result")

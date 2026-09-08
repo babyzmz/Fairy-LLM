@@ -6,6 +6,7 @@ from itertools import pairwise
 from uuid import UUID, uuid5
 
 from fairy_core.assistant.models import AssistantTurn, ToolInvocation, ToolInvocationStatus
+from fairy_core.assistant.tools import DEFERRED_MEDIA_TOOLS
 from fairy_core.commanding.registry import ToolConcurrency, ToolDefinition
 from fairy_core.workflow.models import WorkflowConcurrencyPolicy, WorkflowEdge, WorkflowNode
 
@@ -91,6 +92,9 @@ def assistant_tool_continuation(
                     else WorkflowConcurrencyPolicy.SERIAL),
             resources=tuple(sorted(keys)),
         )
+        if definition.name in DEFERRED_MEDIA_TOOLS:
+            # One-second domain reconciliation stays bounded by the Run's 30m/2h budget.
+            node = replace(node, max_attempts=10_000)
         if concurrent:
             connect(frontier, node)
             parallel.append(node)

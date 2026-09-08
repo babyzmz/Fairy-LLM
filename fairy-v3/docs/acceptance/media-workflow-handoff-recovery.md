@@ -30,6 +30,35 @@ identity from the database. This invariant applies to both current and new engin
 
 Implementation and regression results are appended below as work progresses.
 
+### Non-blocking domain handoff (in progress)
+
+- Engine 4 stamps trusted internal Command metadata, atomically publishes the
+  existing Job's domain Run and abandons only its original parent lease. The
+  Media adapter owns/renews the Command during Provider work, then yields it back.
+  Reconciliation reads the same scoped Job and never calls prepare/submit again.
+- A one-second persisted wait releases the parent Kernel slot. Its wait-attempt
+  bound fits the existing 30-minute/two-hour Run deadline; no extra executor or
+  parent-worker reservation. Paid approval and original identities are unchanged.
+- RED: parent Tool stayed RUNNING throughout a blocked Provider. GREEN now also
+  covers archive gating, lost handoff acknowledgement, foreign Task rejection and
+  all three remaining global slots executing independent Runs (6 tests, 17.59s,
+  before the cancellation extension). Both old Media failure contract assertions
+  stay unchanged; preserving them required stopping fan-in on the original error
+  and rejecting another media call after successful generation.
+- Cancellation RED: Provider stopped, but the yielded Invocation left
+  `cancellation_pending` true indefinitely. The Kernel now returns an idle receipt
+  only after the cancelled Run's local adapters return. The Assistant consumes
+  this receipt and settles its original Invocation/Command with a fresh fenced
+  cancellation lease. Pending remote Provider processing is not claimed stopped.
+  The direct cancellation regression passes; broader validation follows.
+
+- Broad deterministic gate: Workflow + Media + step Media/tools + uncertain
+  side-effect recovery + cancellation settlement/protocol/cleanup/restart:
+  **105 passed, 109.35s**. Ruff passed and `git diff --check` was clean. No existing
+  test assertions were changed. The real close/reopen of an archive-pending domain
+  Run, engine-4 music/video receipts, and full Assistant/default-switch gates are
+  still pending; lost acknowledgement is not presented as process-restart evidence.
+
 ### Original-Fence settlement
 
 - RED: all four late success/failure × same/different owner cases accepted the

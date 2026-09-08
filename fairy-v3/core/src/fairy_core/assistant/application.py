@@ -44,10 +44,13 @@ from fairy_core.assistant.tool_approval_runtime import AssistantToolApprovalMixi
 from fairy_core.assistant.tool_context_runtime import AssistantToolContextMixin
 from fairy_core.assistant.tool_trace import ToolTraceCoordinator
 from fairy_core.assistant.tools import (
+    DEFERRED_MEDIA_TOOLS,
     DIRECT_ANSWER_TOOL_NAME,
     ToolCandidateError,
+    ToolExecutionDeferred,
     ToolExecutor,
     ToolOutcomeUncertainError,
+    ToolResumeResult,
     UnavailableToolExecutor,
     direct_answer,
     direct_answer_evidence_ids,
@@ -451,6 +454,7 @@ class AssistantApplication(
                         and (
                             len(external_candidates) != 1
                             or external_candidates[0].name != decision.media_tool_name
+                            or self._media_output_completed(turn_id, decision)
                         )
                     ):
                         return self._fail_turn(
@@ -945,6 +949,10 @@ class AssistantApplication(
                                 "interpretation_revision": (
                                     intent.interpretation_revision if intent is not None else None
                                 ),
+                                **({"domain_handoff_version": 1} if (
+                                    turn.execution_engine_version == 4
+                                    and definition.name in DEFERRED_MEDIA_TOOLS
+                                ) else {}),
                             },
                             idempotency_key=(
                                 f"assistant:{turn.id}:tool:{invocation.argument_hash}"
@@ -1067,6 +1075,7 @@ class AssistantApplication(
         scope,
         arguments: dict[str, object],
         cancellation: CancellationToken,
+        reconciled: ToolResumeResult | None = None,
     ) -> tuple[Message, bool, str | None, tuple[ModelImage, ...]]:
         try:
             cancellation.raise_if_cancelled()
@@ -1113,7 +1122,15 @@ class AssistantApplication(
                 "execute_command_with_cancellation",
                 None,
             )
-            if callable(execute_with_cancellation):
+            if reconciled is not None:
+                if reconciled.error_code is not None:
+                    error = RuntimeError(reconciled.error_code)
+                    error.error_code = reconciled.error_code
+                    raise error
+                if reconciled.result is None:
+                    raise ToolExecutionDeferred
+                result = reconciled.result
+            elif callable(execute_with_cancellation):
                 result = execute_with_cancellation(
                     definition,
                     scope,
@@ -1134,6 +1151,8 @@ class AssistantApplication(
                     result = self._tool_executor.execute(definition, scope, arguments)
             cancellation.raise_if_cancelled()
             self._turns.require_waiting_for_tool(turn_id)
+        except ToolExecutionDeferred:
+            raise
         except (ProviderCancelledError, McpCancelledError):
             if cancellation.is_interrupted:
                 self._abandon_running_tool(running)

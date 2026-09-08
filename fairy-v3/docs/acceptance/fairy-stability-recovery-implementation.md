@@ -309,6 +309,8 @@
 
 ### Phase 6C：真实工具节点与审批恢复边界
 
+- 版本4 Media 工具已改为持久化领域交接和只读结果汇合，等待不占父节点Worker；保留Job/Command/Invocation及付费请求身份，归档前不提前回复。取消通过Kernel的本机执行结束凭据回到Assistant结算，接受取消与实际停止分开。独立Run验证剩余3个全局名额可用，含交接确认丢失、不同Task拒绝、失败停止与取消闭环；相关105项通过（109.35秒）。真实进程重开归档、版本4音乐/视频及完整迁移门禁仍待验，默认引擎仍为3。详见[专项记录](media-workflow-handoff-recovery.md)。
+
 - Media 交接审查发现旧完成/失败回调借用数据库当前租约的 Fence。已用原始执行租约结算并添加4个先失败的双命令/重开回归；Media及Command Bus共34项通过（31.80秒）。详见[专项记录](media-workflow-handoff-recovery.md)。异步领域等待仍继续实施，不由此宣称Phase 6完成。
 
 - 下一项Review契约：Primary草稿检查通过后先完成其Command，再由独立Review节点调用受Harness/Persona约束的Reviewer，之后再次验证并由独立最终节点写消息。Review检查点只保存公开候选正文、证据ID和最多24k字符的原用户/Assistant文本投影，不保存系统提示或隐藏推理；完成回执丢失不能重复调用Reviewer。无Review的最小链不增加此节点。节点异常还须与Turn/Task状态收敛，取消/过期Fence不得借失败处理改写新实例。

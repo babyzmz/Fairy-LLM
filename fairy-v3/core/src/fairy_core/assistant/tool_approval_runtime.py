@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
-from fairy_core.assistant.tools import ToolOutcomeUncertainError
+from fairy_core.assistant.tools import ToolOutcomeUncertainError, uses_deferred_media
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.commanding import CommandStatus
 from fairy_core.commanding.registry import SideEffect
@@ -170,6 +170,15 @@ class AssistantToolApprovalMixin:
                 unit_of_work.commit()
                 return False
             bus = self._command_bus(unit_of_work.commands)
+            reconciled = None
+            if (
+                invocation.status is ToolInvocationStatus.RUNNING
+                and uses_deferred_media(command)
+            ):
+                read = getattr(self._tool_executor, "read_command_result", None)
+                reconciled = read(scope, command) if callable(read) else None
+                if reconciled is not None and reconciled.waiting:
+                    return True
             if command.status is CommandStatus.QUEUED:
                 running = bus.start(
                     command.id,
@@ -216,6 +225,7 @@ class AssistantToolApprovalMixin:
 
             if (
                 invocation.status is ToolInvocationStatus.RUNNING
+                and reconciled is None
                 and not (
                     definition.idempotent
                     and definition.side_effect in {SideEffect.NONE, SideEffect.READ}
@@ -260,6 +270,7 @@ class AssistantToolApprovalMixin:
             scope=scope,
             arguments=invocation.arguments,
             cancellation=cancellation,
+            reconciled=reconciled,
         )
         if image_receiver is not None:
             image_receiver(images)

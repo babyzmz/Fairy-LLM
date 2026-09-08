@@ -313,9 +313,6 @@ def register_assistant_workflow_adapter(
         adapters.register(kind, steps)
     adapters.register(ASSISTANT_STEP_JOIN_KIND, steps)
     tool_steps = AssistantStepWorkflowAdapter(application, ledger, unit_of_work_factory, adapter)
-    # Media submission still awaits its domain Run; retain the child-worker reservation
-    # until that domain handoff itself yields instead of blocking.
-    tool_steps.may_wait_for_child_workflow = True
     adapters.register(ASSISTANT_STEP_TOOL_KIND, tool_steps)
 
 

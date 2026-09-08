@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fairy_core.assistant.candidates import ToolCandidate
+from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.durable_context import durable_tool_context
 from fairy_core.assistant.models import (
     AssistantTurnStatus,
@@ -13,7 +15,7 @@ from fairy_core.assistant.models import (
     ToolInvocation,
     ToolInvocationStatus,
 )
-from fairy_core.assistant.tools import tool_message_content
+from fairy_core.assistant.tools import tool_message_content, uses_deferred_media
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.domain.errors import VersionConflictError
@@ -22,6 +24,34 @@ from fairy_core.providers import ModelMessage, ModelToolCall
 
 
 class AssistantToolContextMixin:
+    def settle_cancelled_domain_tool(self, original: CommandRun) -> None:
+        """Only the domain's confirmed local stop may close a yielded Tool Invocation."""
+        with self._unit_of_work_factory() as unit:
+            run = unit.commands.get_run(original.id)
+            invocation = unit.assistant.find_tool_invocation_by_command_run_id(original.id)
+            if (
+                run is None or invocation is None or not uses_deferred_media(run)
+                or invocation.task_id != original.task_id
+                or invocation.scope_digest != original.scope_digest
+                or run.scope_digest != original.scope_digest
+            ):
+                return
+            turn = require_turn(unit, invocation.turn_id)
+            if turn.status is not AssistantTurnStatus.CANCELLED:
+                return
+            if invocation.status is not ToolInvocationStatus.RUNNING:
+                return
+            if run.status is not CommandStatus.RUNNING:
+                return
+            if run.lease_until is None or run.lease_until > datetime.now(UTC):
+                # A still-live parent owns its own cancellation acknowledgement.
+                return
+            claimed = self._command_bus(unit.commands).start(
+                run.id, lease_until=assistant_command_lease_until(),
+            )
+            self._cancel_running_tool_in_unit(unit, invocation, claimed)
+            unit.commit()
+
     def _durable_tool_context(self, turn_id: UUID) -> tuple[ModelMessage, ...]:
         with self._unit_of_work_factory() as unit_of_work:
             invocations = unit_of_work.assistant.list_tool_invocations(turn_id)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable, Mapping
+from concurrent.futures import Future
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -69,6 +70,23 @@ class ToolOutcomeUncertainError(RuntimeError):
         super().__init__(self.error_code)
 
 
+class ToolExecutionDeferred(RuntimeError):
+    """The original command has handed work to a durable domain Run."""
+
+
+DEFERRED_MEDIA_TOOLS = frozenset({
+    "media.images.generate", "media.audio.generate", "media.videos.start",
+})
+
+
+def uses_deferred_media(command: CommandRun) -> bool:
+    return (
+        command.actor == "assistant"
+        and command.command_name in DEFERRED_MEDIA_TOOLS
+        and command.input_payload.get("domain_handoff_version") == 1
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ToolResult:
     public_summary: str
@@ -118,6 +136,24 @@ class ToolExecutor(Protocol):
     ) -> ToolResult: ...
 
 
+@dataclass(frozen=True, slots=True)
+class ToolResumeResult:
+    """Read-only reconciliation: neither preparing nor repeating an external action."""
+
+    result: ToolResult | None = None
+    error_code: str | None = None
+
+    @property
+    def waiting(self) -> bool:
+        return self.result is None and self.error_code is None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCancellationReceipt:
+    command_id: UUID
+    stopped: Future[None]
+
+
 class UnavailableToolExecutor:
     def execute(
         self,
@@ -134,10 +170,14 @@ class DelegatingToolCancellation:
 
     _delegate: ToolExecutor | None
 
-    def cancel_command(self, command_run: CommandRun) -> None:
+    def cancel_command(self, command_run: CommandRun):
         cancel = getattr(self._delegate, "cancel_command", None)
         if callable(cancel):
-            cancel(command_run)
+            return cancel(command_run)
+
+    def read_command_result(self, scope, command_run) -> ToolResumeResult | None:
+        read = getattr(self._delegate, "read_command_result", None)
+        return read(scope, command_run) if callable(read) else None
 
 
 def model_tools(

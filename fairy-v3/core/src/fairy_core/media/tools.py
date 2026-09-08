@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from fairy_core.assistant.tools import (
     DelegatingToolCancellation,
+    ToolExecutionDeferred,
     ToolExecutor,
     ToolResult,
+    ToolResumeResult,
     UnavailableToolExecutor,
+    uses_deferred_media,
 )
 from fairy_core.commanding import CommandRun
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.domain.models import ScopeContract
 from fairy_core.media.application import MediaApplication, MediaGenerationResult
 from fairy_core.media.scheduler import MediaScheduler
+from fairy_core.media.workflow import MediaWorkflowError
 from fairy_core.providers import CancellationToken
 
 
@@ -94,6 +98,7 @@ class MediaToolExecutor(DelegatingToolCancellation):
                 seed=_optional_argument_int(arguments, "seed"),
                 idempotency_key=f"media-job:{command_run.id}",
             )
+            self._handoff_if_supported(prepared, command_run)
             result = (
                 prepared
                 if prepared.artifact is not None
@@ -113,6 +118,7 @@ class MediaToolExecutor(DelegatingToolCancellation):
                 seed=_optional_argument_int(arguments, "seed"),
                 idempotency_key=f"media-job:{command_run.id}",
             )
+            self._handoff_if_supported(prepared, command_run)
             result = (
                 prepared
                 if prepared.artifact is not None
@@ -135,6 +141,7 @@ class MediaToolExecutor(DelegatingToolCancellation):
                 seed=_optional_argument_int(arguments, "seed"),
                 idempotency_key=f"media-job:{command_run.id}",
             )
+            self._handoff_if_supported(prepared, command_run)
             result = (
                 prepared
                 if prepared.job.provider_job_id is not None or prepared.job.is_terminal
@@ -146,6 +153,26 @@ class MediaToolExecutor(DelegatingToolCancellation):
             )
             return _tool_result(result)
         raise RuntimeError("non-model media command cannot be executed by the Assistant")
+
+    def _handoff_if_supported(self, prepared, command):
+        if uses_deferred_media(command):
+            self._scheduler.handoff(prepared.job.id, command)
+            raise ToolExecutionDeferred
+
+    def read_command_result(self, scope, command_run):
+        if not uses_deferred_media(command_run):
+            return super().read_command_result(scope, command_run)
+        try:
+            result = self._scheduler.read_handoff_result(scope, command_run)
+        except MediaWorkflowError as error:
+            return ToolResumeResult(error_code=error.error_code)
+        return ToolResumeResult(result=_tool_result(result) if result is not None else None)
+
+    def cancel_command(self, command_run):
+        if uses_deferred_media(command_run):
+            return self._scheduler.cancel_command(command_run)
+        else:
+            return super().cancel_command(command_run)
 
 
 def _tool_result(result: MediaGenerationResult) -> ToolResult:

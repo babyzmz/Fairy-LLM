@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from threading import Event, RLock, Thread
@@ -135,6 +135,7 @@ class WorkflowScheduler:
         self._poll_interval = poll_interval
         self._owner_id = f"workflow-worker:{new_id()}"
         self._active: dict[UUID, _ActiveNode] = {}
+        self._cancelled_idle: dict[UUID, Future[None]] = {}
         self._resume_after_boundary: set[UUID] = set()
         self._lock = RLock()
         self._wake = Event()
@@ -282,6 +283,19 @@ class WorkflowScheduler:
         self._wake.set()
         self._changed.set()
         return snapshot
+
+    def cancelled_run_idle(self, run_id: UUID) -> Future[None]:
+        """Confirm local adapter return, separately from the durable cancel request."""
+        with self._unit_of_work_factory() as unit:
+            run = unit.workflows.get_run(run_id)
+            if run is None or run.status is not WorkflowRunStatus.CANCELLED:
+                raise ValueError("Idle acknowledgement requires a cancelled Workflow")
+        with self._lock:
+            if any(item.claim.run_id == run_id for item in self._active.values()):
+                return self._cancelled_idle.setdefault(run_id, Future())
+        finished: Future[None] = Future()
+        finished.set_result(None)
+        return finished
 
     def _coordinate(self) -> None:
         idle_delay = self._poll_interval
@@ -528,12 +542,17 @@ class WorkflowScheduler:
 
     def _finish_active(self, active: _ActiveNode) -> None:
         claim = active.claim
+        finished = None
         try:
             with self._lock:
                 current = self._active.get(claim.node_id)
                 if current is active:
                     self._active.pop(claim.node_id, None)
+                if not any(item.claim.run_id == claim.run_id for item in self._active.values()):
+                    finished = self._cancelled_idle.pop(claim.run_id, None)
         finally:
+            if finished is not None and not finished.done():
+                finished.set_result(None)
             self._resume_after_boundary_if_ready(claim.run_id)
             self._changed.set()
             self._wake.set()

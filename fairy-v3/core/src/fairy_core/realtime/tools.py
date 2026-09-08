@@ -8,7 +8,12 @@ from fairy_core.assistant.evidence import (
     EvidenceRequirementKind,
     EvidenceSourceKind,
 )
-from fairy_core.assistant.tools import ToolExecutionUnavailableError, ToolExecutor, ToolResult
+from fairy_core.assistant.tools import (
+    DelegatingToolCancellation,
+    ToolExecutionUnavailableError,
+    ToolExecutor,
+    ToolResult,
+)
 from fairy_core.commanding import CommandRun
 from fairy_core.commanding.registry import SideEffect, ToolDefinition
 from fairy_core.domain.models import ScopeContract
@@ -40,7 +45,7 @@ class RealtimeAssistanceCapabilityError(ToolExecutionUnavailableError):
     error_code = "REALTIME_ASSISTANCE_CAPABILITY_DENIED"
 
 
-class RealtimeAssistanceToolExecutor:
+class RealtimeAssistanceToolExecutor(DelegatingToolCancellation):
     """Adds the Realtime-only denylist without creating a second tool authority."""
 
     def __init__(
@@ -115,10 +120,10 @@ class RealtimeAssistanceToolExecutor:
             command_run=command_run,
         )
 
-    def cancel_command(self, command_run: CommandRun) -> None:
+    def cancel_command(self, command_run: CommandRun):
         cancel = getattr(self._delegate, "cancel_command", None)
         if callable(cancel):
-            cancel(command_run)
+            return cancel(command_run)
 
     def _authorize(self, definition: ToolDefinition, scope: ScopeContract) -> None:
         with self._unit_of_work_factory() as unit_of_work:

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fairy_core.assistant.candidates import ToolCandidate
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
+from fairy_core.assistant.tools import ToolExecutionDeferred, uses_deferred_media
 from fairy_core.assistant.workflow_step_nodes import STEP_MODEL, step_node
 from fairy_core.assistant.workflow_tool_plan import ASSISTANT_STEP_TOOL_KIND
 from fairy_core.commanding import CommandStatus
@@ -49,6 +50,15 @@ def execute_tool_step(adapter, node, claim, cancellation, turn):
         checkpoint = {"turn_id": str(turn.id), "invocation_ids": node.payload["invocation_ids"]}
         unit.workflows.record_checkpoint(claim, result=checkpoint)
         unit.commit()
+    if turn.routing_decision is not None and turn.routing_decision.media_tool_name is not None:
+        from fairy_core.assistant.workflow_adapter import AssistantWorkflowError
+
+        for item in ordered:
+            if (
+                item.tool_name == turn.routing_decision.media_tool_name
+                and item.error_code is not None
+            ):
+                raise AssistantWorkflowError(item.error_code)
     approval = adapter._application._changeset_approval_state(turn.id)
     if approval == "waiting":
         raise WorkflowWaitingForApproval(checkpoint)
@@ -87,6 +97,17 @@ def execute_tool_step(adapter, node, claim, cancellation, turn):
 
 
 def _execute_invocation(adapter, node, claim, cancellation, turn):
+    try:
+        return _execute_invocation_attempt(adapter, node, claim, cancellation, turn)
+    except ToolExecutionDeferred:
+        return WorkflowNodeResult(
+            output={"turn_id": str(turn.id), "invocation_id": node.payload["invocation_id"]},
+            available_at=datetime.now(UTC) + timedelta(seconds=1),
+            public_summary="Waiting for the existing Media Workflow without occupying a worker",
+        )
+
+
+def _execute_invocation_attempt(adapter, node, claim, cancellation, turn):
     invocation_id = UUID(node.payload["invocation_id"])
     checkpoint = {"turn_id": str(turn.id), "invocation_id": str(invocation_id)}
     with adapter._factory() as unit:
@@ -168,6 +189,8 @@ def _execute_invocation(adapter, node, claim, cancellation, turn):
     if command is not None and command.status is CommandStatus.WAITING_APPROVAL:
         raise WorkflowWaitingForApproval(checkpoint)
     if command is not None and command.status is CommandStatus.RUNNING:
+        if uses_deferred_media(command):
+            raise ToolExecutionDeferred
         return WorkflowNodeResult(
             output=checkpoint,
             available_at=max(

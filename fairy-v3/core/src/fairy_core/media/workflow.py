@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from threading import RLock
 from uuid import UUID
 
+from fairy_core.assistant.tools import uses_deferred_media
 from fairy_core.commanding import CommandRun, CommandStatus
 from fairy_core.commanding.bus import CommandBus
 from fairy_core.commanding.policy import PolicyEngine
@@ -289,7 +290,10 @@ class MediaGenerationWorkflowAdapter:
             run = unit_of_work.commands.get_run(job.command_run_id)
             if run is None:
                 raise MediaWorkflowError("MEDIA_COMMAND_MISSING")
-            if run.actor == "assistant" or run.status is CommandStatus.SUCCEEDED:
+            if (
+                (run.actor == "assistant" and not uses_deferred_media(run))
+                or run.status is CommandStatus.SUCCEEDED
+            ):
                 return None
             if run.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}:
                 raise MediaWorkflowError("MEDIA_COMMAND_INACTIVE")
@@ -317,6 +321,15 @@ class MediaGenerationWorkflowAdapter:
         if command is None:
             return
         with self._unit_of_work_factory() as unit_of_work:
+            if uses_deferred_media(command):
+                # The Assistant records Invocation + Command result in one transaction.
+                # Media owns the lease only while its Provider operation is active.
+                if command.lease_owner is None or not unit_of_work.commands.abandon(
+                    command.id, lease_owner=command.lease_owner, lease_fence=command.lease_fence,
+                ):
+                    raise WorkerFenceError("Media completion lost its Command lease")
+                unit_of_work.commit()
+                return
             persisted = unit_of_work.commands.get_run(command.id)
             if persisted is None or persisted.status is not CommandStatus.RUNNING:
                 return
