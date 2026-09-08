@@ -301,22 +301,13 @@ class AssistantContextBuilder:
 
     @staticmethod
     def _messages(repository, conversation_id) -> tuple[Message | ImportedMessage, ...]:
-        items: list[Message | ImportedMessage] = []
-        cursor: str | None = None
-        while True:
-            page = repository.list_transcript(
-                conversation_id=conversation_id,
-                limit=100,
-                cursor=cursor,
-                allowed_visibilities=frozenset(
-                    {MessageVisibility.USER, MessageVisibility.DEVELOPER}
-                ),
-            )
-            items.extend(page.items)
-            if page.next_cursor is None:
-                break
-            cursor = page.next_cursor
-        return tuple(items[-_MAX_HISTORY_MESSAGES:])
+        return repository.recent_transcript(
+            conversation_id=conversation_id,
+            limit=_MAX_HISTORY_MESSAGES,
+            allowed_visibilities=frozenset(
+                {MessageVisibility.USER, MessageVisibility.DEVELOPER}
+            ),
+        )
 
     @staticmethod
     def _system_message(

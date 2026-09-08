@@ -634,6 +634,26 @@ class SqlAlchemyAssistantRepository(
             )
         return StatePage(items=tuple(page_items), next_cursor=next_cursor)
 
+    def recent_transcript(
+        self,
+        *,
+        conversation_id: UUID,
+        limit: int,
+        allowed_visibilities: frozenset[MessageVisibility] | None = None,
+    ) -> tuple[Message | ImportedMessage, ...]:
+        validate_limit(limit)
+        combined: list[Message | ImportedMessage] = []
+        for table, decode in (
+            (assistant_messages, self._message_from_row),
+            (assistant_imported_messages, self._imported_message_from_row),
+        ):
+            combined.extend(decode(row) for row in self._transcript_rows(
+                table, conversation_id=conversation_id, after_sequence=0,
+                limit=limit, allowed_visibilities=allowed_visibilities, newest_first=True,
+            ))
+        combined.sort(key=lambda item: (item.sequence, str(item.id)))
+        return tuple(combined[-limit:])
+
     def _transcript_rows(
         self,
         table: Table,
@@ -642,6 +662,7 @@ class SqlAlchemyAssistantRepository(
         after_sequence: int,
         limit: int,
         allowed_visibilities: frozenset[MessageVisibility] | None,
+        newest_first: bool = False,
     ) -> list[RowMapping]:
         predicates = [
             table.c.tenant_id == self._tenant_id,
@@ -657,8 +678,11 @@ class SqlAlchemyAssistantRepository(
                 connection.execute(
                     select(table)
                     .where(*predicates)
-                    .order_by(table.c.sequence, table.c.id)
-                    .limit(limit + 1)
+                    .order_by(
+                        table.c.sequence.desc() if newest_first else table.c.sequence,
+                        table.c.id.desc() if newest_first else table.c.id,
+                    )
+                    .limit(limit if newest_first else limit + 1)
                 )
                 .mappings()
                 .all()

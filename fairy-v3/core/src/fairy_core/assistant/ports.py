@@ -172,6 +172,14 @@ class AssistantRepository(Protocol):
         allowed_visibilities: frozenset[MessageVisibility] | None = None,
     ) -> StatePage[Message | ImportedMessage]: ...
 
+    def recent_transcript(
+        self,
+        *,
+        conversation_id: UUID,
+        limit: int,
+        allowed_visibilities: frozenset[MessageVisibility] | None = None,
+    ) -> tuple[Message | ImportedMessage, ...]: ...
+
     def purge_conversation_content(self, conversation_id: UUID) -> None: ...
 
     def purge_project_content(self, project_id: UUID) -> None: ...
