@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from fairy_core.assistant.execution_intent import ExecutionIntentSnapshot
 from fairy_core.assistant.interpretation import AssistantRequestInterpretationRevision
 from fairy_core.assistant.models import (
     AssistantTurn,
@@ -61,6 +62,12 @@ class AssistantRepository(Protocol):
         self,
         turn_id: UUID,
     ) -> tuple[AssistantRequestInterpretationRevision, ...]: ...
+
+    def get_execution_intent(
+        self,
+        turn_id: UUID,
+        revision: int | None = None,
+    ) -> ExecutionIntentSnapshot | None: ...
 
     def find_interpretation_by_idempotency_key(
         self,

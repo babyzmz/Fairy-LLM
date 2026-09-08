@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | 0 | 分支、用户改动恢复副本、独立 DSH 基线 | 完成 |
 | 1 | 录音 Scope；Browser revision；隐藏面板；桌宠启动 | 实现及完整桌面自动化通过；原生未验收 |
-| 2 | 持久执行意图、目标、副作用约束、多入口一致性 | 未开始 |
+| 2 | 持久执行意图、目标、副作用约束、多入口一致性 | 进行中：先建立不可变绑定及恢复契约，执行拦截尚未接入 |
 | 3 | 单 reader RPC、控制通道、期限、协商及事件推送 | 未开始 |
 | 4 | 宿主 broker、桌宠脱离主 UI 生命周期、统一领域命令 | 未开始 |
 | 5 | 空闲退避、批量查询、有限历史、Browser 资源预算 | 未开始 |
@@ -56,6 +56,33 @@
 - Phase 2 已完成执行入口和存储扩展点核对，尚未修改其生产代码。现有 interpretation、工具候选、审批恢复、工具执行、Schedule/Steering 必须同时接入约束，不能只过滤工具列表就标记完成。
 
 ## 恢复方法
+
+### Phase 2A：执行意图持久化验收契约
+
+- 每次追加 interpretation 时，在同一事务内保存执行意图快照；绑定 tenant（行隔离）、Turn、Task、Conversation、Project、Workspace、base/target Version、执行目标、解释 Revision 和来源消息 SHA256。
+- 逐 objective 保留动作、依赖和目标描述，保留禁止事项/澄清状态；Classifier 输出中的目标只是待解析描述，不转成 Scope 路径或扩大权限。该快照本身不是授权凭证。
+- 最新读取以 Turn 的 active interpretation pointer 为准，不用最大历史 Revision 代替；显式旧 Revision 仅用于审计，不允许覆盖。双聊天/双租户读取隔离，错误来源及并发 Revision 追加必须整体回滚。
+- SQLite 增量增加 nullable JSON 列，旧记录保持空，不猜测回填权限；新库及升级后重开均测试。Cloud 增加独立可逆 Alembic 迁移，离线 SQL 与真实 PostgreSQL 分开记录。
+- 自动化使用临时 SQLite 实库、真实 Repository 和共享 Schema；不调用真实模型，不启动 Fairy、不迁移用户数据库。首次启动新版迁移用户数据库前仍必须一致性备份。
+- 本子任务只建立存储契约；工具列表过滤、执行前检查、审批恢复、Steering 目标解析/失效属于 Phase 2 后续子任务，未接通前不宣称意图约束已端到端生效。
+
+#### Phase 2 后续接线顺序
+
+1. 按工具语义区分证据读取、受控内部缓存、用户可见修改和外部副作用；不能只看 `side_effect` 就把 research/Browser 的所有操作一刀切。
+2. 由可信 Scope 解析目标；Classifier 的自由文本、置信度和降级结果都不能直接生成写权限。目标/禁令/复合 objective 未解析完成时保留只读查证及必要澄清。
+3. Context 工具展示、`_execute_candidate`、`_execute_running_tool` 和审批恢复共用同一策略；旧 Revision 只能审计，Steering 后重新解析目标。约束缺失的旧 Turn 走明确兼容规则，不静默授予权限。
+4. 用脚本化 Provider 验证“审查却调用写工具”、越目标调用、审批后更正、Classifier 降级与普通聊天/桌宠/STT/Schedule 一致性，再做真实 Provider 验收。
+
+#### Phase 2A 实施证据（2026-09-08）
+
+- 新增冻结的 `ExecutionIntentSnapshot`，在现有 interpretation 行保存 nullable JSON，与解释及 active pointer 同事务提交；新增 getter 默认只读 active Revision，保留显式历史审计读取。
+- 增量 SQLite 迁移可重复执行，旧行保持 SQL NULL；Cloud Alembic head 为 `20260908_0054`，支持离线升级/降级。未运行用户数据库迁移，未启动 Fairy，未做真实 PostgreSQL 验收。
+- 先复现解释无执行绑定、版本可跳号；修复后覆盖复合 objective、禁止事项保留、双聊天/双租户、重开恢复、并发旧 Revision、错误来源、缺失/部分/未知版本 JSON。现有消息关联约束已能阻止非法跨 Scope 行写入，没有绕过数据库约束来伪造复现。
+- `.venv/Scripts/python.exe -m pytest tests/assistant tests/test_sqlite_core.py tests/test_persistence_recovery.py tests/test_jsonrpc_transport.py tests/test_stdio_transport.py -q`（cwd=core）：173 passed，93.52秒。
+- `.venv/Scripts/python.exe -m pytest tests/test_deployment_contract.py -q`（cwd=cloud）：37 passed；包含新迁移的离线 SQL 门禁，不能替代真实 PostgreSQL。
+- Core 与 Cloud 分别在包目录运行受影响文件 Ruff：通过；`git diff --check` 通过。新增11个 Core 场景（10个绑定/隔离/损坏场景＋1个 SQLite 升级场景），新增1个 Cloud 离线迁移场景；仅修改原 Cloud head 断言以对应新增迁移，其余既有断言未放宽。
+- 本轮没有改 Desktop/Rust，也未重跑其门禁；Phase 1 的桌面结果保留为历史证据。工具执行前策略尚未消费此快照，Phase 2 仍为进行中。
+- 结束时只读进程检查未发现本项目 Node/Python/Cargo/Fairy/Browser Worker 残留；未停止无关进程。
 
 ### Phase 1 / F11：桌宠异步启动门禁
 

@@ -49,6 +49,7 @@ def build_assistant_interpretation_table(
         Column("disposition", String(32), nullable=False),
         Column("public_summary", String(240), nullable=False),
         Column("clarification_question", String(1_000)),
+        Column("execution_intent", JSON(none_as_null=True)),
         Column("created_at", UTCDateTime(), nullable=False),
         PrimaryKeyConstraint(
             "tenant_id",

@@ -58,6 +58,36 @@ def _scope(tmp_path: Path, name: str) -> ScopeContract:
     )
 
 
+def test_execution_intent_upgrade_preserves_legacy_rows_and_is_repeatable(tmp_path: Path) -> None:
+    from fairy_core.storage.assistant_interpretation_sqlite_migrations import (
+        migrate_assistant_execution_intent,
+    )
+
+    database = tmp_path / "legacy-execution-intent.db"
+    engine = create_sqlite_engine(database)
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE core_assistant_request_interpretations "
+            "(tenant_id TEXT NOT NULL, id TEXT NOT NULL, action TEXT NOT NULL, "
+            "PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_assistant_request_interpretations VALUES ('local','old','change')"
+        )
+    migrate_assistant_execution_intent(engine)
+    migrate_assistant_execution_intent(engine)
+    engine.dispose()
+    engine = create_sqlite_engine(database)
+    migrate_assistant_execution_intent(engine)
+    with engine.connect() as connection:
+        row = connection.exec_driver_sql(
+            "SELECT id, action, execution_intent FROM core_assistant_request_interpretations"
+        ).one()
+        assert tuple(row) == ("old", "change", None)
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []
+    engine.dispose()
+
+
 def test_waiting_for_input_migration_rebuilds_legacy_status_checks(tmp_path: Path) -> None:
     engine = create_sqlite_engine(tmp_path / "legacy-waiting-input.db")
     with engine.begin() as connection:

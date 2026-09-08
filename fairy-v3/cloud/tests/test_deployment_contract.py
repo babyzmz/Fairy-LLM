@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260809_0053"]
+    assert scripts.get_heads() == ["20260908_0054"]
+    assert scripts.get_revision("20260908_0054").down_revision == "20260809_0053"
     assert scripts.get_revision("20260809_0053").down_revision == "20260808_0052"
     assert scripts.get_revision("20260807_0050").down_revision == "20260807_0049"
     assert scripts.get_revision("20260807_0049").down_revision == "20260807_0048"
@@ -300,6 +301,27 @@ def test_assistant_schedule_operation_mode_migration_is_reversible() -> None:
 
     downgrade_ddl = " ".join(output.getvalue().upper().split())
     assert "DROP COLUMN OPERATION_MODE" in downgrade_ddl
+
+
+def test_assistant_execution_intent_migration_keeps_legacy_authority_null() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260809_0053:20260908_0054", sql=True)
+    upgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert (
+        "ALTER TABLE CORE_ASSISTANT_REQUEST_INTERPRETATIONS ADD COLUMN EXECUTION_INTENT JSON;"
+        in upgrade_ddl
+    )
+    assert "UPDATE CORE_ASSISTANT_REQUEST_INTERPRETATIONS" not in upgrade_ddl
+
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260908_0054:20260809_0053", sql=True)
+    downgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert (
+        "ALTER TABLE CORE_ASSISTANT_REQUEST_INTERPRETATIONS DROP COLUMN EXECUTION_INTENT;"
+        in downgrade_ddl
+    )
 
 
 def test_assistant_schedule_interpretation_migration_is_reversible() -> None:

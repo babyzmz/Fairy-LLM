@@ -11,6 +11,37 @@ from fairy_core.storage.sqlite_migrations import _sqlite_rebuild_transaction
 
 _REVISION = "20260808_assistant_request_interpretations"
 _WAITING_REVISION = "20260808_assistant_waiting_for_input"
+_INTENT_REVISION = "20260908_assistant_execution_intent"
+
+
+def migrate_assistant_execution_intent(engine: Engine) -> None:
+    """Keep legacy interpretations unbound; never synthesize historical authority."""
+    table_name = "core_assistant_request_interpretations"
+    with engine.begin() as connection:
+        if table_name not in inspect(connection).get_table_names():
+            return
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _INTENT_REVISION},
+        ).first():
+            return
+        columns = {column["name"] for column in inspect(connection).get_columns(table_name)}
+        if "execution_intent" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE core_assistant_request_interpretations "
+                "ADD COLUMN execution_intent JSON"
+            )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {"revision": _INTENT_REVISION, "applied_at": datetime.now(UTC).isoformat()},
+        )
 
 
 def migrate_assistant_request_interpretations(engine: Engine) -> None:
@@ -61,8 +92,7 @@ def migrate_assistant_waiting_for_input(engine: Engine) -> None:
         interpretation_table = "core_assistant_request_interpretations"
         if interpretation_table in tables:
             columns = {
-                column["name"]
-                for column in inspect(connection).get_columns(interpretation_table)
+                column["name"] for column in inspect(connection).get_columns(interpretation_table)
             }
             if "idempotency_key" not in columns:
                 operations.add_column(
@@ -154,6 +184,7 @@ def _replace_status_check(
 
 
 __all__ = [
+    "migrate_assistant_execution_intent",
     "migrate_assistant_request_interpretations",
     "migrate_assistant_waiting_for_input",
 ]

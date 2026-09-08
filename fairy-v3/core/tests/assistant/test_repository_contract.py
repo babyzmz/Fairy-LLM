@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from fairy_core.assistant.interpretation import (
@@ -44,6 +45,7 @@ from fairy_core.model_catalog.models import ModelEndpointKind
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.providers import ModelExecutionRole, ProviderErrorCategory
+from fairy_core.storage.schema import assistant_request_interpretations, assistant_turns
 
 _SNAPSHOT_HASH = "a" * 64
 _KNOWLEDGE_HASH = "b" * 64
@@ -237,6 +239,240 @@ def test_repository_appends_interpretation_revisions_and_fences_active_pointer(
     ):
         unit_of_work.assistant.append_interpretation(first, expected_revision=None)
 
+    engine.dispose()
+
+
+def test_interpretation_atomically_persists_task_bound_execution_intent(tmp_path: Path) -> None:
+    database = tmp_path / "execution-intent.db"
+    engine = create_sqlite_core_engine(database)
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    task, scope = _seed_task(factory, label="intent-a")
+    turn = _turn(task, scope, key="intent-a")
+    message = Message.create(
+        conversation_id=task.conversation_id,
+        task_id=task.id,
+        turn_id=turn.id,
+        sequence=1,
+        role=MessageRole.USER,
+        visibility=MessageVisibility.USER,
+        content="Review app.py before changing it; never publish anything.",
+    )
+    interpretation = AssistantRequestInterpretationRevision.create(
+        turn_id=turn.id,
+        revision=1,
+        source_message_id=message.id,
+        source_message=message.content,
+        normalized_goal="Review then change app.py",
+        action=RequestAction.CHANGE,
+        objectives=(
+            InterpretedObjective("Review app.py", RequestAction.REVIEW),
+            InterpretedObjective("Change app.py", RequestAction.CHANGE, (0,)),
+        ),
+        targets=("app.py",),
+        constraints=("Never publish anything",),
+        public_summary="Review before editing",
+    )
+    with factory() as unit_of_work:
+        unit_of_work.assistant.save_turn(turn)
+        unit_of_work.assistant.append_message(message)
+        unit_of_work.assistant.append_interpretation(interpretation, expected_revision=None)
+        unit_of_work.commit()
+    with engine.connect() as connection:
+        row = connection.execute(select(assistant_request_interpretations)).mappings().one()
+        payload = row.get("execution_intent")
+    assert isinstance(payload, dict), "interpretations need a durable execution-intent binding"
+    assert payload["task_id"] == str(task.id)
+    assert payload["workspace_id"] == str(task.workspace_id)
+    assert payload["conversation_id"] == str(task.conversation_id)
+    assert payload["execution_target"] == "local"
+    assert payload["source_message_sha256"] == interpretation.source_message_sha256
+    assert payload["interpretation_revision"] == 1
+    assert payload["target_descriptions"] == ["app.py"]
+    assert payload["user_constraints"] == ["Never publish anything"]
+    assert payload["objectives"] == [
+        {"goal": "Review app.py", "action": "review", "depends_on": []},
+        {"goal": "Change app.py", "action": "change", "depends_on": [0]},
+    ]
+    engine.dispose()
+
+    engine = create_sqlite_core_engine(database)
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    with factory() as unit_of_work:
+        restored = unit_of_work.assistant.get_execution_intent(turn.id)
+        assert restored is not None
+        assert restored.turn_id == turn.id
+        assert restored.project_id == task.project_id
+        assert restored.base_version_id is None
+        assert restored.target_version_id is None
+        assert restored.objectives == interpretation.objectives
+        assert restored.source_message_id == message.id
+        assert unit_of_work.assistant.get_interpretation(turn.id) == interpretation
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []
+    engine.dispose()
+
+
+def _intent_fixture(factory, *, label: str):
+    task, scope = _seed_task(factory, label=label)
+    turn = _turn(task, scope, key=f"intent:{label}")
+    message = Message.create(
+        conversation_id=task.conversation_id,
+        task_id=task.id,
+        turn_id=turn.id,
+        sequence=1,
+        role=MessageRole.USER,
+        visibility=MessageVisibility.USER,
+        content=f"Review {label} without editing",
+    )
+    interpretation = AssistantRequestInterpretationRevision.create(
+        turn_id=turn.id,
+        revision=1,
+        source_message_id=message.id,
+        source_message=message.content,
+        normalized_goal=message.content,
+        action=RequestAction.REVIEW,
+        objectives=(InterpretedObjective(message.content, RequestAction.REVIEW),),
+        targets=(label,),
+        constraints=("Do not edit",),
+        public_summary="Review only",
+    )
+    with factory() as unit_of_work:
+        unit_of_work.assistant.save_turn(turn)
+        unit_of_work.assistant.append_message(message)
+        unit_of_work.commit()
+    return task, turn, message, interpretation
+
+
+@pytest.mark.parametrize("bad_revision", [2, 9])
+def test_execution_intent_rejects_skipped_initial_revision(tmp_path: Path, bad_revision: int):
+    engine = create_sqlite_core_engine(tmp_path / "intent-revision.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    _, turn, _, interpretation = _intent_fixture(factory, label="a")
+    with factory() as unit_of_work, pytest.raises(InvalidTransitionError, match="revision"):
+        unit_of_work.assistant.append_interpretation(
+            replace(interpretation, revision=bad_revision),
+            expected_revision=None,
+        )
+    with factory() as unit_of_work:
+        assert unit_of_work.assistant.get_execution_intent(turn.id) is None
+        assert unit_of_work.assistant.get_turn(turn.id).active_interpretation_revision is None
+    engine.dispose()
+
+
+def test_execution_intent_isolates_chat_tenant_and_active_revision_after_restart(tmp_path: Path):
+    database = tmp_path / "intent-isolation.db"
+    engine = create_sqlite_core_engine(database)
+    tenant_a = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    tenant_b = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-b")
+    _, turn_a, _, first = _intent_fixture(tenant_a, label="a")
+    task_b, turn_b, _, other = _intent_fixture(tenant_a, label="b")
+    _, turn_c, _, foreign = _intent_fixture(tenant_b, label="c")
+    for factory, interpretation in ((tenant_a, first), (tenant_a, other), (tenant_b, foreign)):
+        with factory() as unit_of_work:
+            unit_of_work.assistant.append_interpretation(interpretation, expected_revision=None)
+            unit_of_work.commit()
+    second = replace(
+        first,
+        id=UUID(int=8751),
+        revision=2,
+        idempotency_key="steer:2",
+        constraints=("Do not edit", "Use only local files"),
+    )
+    with tenant_a() as unit_of_work:
+        unit_of_work.assistant.append_interpretation(second, expected_revision=1)
+        unit_of_work.commit()
+    with tenant_a() as unit_of_work, pytest.raises(InvalidTransitionError, match="concurrently"):
+        unit_of_work.assistant.append_interpretation(
+            replace(second, id=UUID(int=8752), idempotency_key="late:2"),
+            expected_revision=1,
+        )
+    engine.dispose()
+    engine = create_sqlite_core_engine(database)
+    tenant_a = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    tenant_b = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-b")
+    with tenant_a() as unit_of_work:
+        current = unit_of_work.assistant.get_execution_intent(turn_a.id)
+        assert current.interpretation_revision == 2
+        assert current.user_constraints == ("Do not edit", "Use only local files")
+        assert unit_of_work.assistant.get_execution_intent(turn_a.id, 1).user_constraints == (
+            "Do not edit",
+        )
+        assert unit_of_work.assistant.get_execution_intent(turn_b.id).task_id == task_b.id
+        assert unit_of_work.assistant.get_execution_intent(turn_c.id) is None
+        assert unit_of_work.assistant.get_execution_intent(turn_c.id, 1) is None
+    with tenant_b() as unit_of_work:
+        assert unit_of_work.assistant.get_execution_intent(turn_a.id) is None
+        assert unit_of_work.assistant.get_execution_intent(turn_b.id, 1) is None
+        assert unit_of_work.assistant.get_execution_intent(turn_c.id).turn_id == turn_c.id
+    # A missing active pointer cannot silently fall back to a historical authorization.
+    with engine.begin() as connection:
+        connection.execute(
+            update(assistant_turns)
+            .where(
+                assistant_turns.c.id == str(turn_a.id),
+            )
+            .values(active_interpretation_revision=None)
+        )
+    with tenant_a() as unit_of_work:
+        assert unit_of_work.assistant.get_execution_intent(turn_a.id) is None
+        assert unit_of_work.assistant.get_execution_intent(turn_a.id, 2) is not None
+    engine.dispose()
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_execution_intent_rejects_cross_scope_source_message(tmp_path: Path, reverse: bool):
+    engine = create_sqlite_core_engine(tmp_path / "intent-source.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    left = _intent_fixture(factory, label="a")
+    right = _intent_fixture(factory, label="b")
+    source, destination = (right, left) if reverse else (left, right)
+    _, turn_a, _, interpretation = destination
+    interpretation = replace(
+        interpretation,
+        source_message_id=source[2].id,
+        source_message_sha256=source[3].source_message_sha256,
+    )
+    with factory() as unit_of_work, pytest.raises(InvalidTransitionError, match="source"):
+        unit_of_work.assistant.append_interpretation(interpretation, expected_revision=None)
+    with factory() as unit_of_work:
+        assert unit_of_work.assistant.get_execution_intent(turn_a.id) is None
+        assert unit_of_work.assistant.get_turn(turn_a.id).active_interpretation_revision is None
+    engine.dispose()
+
+
+@pytest.mark.parametrize("damage", ["legacy", "partial", "unknown_schema", "wrong_source"])
+def test_execution_intent_does_not_guess_missing_or_damaged_authority(tmp_path: Path, damage: str):
+    engine = create_sqlite_core_engine(tmp_path / "intent-damaged.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    _, turn, _, interpretation = _intent_fixture(factory, label="a")
+    with factory() as unit_of_work:
+        unit_of_work.assistant.append_interpretation(interpretation, expected_revision=None)
+        unit_of_work.commit()
+    with engine.begin() as connection:
+        payload = connection.execute(
+            select(
+                assistant_request_interpretations.c.execution_intent,
+            )
+        ).scalar_one()
+        if damage == "legacy":
+            payload = None
+        elif damage == "partial":
+            del payload["workspace_id"]
+        elif damage == "unknown_schema":
+            payload["schema_version"] = 2
+        else:
+            payload["source_message_id"] = str(UUID(int=8951))
+        connection.execute(
+            update(assistant_request_interpretations).values(
+                execution_intent=payload,
+            )
+        )
+    with factory() as unit_of_work:
+        if damage == "legacy":
+            assert unit_of_work.assistant.get_execution_intent(turn.id) is None
+        else:
+            with pytest.raises((ValueError, InvalidTransitionError)):
+                unit_of_work.assistant.get_execution_intent(turn.id)
     engine.dispose()
 
 

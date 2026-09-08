@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -9,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import insert, select, update
 
 from fairy_core.assistant.evidence import EvidenceRequirementKind
+from fairy_core.assistant.execution_intent import ExecutionIntentSnapshot
 from fairy_core.assistant.interpretation import (
     AssistantRequestInterpretationRevision,
     InterpretationConfidence,
@@ -22,6 +24,7 @@ from fairy_core.storage.schema import (
     assistant_messages,
     assistant_request_interpretations,
     assistant_turns,
+    tasks,
 )
 
 
@@ -32,6 +35,12 @@ class AssistantInterpretationRepositoryMixin:
         *,
         expected_revision: int | None,
     ) -> None:
+        if (
+            isinstance(expected_revision, bool)
+            or (expected_revision is not None and expected_revision < 1)
+            or interpretation.revision != (expected_revision or 0) + 1
+        ):
+            raise InvalidTransitionError("Interpretation revision must advance exactly once")
         values = {
             "tenant_id": self._tenant_id,
             **_interpretation_values(interpretation),
@@ -59,6 +68,62 @@ class AssistantInterpretationRepositoryMixin:
                 interpretation.source_message_sha256
             ):
                 raise InvalidTransitionError("Interpretation source Message digest changed")
+            binding = (
+                connection.execute(
+                    select(
+                        tasks.c.id.label("task_id"),
+                        tasks.c.conversation_id,
+                        tasks.c.project_id,
+                        tasks.c.workspace_id,
+                        tasks.c.base_version_id,
+                        tasks.c.target_version_id,
+                        tasks.c.execution_target,
+                        assistant_turns.c.scope_digest,
+                    )
+                    .select_from(
+                        assistant_turns.join(
+                            tasks,
+                            (tasks.c.tenant_id == assistant_turns.c.tenant_id)
+                            & (tasks.c.id == assistant_turns.c.task_id)
+                            & (tasks.c.conversation_id == assistant_turns.c.conversation_id),
+                        )
+                    )
+                    .where(
+                        assistant_turns.c.tenant_id == self._tenant_id,
+                        assistant_turns.c.id == str(interpretation.turn_id),
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if binding is None:
+                raise InvalidTransitionError("Interpretation execution binding is unavailable")
+            intent = ExecutionIntentSnapshot(
+                turn_id=interpretation.turn_id,
+                task_id=UUID(binding["task_id"]),
+                conversation_id=UUID(binding["conversation_id"]),
+                project_id=UUID(binding["project_id"]) if binding["project_id"] else None,
+                workspace_id=UUID(binding["workspace_id"]),
+                base_version_id=(
+                    UUID(binding["base_version_id"]) if binding["base_version_id"] else None
+                ),
+                target_version_id=(
+                    UUID(binding["target_version_id"]) if binding["target_version_id"] else None
+                ),
+                execution_target=binding["execution_target"],
+                scope_digest=binding["scope_digest"],
+                interpretation_id=interpretation.id,
+                interpretation_revision=interpretation.revision,
+                source_message_id=interpretation.source_message_id,
+                source_message_sha256=interpretation.source_message_sha256,
+                action=interpretation.action,
+                objectives=interpretation.objectives,
+                target_descriptions=interpretation.targets,
+                user_constraints=interpretation.constraints,
+                confidence=interpretation.confidence,
+                disposition=interpretation.disposition,
+            )
+            values["execution_intent"] = intent.model_dump(mode="json")
             current_predicate = (
                 assistant_turns.c.active_interpretation_revision.is_(None)
                 if expected_revision is None
@@ -84,12 +149,46 @@ class AssistantInterpretationRepositoryMixin:
                 )
             ).rowcount
             if changed != 1:
-                raise InvalidTransitionError(
-                    "Assistant Turn interpretation changed concurrently"
-                )
-            connection.execute(
-                insert(assistant_request_interpretations).values(**values)
+                raise InvalidTransitionError("Assistant Turn interpretation changed concurrently")
+            connection.execute(insert(assistant_request_interpretations).values(**values))
+
+    def get_execution_intent(
+        self,
+        turn_id: UUID,
+        revision: int | None = None,
+    ) -> ExecutionIntentSnapshot | None:
+        """Read the active binding, or an explicit immutable revision for audit."""
+        statement = select(assistant_request_interpretations).where(
+            assistant_request_interpretations.c.tenant_id == self._tenant_id,
+            assistant_request_interpretations.c.turn_id == str(turn_id),
+        )
+        if revision is None:
+            statement = statement.join(
+                assistant_turns,
+                (assistant_turns.c.tenant_id == assistant_request_interpretations.c.tenant_id)
+                & (assistant_turns.c.id == assistant_request_interpretations.c.turn_id)
+                & (
+                    assistant_turns.c.active_interpretation_revision
+                    == assistant_request_interpretations.c.revision
+                ),
             )
+        else:
+            if isinstance(revision, bool) or revision < 1:
+                raise ValueError("execution intent revision must be positive")
+            statement = statement.where(assistant_request_interpretations.c.revision == revision)
+        row = self._first(statement)
+        if row is None or row["execution_intent"] is None:
+            return None
+        intent = ExecutionIntentSnapshot.model_validate_json(json.dumps(row["execution_intent"]))
+        if (
+            intent.turn_id != turn_id
+            or intent.interpretation_id != UUID(row["id"])
+            or intent.interpretation_revision != row["revision"]
+            or intent.source_message_id != UUID(row["source_message_id"])
+            or intent.source_message_sha256 != row["source_message_sha256"]
+        ):
+            raise InvalidTransitionError("Execution intent does not match its interpretation")
+        return intent
 
     def get_interpretation(
         self,
@@ -107,9 +206,7 @@ class AssistantInterpretationRepositoryMixin:
         else:
             if revision < 1:
                 raise ValueError("interpretation revision must be positive")
-            statement = statement.where(
-                assistant_request_interpretations.c.revision == revision
-            )
+            statement = statement.where(assistant_request_interpretations.c.revision == revision)
         row = self._first(statement)
         return _interpretation_from_row(row) if row is not None else None
 
@@ -122,8 +219,7 @@ class AssistantInterpretationRepositoryMixin:
                 connection.execute(
                     select(assistant_request_interpretations)
                     .where(
-                        assistant_request_interpretations.c.tenant_id
-                        == self._tenant_id,
+                        assistant_request_interpretations.c.tenant_id == self._tenant_id,
                         assistant_request_interpretations.c.turn_id == str(turn_id),
                     )
                     .order_by(assistant_request_interpretations.c.revision)
@@ -142,8 +238,7 @@ class AssistantInterpretationRepositoryMixin:
             select(assistant_request_interpretations).where(
                 assistant_request_interpretations.c.tenant_id == self._tenant_id,
                 assistant_request_interpretations.c.turn_id == str(turn_id),
-                assistant_request_interpretations.c.idempotency_key
-                == idempotency_key.strip(),
+                assistant_request_interpretations.c.idempotency_key == idempotency_key.strip(),
             )
         )
         return _interpretation_from_row(row) if row is not None else None
