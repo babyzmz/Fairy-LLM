@@ -44,10 +44,12 @@ class CommandBus:
         registry: ToolRegistry,
         policy: PolicyEngine,
         ledger: CommandLedger,
+        worker_id: str | None = None,
     ) -> None:
         self._registry = registry
         self._policy = policy
         self._ledger = ledger
+        self._worker_id = worker_id
 
     def submit(
         self,
@@ -112,7 +114,7 @@ class CommandBus:
     ) -> CommandRun:
         return self._ledger.claim(
             run_id,
-            worker_id=worker_id or f"core:{new_id()}",
+            worker_id=worker_id or self._worker_id or f"core:{new_id()}",
             lease_until=lease_until or datetime.now(UTC) + _DEFAULT_LEASE_DURATION,
         )
 

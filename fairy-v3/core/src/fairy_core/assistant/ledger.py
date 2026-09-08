@@ -21,6 +21,7 @@ from fairy_core.assistant.models import (
     MessageVisibility,
 )
 from fairy_core.assistant.system_intent import unrouted_interpretation
+from fairy_core.assistant.tools import uses_deferred_media
 from fairy_core.assistant.trace_models import TurnTrace
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.turn_reader import require_turn
@@ -358,10 +359,11 @@ class AssistantLedgerApplication:
         turn_id: UUID,
         *,
         lease_until: datetime,
+        worker_id: str,
     ) -> bool:
         with self._unit_of_work_factory() as unit_of_work:
             turn = unit_of_work.assistant.get_turn(turn_id)
-            if turn is None:
+            if turn is None or turn.is_terminal:
                 return False
             run_ids = {
                 step.command_run_id
@@ -380,11 +382,20 @@ class AssistantLedgerApplication:
                 run = unit_of_work.commands.get_run(run_id)
                 if run is None or run.status is not CommandStatus.RUNNING:
                     continue
-                if run.lease_owner is None:
+                if (
+                    run.task_id != turn.task_id or run.conversation_id != turn.conversation_id
+                    or run.scope_digest != turn.scope_digest
+                ):
+                    return False
+                if run.lease_owner != worker_id:
+                    if turn.execution_engine_version == 4 and uses_deferred_media(run):
+                        # The domain Run owns its own heartbeat after handoff.
+                        # Reading its receipt is not authority to renew its lease.
+                        continue
                     return False
                 if unit_of_work.commands.renew(
                     run.id,
-                    lease_owner=run.lease_owner,
+                    lease_owner=worker_id,
                     lease_fence=run.lease_fence,
                     lease_until=lease_until,
                 ):

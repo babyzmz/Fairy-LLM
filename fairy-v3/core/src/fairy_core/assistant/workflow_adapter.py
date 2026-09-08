@@ -64,6 +64,7 @@ class AssistantTurnWorkflowAdapter:
         return self._ledger.renew_turn_command_leases(
             turn_id,
             lease_until=assistant_command_lease_until(),
+            worker_id=self._application._command_worker_id,
         )
 
     def execute(

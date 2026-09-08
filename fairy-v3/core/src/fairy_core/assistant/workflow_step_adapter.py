@@ -163,6 +163,7 @@ class AssistantStepWorkflowAdapter:
         return self._ledger.renew_turn_command_leases(
             UUID(node.payload["turn_id"]),
             lease_until=assistant_command_lease_until(),
+            worker_id=self._application._command_worker_id,
         )
 
     def execute_claimed(self, node, claim, cancellation):
@@ -389,6 +390,7 @@ class AssistantStepWorkflowAdapter:
             command = unit.commands.get_run(UUID(checkpoint["model_command_id"]))
             if (
                 command is None
+                or command.command_name != "model.generate"
                 or command.task_id != turn.task_id
                 or command.conversation_id != turn.conversation_id
                 or command.scope_digest != turn.scope_digest
@@ -403,6 +405,11 @@ class AssistantStepWorkflowAdapter:
                     lease_until=assistant_command_lease_until(),
                 )
                 unit.commit()
+            if command.status is CommandStatus.RUNNING and (
+                command.lease_owner != self._application._command_worker_id
+                or command.lease_until is None
+            ):
+                raise WorkflowFenceError("Model checkpoint is owned by another live worker")
         return command
 
     def _retry_result(self, node, turn, checkpoint):

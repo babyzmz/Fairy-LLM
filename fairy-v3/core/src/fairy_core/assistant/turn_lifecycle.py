@@ -508,6 +508,7 @@ class AssistantTurnLifecycleMixin:
             registry=self._registry,
             policy=self._policy,
             ledger=ledger,
+            worker_id=self._command_worker_id,
         )
 
 

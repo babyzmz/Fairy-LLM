@@ -38,6 +38,7 @@
 
 ### Phase 6：领域结果与中途修订边界
 
+- 命令心跳绑定本次Assistant实例实际领取身份，验证Task/Conversation/Scope；不替其他持有者或媒体子任务续租。模型检查点也拒绝借用有效外部租约，过期才重新领取。双引擎/接管/重启/媒体/Command Bus 48项通过（70.26秒），见[专项证据](assistant-command-heartbeat-ownership.md)。
 - 重试/延迟等待耗尽、最终中断、异常及租约回收统一在Kernel事务中投影Turn/Task/Trace失败；兄弟节点和租约同步失效，不借用外部命令所有权。14项定向验证和完整Assistant＋Workflow419项通过（317.25秒）。见[专项证据](workflow-terminal-failure-projection.md)。命令心跳所有权仍在继续审查。
 - 尚未执行的工具审批允许被新任务要求替代：关闭旧待定审批、保留已有批准事实并取消旧命令，同轮未派发项一并拒绝；与新计划在同一事务保存。8个双会话/单与多调用/重启与重放组合通过，相关审批、Steering、媒体与Trace合计33项通过（53.04秒）。见[专项证据](steering-pending-approvals.md)。预算/Changeset审批不由此自动放开。
 - 模型Command失败收尾只重新领取已过期租约，不借用仍有效的新持有者身份，也不重放Provider；提交`d1039e1af`，16项定向回归通过，见[专项证据](workflow-model-failure-settlement.md)。仍活跃的外部命令保留原所有者，不宣称物理停止。

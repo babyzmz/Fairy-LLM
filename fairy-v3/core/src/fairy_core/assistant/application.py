@@ -66,6 +66,7 @@ from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolDefinition, ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.execution import Approval
+from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import TaskStatus
 from fairy_core.mcp.ports import McpCancelledError
 from fairy_core.perception import ImageAttachmentStore
@@ -118,6 +119,7 @@ class AssistantApplication(
         execution_completion_hook: Callable[[UUID], str | None] | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
+        self._command_worker_id = f"assistant:{new_id()}"
         self._scope_resolver = scope_resolver
         self._registry = registry
         self._policy = PolicyEngine(registry)
