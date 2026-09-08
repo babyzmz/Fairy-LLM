@@ -36,7 +36,7 @@ import type { ScheduleRuleDraft } from "./scheduleRules";
 import type { ChatTimelineTarget } from "./timelineTarget";
 import type { AssistantDraft, OptimisticUserMessage } from "./useAssistantTurn";
 import type { TurnTraceQueryState } from "./useTurnTraces";
-import { parseSlashCommand, slashCommandHelp } from "./slashCommands";
+import { parseSlashCommand } from "./slashCommands";
 import "./streaming.css";
 import "./requestInterpretation.css";
 
@@ -70,6 +70,7 @@ export interface ChatWorkspaceProps {
   error: string | null;
   slashCommands: SlashCommandMetadata[];
   onNewConversation(): Promise<void>;
+  onCommand?(text: string): Promise<string | null>;
   onSwitchProject(): void;
   onPermissionChange(
     profile: "observe" | "standard" | "autonomous",
@@ -271,34 +272,11 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       );
       return;
     }
-    if (command.name === "new" || command.name === "clear") {
-      await props.onNewConversation();
-      setNotice(command.name === "clear" ? "Started a new durable conversation" : null);
+    if (!props.onCommand) {
+      setNotice("Core command dispatcher is unavailable");
       return;
     }
-    if (command.name === "project") {
-      props.onSwitchProject();
-      return;
-    }
-    if (command.name === "stop") {
-      await props.onCancel();
-      return;
-    }
-    if (command.name === "permission") {
-      if (["observe", "standard", "autonomous"].includes(command.argument)) {
-        await props.onPermissionChange(
-          command.argument as "observe" | "standard" | "autonomous",
-        );
-        setNotice(`Permission profile: ${command.argument}`);
-      } else {
-        setNotice("Permission must be observe, standard, or autonomous");
-      }
-      return;
-    }
-    if (command.name === "help") {
-      setNotice(slashCommandHelp(props.slashCommands));
-      return;
-    }
+    setNotice(await props.onCommand(value));
   };
 
   return (

@@ -12,6 +12,8 @@ import {
 } from "../models/modelSelection";
 import { useModelSelection } from "../models/useModelSelection";
 import { createPetChatBindingController, type PetChatBindingController } from "./petChatBinding";
+import { dispatchWorkspaceCommand } from "./workspaceCommands";
+import { createPresenceSubmissionId } from "../presence/transport/presenceChannel";
 import { useTaskMediaJobs } from "../media/useTaskMediaJobs";
 import type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 export type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
@@ -123,6 +125,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     ? null
     : selectedItem(conversations, conversationSelection);
   const selectedChatConversation = selectedItem(chatConversations, chatConversationSelection);
+  const commandScopeRef = useRef({ key: "", generation: 0 });
+  const commandScopeKey = `${mode}:${selectedChatConversation?.id ?? "none"}`;
+  if (commandScopeRef.current.key !== commandScopeKey) {
+    commandScopeRef.current = { key: commandScopeKey, generation: commandScopeRef.current.generation + 1 };
+  }
   const providers = providersQuery.data?.items ?? [];
   const providerHealth = providerHealthQuery.data?.items ?? [];
   const selectedProfileCandidate = profileIdForSelection(modelController.selection);
@@ -1025,6 +1032,24 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     selectProject: actions.selectProject,
     selectConversation: actions.selectConversation,
     selectChatConversation: actions.selectChatConversation,
+    dispatchChatCommand: async (text) => {
+      const dispatch = client.assistant.commands?.dispatch;
+      if (!dispatch) throw new Error("Core command dispatcher is unavailable");
+      const conversationId = selectedChatConversation?.id ?? null;
+      const generation = commandScopeRef.current.generation;
+      const isCurrent = () => mode === "chat" && commandScopeRef.current.generation === generation;
+      return runAction(() => dispatchWorkspaceCommand(text, `desktop-command:${createPresenceSubmissionId()}`, {
+        context: { conversationId, turn: chatAssistant.turn },
+        dispatch,
+        isCurrent,
+        selectConversation: async (id) => {
+          await invalidateHistory();
+          if (isCurrent()) historyActions.selectChatConversation(id);
+        },
+        setPermission: setPermissionProfile,
+        showProject: () => setMode("project"),
+      }));
+    },
     prefetchConversation,
     selectTask: setTaskSelection,
     createProject: actions.createProject,

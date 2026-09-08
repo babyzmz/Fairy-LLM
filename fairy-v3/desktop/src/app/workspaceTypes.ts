@@ -71,6 +71,7 @@ export interface ObsidianSourceProjection {
 
 export interface WorkspaceClient extends AssistantTurnClient {
   assistant: {
+    commands?: CoreClient["assistant"]["commands"];
     backgroundTasks: CoreClient["assistant"]["backgroundTasks"];
     schedules: CoreClient["assistant"]["schedules"];
     turns: AssistantTurnClient["assistant"]["turns"] &
@@ -252,6 +253,7 @@ export interface WorkspaceModel {
   syncObsidianSource(source: ObsidianSource): Promise<void>;
   readObsidianItem(item: ObsidianVaultItem, signal?: AbortSignal): Promise<ObsidianVaultItemContent>;
   createChatConversation(): Promise<void>;
+  dispatchChatCommand?(text: string): Promise<string | null>;
   createPetChatConversation(): Promise<void>;
   createProjectConversation(project: Project): Promise<void>;
   renameProject(project: Project, name: string): Promise<void>;

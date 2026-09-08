@@ -122,6 +122,7 @@ export function WorkspaceShell({ model, preferences, fairyEyeActive = true, visi
               error={model.chatError}
               slashCommands={model.capabilities?.slash_commands ?? []}
               onNewConversation={model.createChatConversation}
+              onCommand={model.dispatchChatCommand}
               onSwitchProject={() => model.setMode("project")}
               onPermissionChange={model.setPermissionProfile}
               onSend={model.sendChatMessage}

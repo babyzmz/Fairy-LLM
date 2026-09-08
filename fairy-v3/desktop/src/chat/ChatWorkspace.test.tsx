@@ -149,7 +149,8 @@ describe("ChatWorkspace", () => {
     await user.type(screen.getByLabelText("Message Fairy"), "  /new");
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
-    await waitFor(() => expect(props.onNewConversation).toHaveBeenCalledOnce());
+    await waitFor(() => expect(props.onCommand).toHaveBeenCalledWith("/new"));
+    expect(props.onNewConversation).not.toHaveBeenCalled();
     expect(props.onSend).not.toHaveBeenCalled();
   });
 
@@ -480,6 +481,7 @@ function workspaceProps(
       },
     ],
     onNewConversation: vi.fn(async () => undefined),
+    onCommand: vi.fn(async () => null),
     onSwitchProject: vi.fn(),
     onPermissionChange: vi.fn(async () => undefined),
     onSend: vi.fn(async () => undefined),
