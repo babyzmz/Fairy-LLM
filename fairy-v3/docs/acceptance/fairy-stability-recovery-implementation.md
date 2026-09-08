@@ -15,7 +15,7 @@
 | 阶段 | 工作 | 状态 |
 | --- | --- | --- |
 | 0 | 分支、用户改动恢复副本、独立 DSH 基线 | 完成 |
-| 1 | 录音 Scope；Browser revision；隐藏面板；桌宠启动 | 进行中 |
+| 1 | 录音 Scope；Browser revision；隐藏面板；桌宠启动 | 定向回归完成，完整桌面回归中；原生未验收 |
 | 2 | 持久执行意图、目标、副作用约束、多入口一致性 | 未开始 |
 | 3 | 单 reader RPC、控制通道、期限、协商及事件推送 | 未开始 |
 | 4 | 宿主 broker、桌宠脱离主 UI 生命周期、统一领域命令 | 未开始 |
@@ -46,6 +46,12 @@
 - 已单独提交 DSH `660945c94`，TypeScript 通过，DSH/Render Settings 3 文件14测试通过，未上传。
 
 ## 恢复方法
+
+### Phase 1 / F11：桌宠异步启动门禁
+
+- 先复现原 projection-only 测试立即寻找尚未挂载 renderer 的失败；改为等待真实设置加载后的 DOM，不改生产渲染逻辑。
+- 新增加载等待/live 优先、原生加载失败回退、启动中卸载三个行为测试，验证现有守卫而非增加无条件延时。
+- TypeScript 通过，DualSurface/Render Settings 38测试通过。jsdom 无 Canvas context 警告仍明确存在，不作为 GPU/远程可见性验收。
 
 ### Phase 1 / F03：不可见 Browser 暂停视觉查询
 

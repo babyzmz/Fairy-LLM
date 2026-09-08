@@ -29,6 +29,7 @@ import type {
   PresenceInputPresentationChannel,
 } from "./transport/inputPresentation";
 import type { PresenceRendererHealth } from "./transport/rendererHealth";
+import * as renderSettingsTransport from "./transport/renderSettings";
 import {
   DEFAULT_PRESENCE_RENDER_SETTINGS,
   type PresenceRenderSettings,
@@ -333,6 +334,49 @@ afterEach(() => {
 });
 
 describe("dual presence surfaces", () => {
+  it("waits for persisted settings and never overwrites newer live settings", async () => {
+    let resolve!: (settings: PresenceRenderSettings | null) => void;
+    vi.spyOn(renderSettingsTransport, "loadNativePresenceRenderSettings").mockReturnValueOnce(
+      new Promise((complete) => { resolve = complete; }),
+    );
+    const settings = renderSettingsHarness();
+    render(<PresenceRenderApp channel={channelHarness().channel}
+      interactionSource={interactionHarness().source} renderSettingsChannel={settings.channel} />);
+    const surface = screen.getByTestId("presence-render-surface");
+    expect(surface).toHaveAttribute("data-render-settings-ready", "false");
+    expect(screen.queryByTestId("presence-renderer")).not.toBeInTheDocument();
+    expect(surface).toHaveAttribute("data-native-renderer-requested", "false");
+    act(() => settings.emit({ ...DEFAULT_PRESENCE_RENDER_SETTINGS, form: "hdd_eye" }));
+    expect(surface).toHaveAttribute("data-pet-form", "hdd_eye");
+    await act(async () => { resolve({ ...DEFAULT_PRESENCE_RENDER_SETTINGS, form: "liquid_glass" }); });
+    expect(surface).toHaveAttribute("data-pet-form", "hdd_eye");
+    expect(screen.queryByTestId("presence-renderer")).not.toBeInTheDocument();
+  });
+
+  it("renders the bounded default when native settings cannot be loaded", async () => {
+    const failedLoad = renderSettingsTransport.loadNativePresenceRenderSettings(async () => {
+      throw new Error("native settings unavailable");
+    });
+    vi.spyOn(renderSettingsTransport, "loadNativePresenceRenderSettings").mockReturnValueOnce(failedLoad);
+    render(<PresenceRenderApp channel={channelHarness().channel} interactionSource={interactionHarness().source} />);
+    expect(await screen.findByTestId("presence-renderer")).toBeInTheDocument();
+    expect(screen.getByTestId("presence-render-surface")).toHaveAttribute("data-render-settings-ready", "true");
+  });
+
+  it("does not request settings or mount a renderer after unmount during startup", async () => {
+    let resolve!: (settings: PresenceRenderSettings | null) => void;
+    vi.spyOn(renderSettingsTransport, "loadNativePresenceRenderSettings").mockReturnValueOnce(
+      new Promise((complete) => { resolve = complete; }),
+    );
+    const settings = renderSettingsHarness();
+    const view = render(<PresenceRenderApp channel={channelHarness().channel}
+      interactionSource={interactionHarness().source} renderSettingsChannel={settings.channel} />);
+    view.unmount();
+    await act(async () => { resolve(DEFAULT_PRESENCE_RENDER_SETTINGS); });
+    expect(settings.channel.request).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("presence-renderer")).not.toBeInTheDocument();
+  });
+
   it("never draws the compatibility identity while a native surface can be visible", () => {
     expect(nativeRendererOccludesFallback(true, "idle")).toBe(false);
     expect(nativeRendererOccludesFallback(true, "starting")).toBe(false);
@@ -359,7 +403,7 @@ describe("dual presence surfaces", () => {
       "true",
     );
     expect(
-      screen.getByTestId("presence-renderer").querySelector("canvas.presence-webgl-canvas"),
+      (await screen.findByTestId("presence-renderer")).querySelector("canvas.presence-webgl-canvas"),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(harness.channel.requestProjection).toHaveBeenCalledOnce();
