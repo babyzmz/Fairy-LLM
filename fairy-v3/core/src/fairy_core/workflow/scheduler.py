@@ -131,6 +131,12 @@ class WorkflowScheduler:
         self._lock = RLock()
         self._wake = Event()
         self._changed = Event()
+        signal = getattr(unit_of_work_factory, "workflow_signal", None)
+        self._unsubscribe = (
+            (signal.subscribe(self._wake), signal.subscribe(self._changed))
+            if signal is not None
+            else ()
+        )
         self._closed = False
         self._started = False
         self._last_heartbeat = time.monotonic()
@@ -175,6 +181,8 @@ class WorkflowScheduler:
                 item.cancellation.interrupt()
         self._wake.set()
         self._changed.set()
+        for unsubscribe in self._unsubscribe:
+            unsubscribe()
         if self._started:
             self._coordinator.join()
         self._executor.shutdown(wait=True, cancel_futures=True)
@@ -264,17 +272,40 @@ class WorkflowScheduler:
         return snapshot
 
     def _coordinate(self) -> None:
+        idle_delay = self._poll_interval
+        delay = idle_delay
         while True:
-            self._wake.wait(self._poll_interval)
+            notified = self._wake.wait(delay)
             self._wake.clear()
             with self._lock:
                 if self._closed:
                     return
             try:
                 self._heartbeat_if_due()
-                self._claim_available()
+                claimed = self._claim_available()
+                idle_delay = (
+                    self._poll_interval if claimed or notified else min(5.0, idle_delay * 2)
+                )
+                with self._unit_of_work_factory() as unit_of_work:
+                    due = unit_of_work.workflows.next_wake_delay(
+                        now=datetime.now(UTC),
+                        maximum=idle_delay,
+                    )
+                delay = max(self._poll_interval, due)
+                with self._lock:
+                    if self._active:
+                        delay = min(
+                            delay,
+                            max(
+                                0.0,
+                                self._heartbeat_interval
+                                - (time.monotonic() - self._last_heartbeat),
+                            ),
+                        )
             except Exception:
                 logger.exception("Workflow coordinator iteration failed")
+                idle_delay = min(5.0, idle_delay * 2)
+                delay = idle_delay
 
     def _heartbeat_if_due(self) -> None:
         now = time.monotonic()
@@ -305,12 +336,12 @@ class WorkflowScheduler:
             if not renewed:
                 item.cancellation.interrupt()
 
-    def _claim_available(self) -> None:
+    def _claim_available(self) -> bool:
         with self._lock:
             capacity = self._max_workers - len(self._active)
             active = tuple(self._active.values())
         if capacity <= 0:
-            return
+            return False
         blocking_parent_kinds = (
             self._adapters.child_waiting_kinds() if self._max_workers > 1 else frozenset()
         )
@@ -352,7 +383,7 @@ class WorkflowScheduler:
                 if self._closed:
                     cancellation.interrupt()
                     self._abandon(claim)
-                    return
+                    return False
                 if claim.node_id in self._active:
                     self._abandon(claim)
                     continue
@@ -364,6 +395,7 @@ class WorkflowScheduler:
                     self._active.pop(claim.node_id, None)
                 self._abandon(claim)
                 raise
+        return bool(claims)
 
     def _execute(self, active: _ActiveNode) -> None:
         claim = active.claim

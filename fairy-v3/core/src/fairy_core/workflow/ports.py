@@ -18,6 +18,8 @@ from fairy_core.workflow.models import (
 
 
 class WorkflowRepository(Protocol):
+    def next_wake_delay(self, *, now: datetime, maximum: float) -> float: ...
+
     def create(
         self,
         run: WorkflowRun,

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from types import TracebackType
-from typing import Protocol, Self
+from typing import Any, Protocol, Self
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.engine import Connection, Engine, Transaction
 
 from fairy_core.assistant.ports import AssistantRepository
@@ -46,6 +46,7 @@ from fairy_core.realtime.ports import RealtimeRepository
 from fairy_core.realtime.repository import SqlAlchemyRealtimeRepository
 from fairy_core.storage.ports import StateStore
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
+from fairy_core.workflow.commit_signal import WorkflowCommitSignal
 from fairy_core.workflow.ports import WorkflowRepository
 from fairy_core.workflow.repository import SqlAlchemyWorkflowRepository
 from fairy_core.workspace.ports import ProjectIndexRepository, WorkspaceRepository
@@ -96,7 +97,12 @@ class CoreUnitOfWorkFactory(Protocol):
 
 class SqlAlchemyUnitOfWork:
     def __init__(
-        self, engine: Engine, *, tenant_id: str, ledger_signal: LedgerCommitSignal | None = None
+        self,
+        engine: Engine,
+        *,
+        tenant_id: str,
+        ledger_signal: LedgerCommitSignal | None = None,
+        workflow_signal: WorkflowCommitSignal | None = None,
     ) -> None:
         self._engine = engine
         self._tenant_id = normalize_tenant_id(tenant_id)
@@ -104,6 +110,8 @@ class SqlAlchemyUnitOfWork:
         self._transaction: Transaction | None = None
         self._committed = False
         self._ledger_signal = ledger_signal
+        self._workflow_signal = workflow_signal
+        self._workflow_written = False
 
     def __enter__(self) -> Self:
         if self._connection is not None:
@@ -202,7 +210,34 @@ class SqlAlchemyUnitOfWork:
             raise
         self._connection = connection
         self._transaction = transaction
+        self._workflow_written = False
+        if self._workflow_signal is not None:
+            event.listen(connection, "after_execute", self._track_workflow_write)
         return self
+
+    def _track_workflow_write(
+        self,
+        connection: Connection,
+        statement: Any,
+        multiparams: Any,
+        params: Any,
+        execution_options: Any,
+        result: Any,
+    ) -> None:
+        if (
+            getattr(statement, "is_dml", False)
+            and getattr(getattr(statement, "table", None), "name", "")
+            in {
+                "core_workflow_runs",
+                "core_workflow_nodes",
+                "core_workflow_attempts",
+                "core_workflow_edges",
+                "core_workflow_plan_revisions",
+                "core_workflow_instructions",
+            }
+            and result.rowcount != 0
+        ):
+            self._workflow_written = True
 
     def __exit__(
         self,
@@ -217,6 +252,8 @@ class SqlAlchemyUnitOfWork:
                 transaction.rollback()
         finally:
             if connection is not None:
+                if self._workflow_signal is not None:
+                    event.remove(connection, "after_execute", self._track_workflow_write)
                 connection.close()
             self._connection = None
             self._transaction = None
@@ -230,6 +267,8 @@ class SqlAlchemyUnitOfWork:
         self._committed = True
         if self._ledger_signal is not None and self.commands.events_appended:
             self._ledger_signal.notify()
+        if self._workflow_signal is not None and self._workflow_written:
+            self._workflow_signal.notify()
 
 
 class SqlAlchemyUnitOfWorkFactory:
@@ -237,6 +276,7 @@ class SqlAlchemyUnitOfWorkFactory:
         self._engine = engine
         self._tenant_id = normalize_tenant_id(tenant_id)
         self.ledger_signal = LedgerCommitSignal()
+        self.workflow_signal = WorkflowCommitSignal()
 
     @property
     def tenant_id(self) -> str:
@@ -247,4 +287,5 @@ class SqlAlchemyUnitOfWorkFactory:
             self._engine,
             tenant_id=self._tenant_id,
             ledger_signal=self.ledger_signal,
+            workflow_signal=self.workflow_signal,
         )

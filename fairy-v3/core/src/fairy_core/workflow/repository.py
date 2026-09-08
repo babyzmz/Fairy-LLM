@@ -50,6 +50,7 @@ from fairy_core.workflow.repository_records import (
     string_list,
     validate_plan,
 )
+from fairy_core.workflow.wake_repository import WorkflowWakeRepositoryMixin
 
 _RUN_TERMINAL = {
     WorkflowRunStatus.COMPLETED,
@@ -69,6 +70,7 @@ class SqlAlchemyWorkflowRepository(
     WorkflowApprovalRepositoryMixin,
     WorkflowBudgetRepositoryMixin,
     WorkflowDeadlineRepositoryMixin,
+    WorkflowWakeRepositoryMixin,
 ):
     def __init__(self, connection: Connection, *, tenant_id: str) -> None:
         self._connection = connection
