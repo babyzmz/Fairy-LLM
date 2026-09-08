@@ -13,6 +13,42 @@ const sessionId = "019f6b2b-8000-7000-8000-000000000004";
 const tabId = "019f6b2b-8000-7000-8000-000000000005";
 
 describe("useWorkspaceBrowser", () => {
+  it.each([
+    { snapshotRevision: 2, tabRevision: 1, expected: 2 },
+    { snapshotRevision: 2, tabRevision: 3, expected: 3 },
+  ])("navigates with the latest observed page revision ($expected)", async ({ snapshotRevision, tabRevision, expected }) => {
+    const active = session({ task_id: firstTaskId });
+    active.tabs[0].revision = tabRevision;
+    const execute = vi.fn(async () => ({}));
+    const client = {
+      browser: {
+        health: async () => ({ available: true }),
+        sessions: { list: async () => ({ items: [active] }) },
+        snapshots: { get: async () => ({ session_id: sessionId, tab_id: tabId, page_revision: snapshotRevision }) },
+        actions: { execute },
+      },
+    } as unknown as WorkspaceClient;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const hook = renderHook(() => useWorkspaceBrowser({
+      client, enabled: true, conversationId, projectId: null, taskId: firstTaskId,
+      runAction: (operation) => operation(),
+    }), { wrapper: ({ children }: PropsWithChildren) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider> });
+    try {
+      await waitFor(() => expect(hook.result.current.session).not.toBeNull());
+      act(() => hook.result.current.actions.setBrowserSurfaceActive(true));
+      await waitFor(() => expect(hook.result.current.snapshot?.page_revision).toBe(snapshotRevision));
+      await act(async () => { await hook.result.current.actions.navigateBrowser("https://example.net/"); });
+      expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+        session_id: sessionId, tab_id: tabId, expected_page_revision: expected,
+      }));
+      await act(async () => { await hook.result.current.actions.executeBrowserAction({ kind: "reload" }); });
+      expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ expected_page_revision: expected }));
+    } finally {
+      hook.unmount();
+      queryClient.clear();
+    }
+  });
+
   it("isolates session queries by Task and captures only while the surface is visible", async () => {
     const list = vi.fn(async (input: object) => ({ items: [session(input)] }));
     const getSnapshot = vi.fn(async () => ({

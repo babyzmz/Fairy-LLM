@@ -97,6 +97,15 @@ export function useWorkspaceBrowser({
       if (session === null) throw new Error("Browser session is unavailable");
       return client.browser.sessions.resume(session.id);
     };
+    const pageRevision = (targetSession: NonNullable<typeof session>, tab: NonNullable<typeof activeTab>) => {
+      const snapshot = snapshotQuery.data;
+      // A resumed session owns a new page lifecycle; never reuse the pre-resume snapshot.
+      const matches = session?.status === "active"
+        && targetSession.id === session.id
+        && snapshot?.session_id === targetSession.id
+        && snapshot.tab_id === tab.id;
+      return matches ? Math.max(tab.revision, snapshot.page_revision) : tab.revision;
+    };
     const navigateSession = async (targetSession: NonNullable<typeof session>, url: string) => {
       const tab = targetSession.tabs.find((item) => item.id === targetSession.active_tab_id) ?? null;
       if (tab === null) throw new Error("Browser session has no active tab");
@@ -105,7 +114,7 @@ export function useWorkspaceBrowser({
         tab_id: tab.id,
         kind: "navigate",
         value: url,
-        expected_page_revision: tab.revision,
+        expected_page_revision: pageRevision(targetSession, tab),
         idempotency_key: `desktop:browser:navigate:${crypto.randomUUID()}`,
       });
     };
@@ -153,8 +162,7 @@ export function useWorkspaceBrowser({
           session_id: session.id,
           tab_id: activeTab.id,
           expected_page_revision: input.expected_page_revision
-            ?? snapshotQuery.data?.page_revision
-            ?? activeTab.revision,
+            ?? pageRevision(session, activeTab),
           idempotency_key: `desktop:browser:${input.kind}:${crypto.randomUUID()}`,
         }));
       },
