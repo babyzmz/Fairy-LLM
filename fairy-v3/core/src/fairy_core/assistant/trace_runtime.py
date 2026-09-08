@@ -253,6 +253,7 @@ class TurnTraceRuntime:
                     run=event_run,
                     step=step,
                     event_type=event_type,
+                    command_authority=run is not None and event_run.id == run.id,
                 )
 
     def complete_trace_in_unit(
@@ -312,29 +313,44 @@ class TurnTraceRuntime:
         run: CommandRun,
         step: TraceStep,
         event_type: str,
+        command_authority: bool = True,
     ) -> None:
+        payload = {
+            "trace_step_id": str(step.id),
+            "trace_id": str(step.trace_id),
+            "turn_id": str(step.turn_id),
+            "sequence": step.sequence,
+            "parent_step_id": str(step.parent_step_id) if step.parent_step_id else None,
+            "caused_by_step_id": str(step.caused_by_step_id) if step.caused_by_step_id else None,
+            "kind": step.kind.value,
+            "status": step.status.value,
+            "public_summary": step.public_summary,
+            "public_detail": step.public_detail,
+            "model_role": step.model_role.value if step.model_role else None,
+            "artifact_refs": [str(value) for value in step.artifact_refs],
+            "duration_ms": step.duration_ms,
+        }
+        if not command_authority:
+            trace = unit_of_work.assistant.get_trace_by_turn_id(step.turn_id)
+            if (
+                trace is None or trace.id != step.trace_id
+                or trace.task_id != run.task_id or trace.conversation_id != run.conversation_id
+            ):
+                raise ValueError("Trace projection belongs to a different command scope")
+            unit_of_work.commands.append_domain_event(
+                event_type=f"turn.trace.step.{event_type}",
+                visibility=EventVisibility(step.visibility.value), message=step.public_summary,
+                payload={**payload, "command_run_id": str(run.id)}, actor="assistant",
+                project_id=run.project_id, conversation_id=trace.conversation_id,
+                task_id=trace.task_id,
+            )
+            return
         unit_of_work.commands.append_event(
             run_id=run.id,
             event_type=f"turn.trace.step.{event_type}",
             visibility=EventVisibility(step.visibility.value),
             message=step.public_summary,
-            payload={
-                "trace_step_id": str(step.id),
-                "trace_id": str(step.trace_id),
-                "turn_id": str(step.turn_id),
-                "sequence": step.sequence,
-                "parent_step_id": str(step.parent_step_id) if step.parent_step_id else None,
-                "caused_by_step_id": (
-                    str(step.caused_by_step_id) if step.caused_by_step_id else None
-                ),
-                "kind": step.kind.value,
-                "status": step.status.value,
-                "public_summary": step.public_summary,
-                "public_detail": step.public_detail,
-                "model_role": step.model_role.value if step.model_role else None,
-                "artifact_refs": [str(value) for value in step.artifact_refs],
-                "duration_ms": step.duration_ms,
-            },
+            payload=payload,
             lease_owner=_lease_owner(run),
             lease_fence=_lease_fence(run),
         )
