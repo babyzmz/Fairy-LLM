@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, Lock
 
+from sqlalchemy import update
+
 from fairy_core.contracts.common import ExecutionTarget
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
+from fairy_core.providers import CancellationToken
+from fairy_core.storage.schema import workflow_runs
 from fairy_core.workflow.models import (
     WorkflowNode,
     WorkflowRun,
@@ -20,6 +25,7 @@ from fairy_core.workflow.scheduler import (
     WorkflowRetryableError,
     WorkflowScheduler,
     WorkflowWaitingForApproval,
+    _ActiveNode,
 )
 
 
@@ -29,6 +35,110 @@ class EchoAdapter:
         if node.attempt_count == 1 and node.payload.get("retry") is True:
             raise WorkflowRetryableError("retry", error_code="TRANSIENT")
         return WorkflowNodeResult(output={"value": node.payload["value"]})
+
+
+def test_scheduler_persists_deadline_maintenance_when_no_node_can_be_claimed(
+    tmp_path: Path,
+) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "core.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+    run = replace(
+        WorkflowRun.create(
+            owner_kind="test",
+            owner_id="expired-idle",
+            execution_target=ExecutionTarget.LOCAL,
+            trigger_kind=WorkflowTriggerKind.USER_TURN,
+            idempotency_key="expired-idle",
+        ),
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    node = WorkflowNode.create(
+        run_id=run.id,
+        plan_revision=1,
+        node_key="never-start",
+        kind="test.echo",
+        payload={"value": "must not execute"},
+        public_summary="Expired work",
+    )
+    with factory() as unit:
+        unit.workflows.create(run, nodes=(node,), edges=())
+        unit.commit()
+    scheduler = WorkflowScheduler(
+        unit_of_work_factory=factory,
+        adapters=WorkflowAdapterRegistry({"test.echo": EchoAdapter()}),
+        autostart=False,
+    )
+    try:
+        scheduler._claim_available()
+    finally:
+        scheduler.close()
+        engine.dispose()
+    reopened = create_sqlite_core_engine(tmp_path / "core.db")
+    try:
+        with SqlAlchemyUnitOfWorkFactory(reopened, tenant_id="local")() as unit:
+            snapshot = unit.workflows.get(run.id)
+        assert snapshot is not None
+        assert snapshot.run.status is WorkflowRunStatus.FAILED
+        assert snapshot.run.error_code == "WORKFLOW_DEADLINE_EXCEEDED"
+        assert snapshot.nodes[0].attempt_count == 0
+    finally:
+        reopened.dispose()
+
+
+def test_failed_heartbeat_commits_expired_budget(tmp_path: Path) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "heartbeat.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+    run = WorkflowRun.create(
+        owner_kind="test",
+        owner_id="heartbeat",
+        execution_target=ExecutionTarget.LOCAL,
+        trigger_kind=WorkflowTriggerKind.USER_TURN,
+        idempotency_key="heartbeat",
+    )
+    node = WorkflowNode.create(
+        run_id=run.id,
+        plan_revision=1,
+        node_key="echo",
+        kind="test.echo",
+        payload={"value": "unused"},
+        public_summary="Heartbeat",
+    )
+    with factory() as unit:
+        unit.workflows.create(run, nodes=(node,), edges=())
+        (claim,) = unit.workflows.claim_ready(
+            worker_id="test",
+            lease_until=datetime.now(UTC) + timedelta(seconds=30),
+            limit=1,
+        )
+        unit.commit()
+    with engine.begin() as connection:
+        connection.execute(
+            update(workflow_runs)
+            .where(workflow_runs.c.id == str(run.id))
+            .values(
+                created_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+    scheduler = WorkflowScheduler(
+        unit_of_work_factory=factory,
+        adapters=WorkflowAdapterRegistry(),
+        autostart=False,
+    )
+    cancellation = CancellationToken()
+    scheduler._active[node.id] = _ActiveNode(claim, cancellation, node.kind, None)
+    scheduler._last_heartbeat = 0
+    try:
+        scheduler._heartbeat_if_due()
+        with factory() as unit:
+            snapshot = unit.workflows.get(run.id)
+        assert snapshot is not None
+        assert snapshot.run.status is WorkflowRunStatus.FAILED
+        assert snapshot.run.error_code == "WORKFLOW_DEADLINE_EXCEEDED"
+        assert cancellation.is_interrupted
+    finally:
+        scheduler._active.clear()
+        scheduler.close()
+        engine.dispose()
 
 
 class BlockingParentAdapter:

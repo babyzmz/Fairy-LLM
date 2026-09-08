@@ -290,11 +290,10 @@ class WorkflowScheduler:
                         item.claim,
                         lease_until=self._new_lease_until(),
                     )
-                    if renewed:
-                        unit_of_work.commit()
-                        snapshot = unit_of_work.workflows.get(item.claim.run_id)
-                    else:
-                        snapshot = None
+                    # Renewal also settles expired run budgets, even when this
+                    # particular attempt can no longer retain its lease.
+                    unit_of_work.commit()
+                    snapshot = unit_of_work.workflows.get(item.claim.run_id) if renewed else None
                 if renewed and snapshot is not None:
                     node = next(value for value in snapshot.nodes if value.id == item.claim.node_id)
                     heartbeat = getattr(self._adapters.require(node.kind), "heartbeat", None)
@@ -333,8 +332,9 @@ class WorkflowScheduler:
                     continue
                 node = next(value for value in snapshot.nodes if value.id == claim.node_id)
                 claim_nodes[claim.node_id] = (node.kind, snapshot.run.parent_run_id)
-            if claims:
-                unit_of_work.commit()
+            # claim_ready also performs deadline/expired-lease maintenance.
+            # No returned claim does not imply that the transaction was read-only.
+            unit_of_work.commit()
         for claim in claims:
             cancellation = CancellationToken()
             claim_node = claim_nodes.get(claim.node_id)
