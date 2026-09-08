@@ -290,7 +290,7 @@ class SqlAlchemyWorkflowRepository(
         if not worker_id.strip() or limit < 1 or lease_until <= now:
             raise ValueError("Workflow claim parameters are invalid")
         self._expire_overdue(now, on_failed=on_failed)
-        self._reclaim_expired(now)
+        self._reclaim_expired(now, on_failed=on_failed)
         active_rows = (
             self._connection.execute(
                 select(
@@ -628,11 +628,21 @@ class SqlAlchemyWorkflowRepository(
             error_code=error_code,
             now=now,
         )
+        self._fail_remaining_run(
+            claim.run_id, failed_node_id=claim.node_id, error_code=error_code, now=now,
+        )
+        snapshot = self.get(claim.run_id)
+        assert snapshot is not None
+        return snapshot
+
+    def _fail_remaining_run(
+        self, run_id: UUID, *, failed_node_id: UUID, error_code: str, now: datetime,
+    ) -> None:
         self._connection.execute(
             update(workflow_nodes)
             .where(
                 workflow_nodes.c.tenant_id == self._tenant_id,
-                workflow_nodes.c.run_id == str(claim.run_id),
+                workflow_nodes.c.run_id == str(run_id),
                 workflow_nodes.c.status.in_(
                     (
                         WorkflowNodeStatus.PENDING.value,
@@ -654,16 +664,16 @@ class SqlAlchemyWorkflowRepository(
             update(workflow_nodes)
             .where(
                 workflow_nodes.c.tenant_id == self._tenant_id,
-                workflow_nodes.c.id == str(claim.node_id),
+                workflow_nodes.c.id == str(failed_node_id),
             )
             .values(status=WorkflowNodeStatus.FAILED.value)
         )
-        self._cancel_running_attempts(claim.run_id, now=now, except_node_id=claim.node_id)
+        self._cancel_running_attempts(run_id, now=now, except_node_id=failed_node_id)
         self._connection.execute(
             update(workflow_runs)
             .where(
                 workflow_runs.c.tenant_id == self._tenant_id,
-                workflow_runs.c.id == str(claim.run_id),
+                workflow_runs.c.id == str(run_id),
             )
             .values(
                 status=WorkflowRunStatus.FAILED.value,
@@ -673,9 +683,6 @@ class SqlAlchemyWorkflowRepository(
                 completed_at=now,
             )
         )
-        snapshot = self.get(claim.run_id)
-        assert snapshot is not None
-        return snapshot
 
     def abandon(
         self, claim: WorkflowAttemptClaim, *, disable_reconciliation: bool = False,
@@ -748,18 +755,9 @@ class SqlAlchemyWorkflowRepository(
             )
         )
         if next_status is WorkflowNodeStatus.FAILED:
-            self._connection.execute(
-                update(workflow_runs)
-                .where(
-                    workflow_runs.c.tenant_id == self._tenant_id,
-                    workflow_runs.c.id == str(claim.run_id),
-                )
-                .values(
-                    status=WorkflowRunStatus.FAILED.value,
-                    error_code="WORKER_INTERRUPTED",
-                    updated_at=now,
-                    completed_at=now,
-                )
+            self._fail_remaining_run(
+                claim.run_id, failed_node_id=claim.node_id,
+                error_code="WORKER_INTERRUPTED", now=now,
             )
         elif bool(run["pause_requested"]):
             self._settle_pause(claim.run_id, now=now)
@@ -997,7 +995,9 @@ class SqlAlchemyWorkflowRepository(
             )
         )
 
-    def _reclaim_expired(self, now: datetime) -> None:
+    def _reclaim_expired(
+        self, now: datetime, *, on_failed: Callable[[WorkflowRun], None] | None = None,
+    ) -> None:
         expired = (
             self._connection.execute(
                 select(workflow_attempts).where(
@@ -1030,7 +1030,7 @@ class SqlAlchemyWorkflowRepository(
                 .mappings()
                 .one()
             )
-            self._connection.execute(
+            settled = self._connection.execute(
                 update(workflow_attempts)
                 .where(
                     workflow_attempts.c.tenant_id == self._tenant_id,
@@ -1038,6 +1038,7 @@ class SqlAlchemyWorkflowRepository(
                     workflow_attempts.c.attempt_number == attempt["attempt_number"],
                     workflow_attempts.c.status == WorkflowAttemptStatus.RUNNING.value,
                     workflow_attempts.c.lease_fence == attempt["lease_fence"],
+                    workflow_attempts.c.lease_until <= now,
                 )
                 .values(
                     status=WorkflowAttemptStatus.ABANDONED.value,
@@ -1047,6 +1048,10 @@ class SqlAlchemyWorkflowRepository(
                     finished_at=now,
                 )
             )
+            if settled.rowcount != 1:
+                # A sibling failure or another owner may already have settled
+                # or renewed an attempt selected at the start of maintenance.
+                continue
             if WorkflowRunStatus(run["status"]) in _RUN_TERMINAL:
                 next_status = WorkflowNodeStatus.CANCELLED
             elif int(node["attempt_count"]) < int(node["max_attempts"]):
@@ -1068,19 +1073,13 @@ class SqlAlchemyWorkflowRepository(
                 )
             )
             if next_status is WorkflowNodeStatus.FAILED:
-                self._connection.execute(
-                    update(workflow_runs)
-                    .where(
-                        workflow_runs.c.tenant_id == self._tenant_id,
-                        workflow_runs.c.id == attempt["run_id"],
-                    )
-                    .values(
-                        status=WorkflowRunStatus.FAILED.value,
-                        error_code="WORKER_LEASE_EXPIRED",
-                        updated_at=now,
-                        completed_at=now,
-                    )
+                run_id = UUID(str(attempt["run_id"]))
+                self._fail_remaining_run(
+                    run_id, failed_node_id=UUID(str(attempt["node_id"])),
+                    error_code="WORKER_LEASE_EXPIRED", now=now,
                 )
+                if on_failed is not None:
+                    on_failed(self.get_run(run_id))
             elif bool(run["pause_requested"]):
                 self._settle_pause(UUID(str(attempt["run_id"])), now=now)
             else:

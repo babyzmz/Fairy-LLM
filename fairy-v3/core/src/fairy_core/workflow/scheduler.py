@@ -86,6 +86,8 @@ class WorkflowAdapterRegistry:
         self._failure_handlers[key] = handler
 
     def settle_failed_run(self, unit, run):
+        if run.status is not WorkflowRunStatus.FAILED:
+            return
         handler = self._failure_handlers.get((run.owner_kind, run.engine_version))
         if handler is not None:
             handler(unit, run)
@@ -224,6 +226,9 @@ class WorkflowScheduler:
             try:
                 with self._unit_of_work_factory() as unit_of_work:
                     if unit_of_work.workflows.abandon(item.claim):
+                        self._adapters.settle_failed_run(
+                            unit_of_work, unit_of_work.workflows.get_run(item.claim.run_id),
+                        )
                         unit_of_work.commit()
             except Exception:
                 logger.exception("Workflow node %s could not be abandoned", item.claim.node_id)
@@ -473,7 +478,7 @@ class WorkflowScheduler:
             active.cancellation.raise_if_cancelled()
             with self._unit_of_work_factory() as unit_of_work:
                 if result.available_at is None:
-                    unit_of_work.workflows.complete(
+                    snapshot = unit_of_work.workflows.complete(
                         claim,
                         result=result.output,
                         evidence_refs=result.evidence_refs,
@@ -482,11 +487,12 @@ class WorkflowScheduler:
                         next_edges=result.next_edges,
                     )
                 else:
-                    unit_of_work.workflows.defer(
+                    snapshot = unit_of_work.workflows.defer(
                         claim,
                         available_at=result.available_at,
                         result=result.output,
                     )
+                self._adapters.settle_failed_run(unit_of_work, snapshot.run)
                 unit_of_work.commit()
             settled = True
         except WorkflowRetryableError as error:
@@ -496,12 +502,13 @@ class WorkflowScheduler:
             else:
                 try:
                     with self._unit_of_work_factory() as unit_of_work:
-                        unit_of_work.workflows.retry(
+                        snapshot = unit_of_work.workflows.retry(
                             claim,
                             available_at=datetime.now(UTC)
                             + timedelta(seconds=min(5.0, 0.25 * 2 ** (claim.attempt_number - 1))),
                             error_code=error.error_code,
                         )
+                        self._adapters.settle_failed_run(unit_of_work, snapshot.run)
                         unit_of_work.commit()
                     settled = True
                 except Exception:
@@ -547,10 +554,11 @@ class WorkflowScheduler:
                 error_code = str(getattr(error, "error_code", "WORKFLOW_NODE_FAILED"))[:128]
                 try:
                     with self._unit_of_work_factory() as unit_of_work:
-                        unit_of_work.workflows.fail(claim, error_code=error_code)
+                        snapshot = unit_of_work.workflows.fail(claim, error_code=error_code)
                         on_failure = getattr(adapter, "settle_failure_in_unit", None)
                         if callable(on_failure):
                             on_failure(unit_of_work, node, claim, error_code)
+                        self._adapters.settle_failed_run(unit_of_work, snapshot.run)
                         unit_of_work.commit()
                     settled = True
                 except Exception:
@@ -646,6 +654,9 @@ class WorkflowScheduler:
                     claim, disable_reconciliation=disable_reconciliation,
                 )
                 if abandoned:
+                    self._adapters.settle_failed_run(
+                        unit_of_work, unit_of_work.workflows.get_run(claim.run_id),
+                    )
                     unit_of_work.commit()
                 return abandoned
         except Exception:
