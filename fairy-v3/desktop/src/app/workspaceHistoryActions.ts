@@ -24,6 +24,7 @@ interface WorkspaceHistoryActionOptions {
   setPetConversationId: (value: string | null) => void;
   setMode: (value: WorkspaceMode) => void;
   resetChatAssistant: () => void;
+  onChatSelected?: (conversationId: string) => void;
 }
 
 export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOptions) {
@@ -54,6 +55,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
   };
 
   const selectChatConversation = (conversationId: string) => {
+    options.onChatSelected?.(conversationId);
     if (!chatConversations.some((conversation) => conversation.id === conversationId)) {
       void invalidateHistory();
     }
@@ -80,6 +82,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
       client.conversations.create({ project_id: null, workspace_type: "chat_scratch" }),
     );
     setPetConversationId(forPet ? conversation.id : null);
+    options.onChatSelected?.(conversation.id);
     setChatConversationSelection(conversation.id);
     setChatTaskId(null);
     setPetTaskId(null);
@@ -213,6 +216,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
       if (chatConversationSelection === conversation.id) {
         const fallback = adjacentItem(chatConversations, conversation.id);
         setChatConversationSelection(fallback?.id ?? null);
+        if (fallback) options.onChatSelected?.(fallback.id);
         setChatTaskId(null);
         resetChatAssistant();
       } else if (conversationSelection === conversation.id) {

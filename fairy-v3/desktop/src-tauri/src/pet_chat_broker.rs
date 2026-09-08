@@ -13,6 +13,15 @@ pub struct PetModelSelection {
 }
 
 impl PetModelSelection {
+    pub fn from_preference(preference: &Value) -> Result<Self, String> {
+        let selection: Self = serde_json::from_value(json!({
+            "mode": preference["mode"], "model_id": preference["model_id"], "revision": preference["revision"],
+        })).map_err(|_| "PET_CHAT_MODEL_BINDING_INVALID")?;
+        if !selection.valid() {
+            return Err("PET_CHAT_MODEL_BINDING_INVALID".into());
+        }
+        Ok(selection)
+    }
     fn valid(&self) -> bool {
         match self.mode.as_str() {
             "auto" => self.model_id.is_none(),
@@ -175,12 +184,7 @@ impl PetChatBroker {
         if !valid_request_id(request_id) {
             return Err("PET_CHAT_INPUT_INVALID".into());
         }
-        let selection: PetModelSelection = serde_json::from_value(json!({
-            "mode": preference["mode"], "model_id": preference["model_id"], "revision": preference["revision"],
-        })).map_err(|_| "PET_CHAT_MODEL_BINDING_INVALID")?;
-        if !selection.valid() {
-            return Err("PET_CHAT_MODEL_BINDING_INVALID".into());
-        }
+        let selection = PetModelSelection::from_preference(preference)?;
         if self.context()?.revision != revision {
             return Err("PET_CHAT_BINDING_CHANGED".into());
         }

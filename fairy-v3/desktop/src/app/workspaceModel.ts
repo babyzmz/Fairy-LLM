@@ -11,6 +11,7 @@ import {
   selectionSupportsVision,
 } from "../models/modelSelection";
 import { useModelSelection } from "../models/useModelSelection";
+import { createPetChatBindingController, type PetChatBindingController } from "./petChatBinding";
 import { useTaskMediaJobs } from "../media/useTaskMediaJobs";
 import type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 export type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
@@ -68,6 +69,15 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const eventCheckpoint = useRef(readEventCheckpoint());
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionErrorCode, setActionErrorCode] = useState<string | null>(null);
+  const petChatBinding = useRef<PetChatBindingController | null>(null);
+  useEffect(() => {
+    const controller = createPetChatBindingController(() => {
+      setActionError("Pet chat binding could not be updated. Select the chat again to reconnect it.");
+      setActionErrorCode("PET_CHAT_BINDING_CHANGED");
+    });
+    petChatBinding.current = controller;
+    return () => { controller?.close(); petChatBinding.current = null; };
+  }, []);
   const [eventStreamError, setEventStreamError] = useState<string | null>(null);
   const [eventStreamErrorCode, setEventStreamErrorCode] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
@@ -531,6 +541,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         },
         setMode,
         resetChatAssistant: chatAssistant.reset,
+        onChatSelected: (id) => petChatBinding.current?.select(id),
       }),
     [
       chatAssistant.reset,
@@ -1006,8 +1017,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     searchMemory: actions.searchMemory,
     forgetMemory: actions.forgetMemory,
     setDeveloperMode,
-    selectModel: (selectionMode, modelId) =>
-      runAction(() => modelController.update({ mode: selectionMode, model_id: modelId })),
+    selectModel: async (selectionMode, modelId) => {
+      await runAction(() => modelController.update({ mode: selectionMode, model_id: modelId }));
+      petChatBinding.current?.select(null);
+    },
     refreshModelCatalog: () => runAction(modelController.refresh),
     selectProject: actions.selectProject,
     selectConversation: actions.selectConversation,

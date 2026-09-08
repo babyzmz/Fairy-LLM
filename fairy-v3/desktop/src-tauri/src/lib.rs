@@ -1435,9 +1435,24 @@ async fn pet_chat_bind(
     app: tauri::AppHandle,
     window: WebviewWindow,
     state: State<'_, DesktopState>,
-    input: pet_chat_broker::PetChatBindingInput,
+    mut input: pet_chat_broker::PetChatBindingInput,
 ) -> Result<pet_chat_broker::PetChatContext, String> {
     authorize_core_rpc_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    if input.model_selection.is_none() && input.profile_id.is_none() {
+        let preference = pet_chat_core_result(
+            call_core(
+                &state,
+                json!({
+                    "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
+                    "method": "models.selection.get", "params": {},
+                }),
+            )
+            .await,
+        )?;
+        input.model_selection = Some(pet_chat_broker::PetModelSelection::from_preference(
+            &preference,
+        )?);
+    }
     let conversation = pet_chat_core_result(
         call_core(
             &state,
