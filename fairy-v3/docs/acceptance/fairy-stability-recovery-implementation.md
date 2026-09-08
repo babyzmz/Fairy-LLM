@@ -297,6 +297,14 @@
 - 扩展联合测试发现原有Media重启竞态：失败测试库持久为running、pause_requested=1，但仅有succeeded/waiting Attempts。已新增三个精确失败复现（defer/retry在暂停请求后结算、暂停读取活动状态后并发defer）；不通过增加3秒等待掩盖，独立修复暂停收敛。
 - 暂停写入现用同一SQL语句检查实际活动Attempt；defer/retry经统一Run收敛而非无条件queued。Media启动对旧running/queued+pause_requested状态重新确认实际Attempt，再恢复无活动者，不重发视频创建请求。三项失败回归及旧状态重开先红后绿；Workflow/Assistant控制/Media/Knowledge联合77项通过（74.60秒），相关Ruff通过。原视频重启测试增加旧异常状态参数，保留一次poll、零重复submit及产物断言，未延长原等待时间。
 
+### Phase 6B：模型结果检查点与恢复边界
+
+- 模型结果与对应Command完成需要同事务持久化检查点；随后Kernel把该检查点编译成后续图。崩溃发生在两事务之间时，新的合法Attempt复用检查点，不重新调用模型或工具。
+- 检查点复用既有WorkflowNode/Attempt的result字段，不新增业务数据库或原始音视频存储。仅保存模型公开回复、受控工具请求与证据绑定，不保存隐藏思维链。截图仍遵守现有瞬时媒体边界，不能为了恢复直接写入数据库。
+- Adapter只能拿到当前宿主实际领取的Claim；检查点写入经过Run/Revision/租约/Fence校验，可与领域UoW原子提交。首次记录后不可替换，完全相同重放不增加写入；过期/取消/其他tenant不能写入。检查点不代表节点已完成，也不会提前释放依赖。
+- 实库验证检查点提交后中断/重领、关闭重开、域写入同事务回滚、冲突检查点拒绝和当前Claim投递；模型/工具实际“不重发”要等新Adapter接线后再验证，不以原语测试代替。
+- 已加入record_checkpoint及可选execute_claimed入口，检查点采用规范JSON并限制2 MiB，不改变无检查点Adapter接口。中断/重领后结果仍在、旧Fence失效、重开与tenant隔离、不可覆盖、非JSON/超限拒绝及领域写入回滚通过；Workflow/Assistant控制54项通过（44.05秒），Ruff通过。新Assistant仍未默认切换，尚未宣称真实模型重启不重发已验。
+
 ### Phase 3B：事件提交唤醒与推送验收契约
 
 - 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -408,6 +409,38 @@ class SqlAlchemyWorkflowRepository(
             .values(lease_until=lease_until)
         ).rowcount
         return changed == 1
+
+    def record_checkpoint(
+        self, claim: WorkflowAttemptClaim, *, result: Mapping[str, Any],
+    ) -> bool:
+        self._locked_run(claim.run_id)
+        now = datetime.now(UTC)
+        node = self._require_claim(claim, now=now)
+        encoded = json.dumps(
+            dict(result), ensure_ascii=False, allow_nan=False, separators=(",", ":"),
+        )
+        if len(encoded.encode("utf-8")) > 2 * 1024 * 1024:
+            raise ValueError("Workflow checkpoint exceeds 2 MiB")
+        normalized = json.loads(encoded)
+        if node["result"] is not None:
+            if node["result"] != normalized:
+                raise WorkflowRevisionError("Workflow checkpoint cannot be replaced")
+            return False
+        updated = self._connection.execute(
+            update(workflow_attempts)
+            .where(*self._claim_predicates(claim, require_live=True))
+            .values(result=normalized)
+        )
+        if updated.rowcount != 1:
+            raise WorkflowFenceError("Workflow checkpoint lost its attempt fence")
+        self._connection.execute(
+            update(workflow_nodes).where(
+                workflow_nodes.c.tenant_id == self._tenant_id,
+                workflow_nodes.c.id == str(claim.node_id),
+                workflow_nodes.c.status == WorkflowNodeStatus.RUNNING.value,
+            ).values(result=normalized, updated_at=now)
+        )
+        return True
 
     def complete(
         self,

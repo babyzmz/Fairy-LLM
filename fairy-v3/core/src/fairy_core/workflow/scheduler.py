@@ -413,7 +413,13 @@ class WorkflowScheduler:
             if snapshot is None:
                 raise KeyError(f"Workflow Run not found: {claim.run_id}")
             node = next(node for node in snapshot.nodes if node.id == claim.node_id)
-            result = self._adapters.require(node.kind).execute(node, active.cancellation)
+            adapter = self._adapters.require(node.kind)
+            execute_claimed = getattr(adapter, "execute_claimed", None)
+            result = (
+                execute_claimed(node, claim, active.cancellation)
+                if callable(execute_claimed)
+                else adapter.execute(node, active.cancellation)
+            )
             active.cancellation.raise_if_cancelled()
             with self._unit_of_work_factory() as unit_of_work:
                 if result.available_at is None:

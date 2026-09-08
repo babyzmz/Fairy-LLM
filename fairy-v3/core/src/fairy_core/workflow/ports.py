@@ -76,6 +76,10 @@ class WorkflowRepository(Protocol):
         budget: WorkflowBudget,
     ) -> WorkflowSnapshot: ...
 
+    def record_checkpoint(
+        self, claim: WorkflowAttemptClaim, *, result: Mapping[str, Any],
+    ) -> bool: ...
+
     def complete(
         self,
         claim: WorkflowAttemptClaim,
