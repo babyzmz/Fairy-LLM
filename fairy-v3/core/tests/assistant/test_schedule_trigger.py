@@ -301,6 +301,42 @@ def test_three_consecutive_occurrence_failures_pause_a_recurring_schedule(
     assert persisted.attention_code == "CONSECUTIVE_FAILURES"
 
 
+def test_uncertain_tool_outcome_pauses_recurring_schedule_on_first_failure(tmp_path):
+    factory = _factory(tmp_path / "uncertain-schedule.db")
+    task = _seed(factory)
+    due = datetime(2026, 8, 7, 1, 0, tzinfo=UTC)
+    schedule = _schedule(
+        task, kind=AssistantScheduleTriggerKind.DAILY, rule={"local_time": "11:00"},
+        next_fire_at=due + timedelta(days=1), key="uncertain-recurring",
+    )
+    with factory() as unit:
+        unit.assistant_schedules.create(schedule)
+        unit.commit()
+    occurrence_id = _create_dispatched_occurrence(
+        factory, task=task, schedule=schedule, scheduled_for=due, number=1,
+    )
+    with factory() as unit:
+        occurrence = unit.assistant_schedules.get_occurrence(occurrence_id)
+        turn = unit.assistant.get_turn(occurrence.turn_id)
+        previous = turn.status
+        turn.fail(error_code="TOOL_RESULT_UNCERTAIN")
+        unit.assistant.update_turn(turn, expected_status=previous, expected_cancellation_revision=0)
+        unit.commit()
+    trigger = AssistantScheduleTriggerService(unit_of_work_factory=factory, autostart=False)
+    try:
+        assert trigger.run_once(now=due + timedelta(minutes=1)) == 0
+        with factory() as unit:
+            persisted = unit.assistant_schedules.get(schedule.id)
+            outcome = unit.assistant_schedules.get_occurrence(occurrence_id)
+        assert persisted.status is AssistantScheduleStatus.PAUSED
+        assert persisted.attention_code == "TOOL_RESULT_UNCERTAIN"
+        assert outcome.status is AssistantOccurrenceStatus.ATTENTION_REQUIRED
+        assert "actual result" in outcome.public_error
+        assert trigger.run_once(now=due + timedelta(days=2)) == 0
+    finally:
+        trigger.close()
+
+
 def _create_dispatched_occurrence(
     factory: SqlAlchemyUnitOfWorkFactory,
     *,

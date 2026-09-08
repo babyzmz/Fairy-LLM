@@ -62,6 +62,13 @@ class ToolExecutionUnavailableError(RuntimeError):
     error_code = "CAPABILITY_NOT_AVAILABLE"
 
 
+class ToolOutcomeUncertainError(RuntimeError):
+    error_code = "TOOL_RESULT_UNCERTAIN"
+
+    def __init__(self):
+        super().__init__(self.error_code)
+
+
 @dataclass(frozen=True, slots=True)
 class ToolResult:
     public_summary: str
@@ -419,6 +426,7 @@ __all__ = [
     "ToolCandidateError",
     "ToolExecutionUnavailableError",
     "ToolExecutor",
+    "ToolOutcomeUncertainError",
     "ToolResult",
     "UnavailableToolExecutor",
     "direct_answer",

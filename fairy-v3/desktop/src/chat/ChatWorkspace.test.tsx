@@ -241,6 +241,18 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByText("responding")).not.toBeInTheDocument();
   });
 
+  it("explains an uncertain tool outcome without offering a blind retry", () => {
+    const props = workspaceProps({
+      streamedText: "", isBusy: false,
+      turn: { ...TURN, status: "failed", error_code: "TOOL_RESULT_UNCERTAIN" },
+    });
+    render(<ChatWorkspace {...props} />);
+    expect(screen.getByText(/previous action may already have taken effect/i)).toBeVisible();
+    expect(screen.getByText(/check the actual result/i)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry response" })).not.toBeInTheDocument();
+    expect(props.onRetry).not.toHaveBeenCalled();
+  });
+
   it("disables sending while offline or when the selected provider is unavailable", () => {
     const props = workspaceProps({ providerAvailable: false });
     const view = render(<ChatWorkspace {...props} />);

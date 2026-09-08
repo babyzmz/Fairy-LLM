@@ -439,13 +439,17 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       {retryAvailable ? (
         <div className="chat-retry-bar">
           <span>
-            {props.developerMode && props.turn?.error_code
+            {props.turn?.error_code === "TOOL_RESULT_UNCERTAIN"
+              ? "The previous action may already have taken effect. Check the actual result before requesting another action."
+              : props.developerMode && props.turn?.error_code
               ? props.turn.error_code
               : "Response stopped before completion"}
           </span>
-          <button className="secondary-command" type="button" onClick={() => void props.onRetry()}>
-            <RotateCcw size={14} /> Retry response
-          </button>
+          {props.turn?.error_code !== "TOOL_RESULT_UNCERTAIN" ? (
+            <button className="secondary-command" type="button" onClick={() => void props.onRetry()}>
+              <RotateCcw size={14} /> Retry response
+            </button>
+          ) : null}
         </div>
       ) : null}
       {pendingApproval !== null ? (

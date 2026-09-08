@@ -335,6 +335,14 @@ class AssistantScheduleTriggerService:
                     if status is AssistantOccurrenceStatus.FAILED
                     else None
                 )
+                attention_code = None
+                if turn.error_code == "TOOL_RESULT_UNCERTAIN":
+                    status = AssistantOccurrenceStatus.ATTENTION_REQUIRED
+                    attention_code = turn.error_code
+                    public_error = (
+                        "The previous action may already have taken effect. Check the actual "
+                        "result before deciding whether to resume this schedule."
+                    )
                 outcome, schedule = unit_of_work.assistant_schedules.record_occurrence_outcome(
                     occurrence.settle(
                         status=status,
@@ -342,6 +350,7 @@ class AssistantScheduleTriggerService:
                         public_error=public_error,
                     ),
                     expected_status=AssistantOccurrenceStatus.DISPATCHED,
+                    attention_code=attention_code,
                 )
                 append_schedule_change(unit_of_work, schedule, outcome)
                 changed = True

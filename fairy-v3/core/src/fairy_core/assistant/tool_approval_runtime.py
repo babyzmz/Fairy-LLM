@@ -6,8 +6,10 @@ from uuid import UUID
 
 from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
+from fairy_core.assistant.tools import ToolOutcomeUncertainError
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.commanding import CommandStatus
+from fairy_core.commanding.registry import SideEffect
 from fairy_core.providers import CancellationToken
 
 
@@ -211,6 +213,34 @@ class AssistantToolApprovalMixin:
                 )
                 unit_of_work.commit()
                 return False
+
+            if (
+                invocation.status is ToolInvocationStatus.RUNNING
+                and not (
+                    definition.idempotent
+                    and definition.side_effect in {SideEffect.NONE, SideEffect.READ}
+                )
+            ):
+                # A new lease proves ownership, not whether the previous OS/provider effect
+                # happened. Generic idempotent metadata is not an outcome reconciliation API.
+                code = ToolOutcomeUncertainError.error_code
+                invocation.fail(error_code=code)
+                invocation.model_content = (
+                    "The previous operation may already have taken effect. Fairy stopped "
+                    "automatic recovery. Check the actual result before deciding whether "
+                    "to request another action."
+                )
+                unit_of_work.assistant.update_tool_invocation(
+                    invocation, expected_status=ToolInvocationStatus.RUNNING,
+                )
+                self._tool_trace.fail_in_unit(unit_of_work, run=running, error_code=code)
+                bus.fail(
+                    running.id, error_code=code,
+                    lease_owner=running.lease_owner, lease_fence=running.lease_fence,
+                )
+                self._fail_turn_in_unit(unit_of_work, turn_id, None, error_code=code)
+                unit_of_work.commit()
+                raise ToolOutcomeUncertainError
 
             self._tool_trace.approve_in_unit(unit_of_work, run=running)
             if invocation.status is ToolInvocationStatus.QUEUED:

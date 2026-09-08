@@ -642,6 +642,10 @@ def _public_failure_detail(error_code: str) -> str:
             "Fairy could not safely classify the evidence needed for this request."
         ),
         "WORKER_INTERRUPTED": "Fairy was interrupted before this step completed.",
+        "TOOL_RESULT_UNCERTAIN": (
+            "The previous action may already have taken effect. Automatic recovery stopped. "
+            "Check the actual result before deciding whether to request another action."
+        ),
     }.get(error_code, "Fairy could not complete this step.")
 
 

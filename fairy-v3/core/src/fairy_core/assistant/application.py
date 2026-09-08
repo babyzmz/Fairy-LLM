@@ -47,6 +47,7 @@ from fairy_core.assistant.tools import (
     DIRECT_ANSWER_TOOL_NAME,
     ToolCandidateError,
     ToolExecutor,
+    ToolOutcomeUncertainError,
     UnavailableToolExecutor,
     direct_answer,
     direct_answer_evidence_ids,
@@ -751,6 +752,8 @@ class AssistantApplication(
                 current_run,
                 error_code="PROVIDER_ERROR",
             )
+        except ToolOutcomeUncertainError:
+            return self._turns.get(turn_id)
         except (ToolCandidateError, ValueError):
             return self._fail_turn(
                 turn_id,
