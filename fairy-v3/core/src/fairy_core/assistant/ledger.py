@@ -25,6 +25,10 @@ from fairy_core.assistant.tools import uses_deferred_media
 from fairy_core.assistant.trace_models import TurnTrace
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.turn_reader import require_turn
+from fairy_core.assistant.workflow_budget_supersession import (
+    supersede_budget_approval,
+    unstarted_budget_approval,
+)
 from fairy_core.assistant.workflow_plan import (
     ASSISTANT_WORKFLOW_ENGINE_VERSION,
     apply_pending_assistant_steering,
@@ -684,8 +688,10 @@ class AssistantLedgerApplication:
                 value.status is WorkflowInstructionStatus.PENDING for value in snapshot.instructions
             ):
                 raise InvalidTransitionError("Assistant Workflow already has a pending update")
+            budget_approval = unstarted_budget_approval(unit_of_work, snapshot, turn)
             if (
                 replay is None and snapshot.run.status is WorkflowRunStatus.WAITING_FOR_APPROVAL
+                and budget_approval is None
                 and not can_supersede_tool_approval(unit_of_work, snapshot, turn)
             ):
                 raise InvalidTransitionError(
@@ -698,6 +704,8 @@ class AssistantLedgerApplication:
                 idempotency_key=idempotency_key,
             )
             if replay is None:
+                if budget_approval is not None:
+                    supersede_budget_approval(unit_of_work, turn, budget_approval)
                 message = Message.create(
                     conversation_id=turn.conversation_id,
                     task_id=turn.task_id,

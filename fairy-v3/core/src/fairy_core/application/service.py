@@ -48,6 +48,7 @@ from fairy_core.assistant.turn_selection import resolve_turn_model_source
 from fairy_core.browser import BrowserService, BrowserToolExecutor, browser_service_handlers
 from fairy_core.browser.activity import BrowserTaskActivityProbe
 from fairy_core.commanding.local_device_bus import LocalDeviceCommandBus
+from fairy_core.commanding.models import CommandStatus
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import (
@@ -1130,11 +1131,22 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             if (
                 turn is None
                 or turn.task_id != approval.task_id
-                or turn.budget_approval_run_id != command.id
+                or command.task_id != turn.task_id
+                or command.conversation_id != turn.conversation_id
+                or command.scope_digest != turn.scope_digest
             ):
                 raise InvalidTransitionError(
                     "model budget approval does not match its Assistant Turn"
                 )
+            if turn.budget_approval_run_id != command.id:
+                if (
+                    command.status in {CommandStatus.CANCELLED, CommandStatus.REJECTED}
+                    and approval.decision is not ApprovalDecision.PENDING
+                ):
+                    # Superseded, already-decided budget cards remain historical.
+                    # Replaying their decision must not resume the revised route.
+                    return None
+                raise InvalidTransitionError("model budget approval binding has changed")
             return turn.id
 
     def _decide_approval(self, request: BaseModel) -> Any:

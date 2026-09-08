@@ -33,36 +33,21 @@ def can_supersede_tool_approval(unit, snapshot, turn) -> bool:
     ids = {str(invocation.id) for invocation, _, _ in candidates}
     if any(node.payload.get("invocation_id") not in ids for node in waiting):
         return False
-    return _pending_approvals_owned(unit, turn, candidates)
+    return pending_approvals_owned(
+        unit, turn, {approval.id for _, _, approval in candidates if approval is not None},
+    )
 
 
 def supersede_unstarted_tools(unit, snapshot, turn) -> None:
     """Close only this revision's undispatched calls in the plan transaction."""
     candidates = _unstarted_calls(unit, snapshot, turn)
-    if not _pending_approvals_owned(unit, turn, candidates):
+    if not pending_approvals_owned(
+        unit, turn, {approval.id for _, _, approval in candidates if approval is not None},
+    ):
         raise InvalidTransitionError("A separate domain approval still requires a decision")
     for invocation, command, approval in candidates:
-        if approval is not None and approval.decision is ApprovalDecision.PENDING:
-            approval.decide(decision=ApprovalDecision.REJECTED, decided_by="core:steering")
-            unit.state.update_approval(approval, expected_decision=ApprovalDecision.PENDING)
-            unit.commands.append_event(
-                run_id=command.id, event_type="approval.decided",
-                visibility=EventVisibility.USER, message=_SUMMARY,
-                payload={"approval_id": str(approval.id), "decision": "rejected",
-                         "reason_code": "EXECUTION_INTENT_CHANGED"},
-            )
         if command is not None:
-            if command.status in {CommandStatus.WAITING_APPROVAL, CommandStatus.QUEUED}:
-                unit.commands.transition(command.id, (
-                    CommandStatus.REJECTED if command.status is CommandStatus.WAITING_APPROVAL
-                    else CommandStatus.CANCELLED
-                ))
-                command = unit.commands.get_run(command.id)
-            for kind in (TraceStepKind.TOOL, TraceStepKind.APPROVAL):
-                TurnTraceRuntime.transition_command_step_in_unit(
-                    unit, run=command, kind=kind, status=TraceStepStatus.CANCELLED,
-                    public_summary=_SUMMARY,
-                )
+            close_unstarted_approval(unit, command, approval)
         expected_status = invocation.status
         invocation.reject(error_code="EXECUTION_INTENT_CHANGED", model_content=_SUMMARY)
         unit.assistant.update_tool_invocation(invocation, expected_status=expected_status)
@@ -120,8 +105,7 @@ def _unstarted_calls(unit, snapshot, turn):
     return candidates
 
 
-def _pending_approvals_owned(unit, turn, candidates) -> bool:
-    ids = {approval.id for _, _, approval in candidates if approval is not None}
+def pending_approvals_owned(unit, turn, ids) -> bool:
     cursor = None
     while True:
         page = unit.state.list_approvals(
@@ -134,3 +118,27 @@ def _pending_approvals_owned(unit, turn, candidates) -> bool:
         cursor = page.next_cursor
         if cursor is None:
             return True
+
+
+def close_unstarted_approval(unit, command, approval) -> None:
+    if command.status not in _COMMAND_UNSTARTED:
+        raise InvalidTransitionError("Cannot supersede a command with an uncertain outcome")
+    if approval is not None and approval.decision is ApprovalDecision.PENDING:
+        approval.decide(decision=ApprovalDecision.REJECTED, decided_by="core:steering")
+        unit.state.update_approval(approval, expected_decision=ApprovalDecision.PENDING)
+        unit.commands.append_event(
+            run_id=command.id, event_type="approval.decided",
+            visibility=EventVisibility.USER, message=_SUMMARY,
+            payload={"approval_id": str(approval.id), "decision": "rejected",
+                     "reason_code": "EXECUTION_INTENT_CHANGED"},
+        )
+    if command.status in {CommandStatus.WAITING_APPROVAL, CommandStatus.QUEUED}:
+        command = unit.commands.transition(command.id, (
+            CommandStatus.REJECTED if command.status is CommandStatus.WAITING_APPROVAL
+            else CommandStatus.CANCELLED
+        ))
+    for kind in (TraceStepKind.TOOL, TraceStepKind.APPROVAL):
+        TurnTraceRuntime.transition_command_step_in_unit(
+            unit, run=command, kind=kind, status=TraceStepStatus.CANCELLED,
+            public_summary=_SUMMARY,
+        )
