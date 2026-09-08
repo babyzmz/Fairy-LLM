@@ -188,6 +188,7 @@ def _tool_result(result: MediaGenerationResult) -> ToolResult:
             f"Video generation job {result.job.id} is {result.job.status.value}. "
             "The result will appear in the Workspace when processing completes."
         ),
+        artifact_ids=(),
     )
 
 

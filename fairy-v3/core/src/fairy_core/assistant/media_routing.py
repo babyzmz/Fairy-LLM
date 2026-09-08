@@ -23,9 +23,11 @@ def constrain_context_for_media(
         policy = ModelMessage.create(
             role=ModelRole.SYSTEM,
             content=(
-                "The planned media output is already durable. Do not call any tool or request "
-                "another media output. Return one concise final answer that refers to the "
-                "generated Workspace artifact."
+                "The planned media operation has a durable receipt. "
+                "Do not call any tool or request another media output. "
+                "Report the actual status in the tool result. A video job "
+                "may still be pending or in progress; its receipt is not a finished artifact. "
+                "Only refer to a generated Workspace artifact when the result includes one."
             ),
         )
         return AssistantContext(
@@ -55,7 +57,7 @@ def constrain_context_for_media(
             "exactly once with a bounded specification derived from the user request. "
             "Do not call another tool or emit user-visible text in that round. After a "
             "successful tool result, do not call the tool again; return one concise final "
-            "answer that refers to the generated Workspace artifact."
+            "answer reporting the returned status and any artifact that is actually present."
         ),
     )
     return AssistantContext(

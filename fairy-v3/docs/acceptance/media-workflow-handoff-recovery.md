@@ -84,3 +84,20 @@ Implementation and regression results are appended below as work progresses.
 - GREEN: `pytest tests/media tests/test_command_bus.py -q`: 34 passed (31.80s).
   Ruff on the adapter and new regression passed. Both independent commands and
   database reopen are asserted; no existing test assertion was relaxed.
+
+### Engine-4 reopen, music and video receipts
+
+- Core close/reopen at the archive boundary preserves the Assistant Turn/Run,
+  Tool Invocation/Command, Media Job/Run and Artifact. A fresh scripted coordinator
+  makes exactly one final-response request; the fresh Media provider makes zero
+  generation requests. Exactly one Assistant message is recorded.
+- Music and video both retain tool-level paid approval. Rejection submits no Media
+  requests. Approved music waits for its artifact/archive; approved video returns
+  an active Job receipt while its domain Run continues, without an invented artifact.
+- RED video gate found a preexisting `ToolResult.create` call missing required
+  `artifact_ids`; the active receipt now explicitly uses `()`. Its follow-up model
+  policy also incorrectly asserted the output was already durable. A failing policy
+  assertion now guards the distinction between a durable receipt and finished output.
+- GREEN: Media + step Media + model routing **59 passed (77.46s)**; Ruff passed.
+  New tests supplement existing assertions; no original contract was relaxed.
+  Prompt assertions are not a substitute for real model output accuracy acceptance.

@@ -309,6 +309,8 @@
 
 ### Phase 6C：真实工具节点与审批恢复边界
 
+- 版本4的Assistant/Media双Run在归档边界关闭重开后保留全部原身份，零重复生成、一次最终回复。音频/视频同意与拒绝审批门禁通过；视频旧回执缺少必填空Artifact列表及后续提示词误称“生成物已完成”均已修复。Media、step Media、模型路由59项通过（77.46秒）；完整Assistant与Steering/多Run门禁继续进行。
+
 - 实际关闭/重开Core服务后复现“Job已完成但归档Workflow仍暂停”的漏恢复；恢复查询现在以tenant隔离的SQL存在性检查补齐未终态领域Run，不扫描已归档历史或重复生成。双Task归档保留原Artifact且新Provider请求为零；Media全包27项通过（34.47秒）。这是服务/数据库重开证据，非真实付费Provider或原生GUI验收。
 
 - 版本4 Media 工具已改为持久化领域交接和只读结果汇合，等待不占父节点Worker；保留Job/Command/Invocation及付费请求身份，归档前不提前回复。取消通过Kernel的本机执行结束凭据回到Assistant结算，接受取消与实际停止分开。独立Run验证剩余3个全局名额可用，含交接确认丢失、不同Task拒绝、失败停止与取消闭环；相关105项通过（109.35秒）。真实进程重开归档、版本4音乐/视频及完整迁移门禁仍待验，默认引擎仍为3。详见[专项记录](media-workflow-handoff-recovery.md)。
