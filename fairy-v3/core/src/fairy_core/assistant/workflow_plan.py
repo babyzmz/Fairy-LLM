@@ -7,6 +7,7 @@ from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatu
 from fairy_core.assistant.workflow_step_nodes import STEP_ROUTE
 from fairy_core.assistant.workflow_supersession import supersede_unstarted_tools
 from fairy_core.assistant.workflow_tool_plan import assistant_tool_continuation
+from fairy_core.execution.plan_revisions import supersede_file_plan
 from fairy_core.workflow.models import (
     WorkflowEdge,
     WorkflowInstructionStatus,
@@ -186,6 +187,7 @@ def apply_pending_assistant_steering(unit_of_work, run_id: UUID) -> bool:
     next_revision = snapshot.run.active_plan_revision + 1
     if snapshot.run.engine_version == 4:
         supersede_unstarted_tools(unit_of_work, snapshot, turn)
+        supersede_file_plan(unit_of_work, turn, snapshot.run.active_plan_revision)
         planner = assistant_step_workflow_plan
     elif snapshot.run.engine_version >= ASSISTANT_WORKFLOW_ENGINE_VERSION:
         planner = assistant_workflow_plan

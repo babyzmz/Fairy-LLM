@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from fairy_core.execution.plan_revisions import obsolete_file_plan
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork
 
 
@@ -20,7 +21,7 @@ def _consume_budget(
     model: bool,
 ) -> None:
     plan = unit_of_work.state.execution_plan_for_task(task_id)
-    if plan is None:
+    if plan is None or obsolete_file_plan(unit_of_work, task_id, plan):
         return
     expected_revision = plan.revision
     if model:

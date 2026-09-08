@@ -4,9 +4,11 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from fairy_core.contracts.planning import ExecutionPlanCreateInput
-from fairy_core.domain.errors import IdempotencyConflictError
+from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
+from fairy_core.execution.plan_revisions import active_file_plan_binding
 from fairy_core.execution.plans import (
     ExecutionPlan,
+    ExecutionPlanStatus,
     TaskStep,
     TaskStepKind,
     TaskStepStatus,
@@ -42,7 +44,17 @@ class ExecutionPlanningApplication:
             if task is None:
                 raise KeyError(f"Task not found: {request.task_id}")
             existing = unit_of_work.state.execution_plan_for_task(task.id)
-            if existing is not None:
+            binding = active_file_plan_binding(unit_of_work, task)
+            new_revision = existing is not None and binding[0] is not None and (
+                existing.workflow_run_id, existing.workflow_plan_revision
+            ) != binding
+            if new_revision and existing.status in {
+                ExecutionPlanStatus.ACTIVE, ExecutionPlanStatus.PAUSED,
+            }:
+                raise InvalidTransitionError(
+                    "Previous file plan must be settled before replacement"
+                )
+            if existing is not None and not new_revision:
                 if dict(existing.manifest) != manifest:
                     raise IdempotencyConflictError("Task already has a different Execution Plan")
                 return ExecutionPlanContext(
@@ -54,6 +66,8 @@ class ExecutionPlanningApplication:
                 manifest=manifest,
                 initial_model_calls=initial_model_calls,
                 initial_tool_calls=initial_tool_calls,
+                generation=existing.generation + 1 if existing is not None else 1,
+                workflow_run_id=binding[0], workflow_plan_revision=binding[1],
             )
             unit_of_work.state.save_execution_plan(plan, steps)
             unit_of_work.commit()
@@ -72,6 +86,8 @@ class ExecutionPlanningApplication:
             plan = unit_of_work.state.execution_plan_for_task(task_id)
             if plan is None:
                 raise ValueError("Execution Plan is required before file changes")
+            if plan.status is not ExecutionPlanStatus.ACTIVE:
+                raise InvalidTransitionError("Cannot start a terminal or paused file plan")
             batch = self._batch_for_paths(plan, paths)
             steps = unit_of_work.state.task_steps_for_plan(plan.id)
             implementation_steps = [step for step in steps if step.kind is TaskStepKind.IMPLEMENT]
@@ -120,6 +136,8 @@ class ExecutionPlanningApplication:
             plan = unit_of_work.state.execution_plan_for_task(task_id)
             if plan is None:
                 return None
+            if plan.status is not ExecutionPlanStatus.ACTIVE:
+                raise InvalidTransitionError("Cannot start a terminal or paused file plan")
             steps = unit_of_work.state.task_steps_for_plan(plan.id)
             matches = [step for step in steps if step.kind is kind]
             if len(matches) != 1:

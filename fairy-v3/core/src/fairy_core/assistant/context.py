@@ -17,6 +17,7 @@ from fairy_core.assistant.system_intent import explicit_system_actions
 from fairy_core.assistant.tools import model_tools_for_definitions
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.domain.models import ScopeContract, Task
+from fairy_core.execution.plan_revisions import obsolete_file_plan
 from fairy_core.execution.plans import TaskStepKind, TaskStepStatus
 from fairy_core.knowledge.models import HarnessContextManifest
 from fairy_core.perception import ImageAttachmentStore
@@ -168,6 +169,8 @@ class AssistantContextBuilder:
                 history.append(current_user_message)
             bounded_source = tuple(history[-_MAX_HISTORY_MESSAGES:])
             plan = unit_of_work.state.execution_plan_for_task(task.id)
+            if plan is not None and obsolete_file_plan(unit_of_work, task.id, plan):
+                plan = None
             plan_steps = (
                 tuple(unit_of_work.state.task_steps_for_plan(plan.id)) if plan is not None else ()
             )

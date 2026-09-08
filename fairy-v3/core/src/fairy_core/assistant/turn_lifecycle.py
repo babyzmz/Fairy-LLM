@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fairy_core.assistant.events import append_message_created
+from fairy_core.assistant.execution_intent_policy import readonly_intent_issue
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -21,6 +22,7 @@ from fairy_core.commanding.bus import CommandBus
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.execution import ChangesetStatus, PreviewStatus
 from fairy_core.domain.models import TaskStatus, VersionVisibility, WorkspaceType
+from fairy_core.execution.plan_revisions import obsolete_file_plan
 from fairy_core.execution.plans import ExecutionPlanStatus, TaskStepKind, TaskStepStatus
 from fairy_core.providers import ModelExecutionRole
 from fairy_core.workflow.errors import WorkflowFenceError, WorkflowRevisionError
@@ -50,6 +52,20 @@ class AssistantTurnLifecycleMixin:
             )
             if evidence_issue is not None:
                 return evidence_issue
+            intent = unit_of_work.assistant.get_execution_intent(turn.id)
+            if readonly_intent_issue(intent, self._registry.get("edit.propose_changeset")):
+                if (
+                    turn.routing_decision is not None
+                    and turn.routing_decision.requires_workspace_changes
+                ):
+                    return (
+                        "The route requires Workspace delivery but the current execution intent "
+                        "does not authorize file changes. Do not claim the requested files are "
+                        "complete, and do not attempt writes under this interpretation."
+                    )
+                return None
+            if plan is not None and obsolete_file_plan(unit_of_work, turn.task_id, plan):
+                plan = None
             if plan is None:
                 if (
                     turn.routing_decision is not None

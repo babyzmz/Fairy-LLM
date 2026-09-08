@@ -39,6 +39,7 @@ from fairy_core.contracts.models import ChangesetProposal, TaskCreate
 from fairy_core.domain.errors import InvalidTransitionError, VersionConflictError
 from fairy_core.domain.execution import (
     Approval,
+    ApprovalDecision,
     Changeset,
     ChangesetStatus,
     Checkpoint,
@@ -779,6 +780,17 @@ class CoreApplication(CoreContextMixin, CoreSupportMixin):
                 ChangesetStatus.APPLYING,
             }:
                 return changeset
+            if changeset.status is ChangesetStatus.REJECTED:
+                command = unit_of_work.commands.get_run(approval.command_run_id)
+                if (
+                    command is not None and command.command_name == "edit.apply_changeset"
+                    and command.task_id == approval.task_id == changeset.task_id
+                    and command.conversation_id == changeset.conversation_id
+                    and command.status is CommandStatus.CANCELLED
+                    and changeset.approval_decision is ApprovalDecision.APPROVED
+                ):
+                    # Replaying a historical approval never revives a superseded apply.
+                    return changeset
             if changeset.status is not ChangesetStatus.AWAITING_APPROVAL:
                 raise InvalidTransitionError(
                     f"approved Changeset cannot resume from {changeset.status.value}"

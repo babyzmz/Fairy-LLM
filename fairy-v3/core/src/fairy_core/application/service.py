@@ -865,12 +865,23 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
 
     def _finalize_assistant_execution(self, turn_id: UUID) -> str | None:
         """Advance durable file work through validation and Preview before final prose."""
+        from fairy_core.assistant.execution_intent_policy import readonly_intent_issue
+        from fairy_core.execution.plan_revisions import obsolete_file_plan
         with self._unit_of_work_factory() as unit_of_work:
             turn = unit_of_work.assistant.get_turn(turn_id)
             if turn is None:
                 return "The Assistant Turn is unavailable for execution finalization."
             plan = unit_of_work.state.execution_plan_for_task(turn.task_id)
             if plan is None:
+                return None
+            if (
+                plan.status.value not in {"active", "paused"}
+                or obsolete_file_plan(unit_of_work, turn.task_id, plan)
+                or readonly_intent_issue(
+                    unit_of_work.assistant.get_execution_intent(turn.id),
+                    self._registry.get("run.sandboxed"),
+                )
+            ):
                 return None
             task = unit_of_work.state.get_task(turn.task_id)
             if task is None or task.target_version_id is None or task.workspace_id is None:
@@ -1095,6 +1106,17 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
     def _assistant_turn_id_for_approval(self, approval: Approval) -> UUID | None:
         if approval.changeset_id is not None:
             with self._unit_of_work_factory() as unit_of_work:
+                changeset = unit_of_work.state.get_changeset(approval.changeset_id)
+                command = unit_of_work.commands.get_run(approval.command_run_id)
+                if (
+                    changeset is not None and changeset.status is ChangesetStatus.REJECTED
+                    and command is not None and command.command_name == "edit.apply_changeset"
+                    and command.status in {CommandStatus.REJECTED, CommandStatus.CANCELLED}
+                    and command.task_id == approval.task_id == changeset.task_id
+                    and command.conversation_id == changeset.conversation_id
+                    and approval.decision is not ApprovalDecision.PENDING
+                ):
+                    return None
                 invocation = self._changeset_tool_invocation(unit_of_work, approval)
             return invocation.turn_id if invocation is not None else None
         with self._unit_of_work_factory() as unit_of_work:
