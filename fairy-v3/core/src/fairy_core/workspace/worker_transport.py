@@ -16,8 +16,12 @@ from fairy_core.system_actions.models import SystemActionWorkerResult
 _INHERITED_WORKER_ENVIRONMENT = (
     "LANG",
     "LC_ALL",
+    "LOCALAPPDATA",
     "PATH",
     "PATHEXT",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "SYSTEMDRIVE",
     "SYSTEMROOT",
     "TEMP",
     "TMP",

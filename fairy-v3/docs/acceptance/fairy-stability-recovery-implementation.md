@@ -279,6 +279,7 @@
 - Worker先做硬上限（4 Session/12 Tab，弹窗计入），容量失败不驱逐活动任务。Core随后负责活跃Task固定、空闲LRU/5分钟释放、保留恢复元数据和公开容量状态；Worker不复制业务Scheduler。
 - 联动复核发现底层Worker的同步stdout读取没有截止时间，且close等待同一请求锁；无响应Worker可能阻塞资源回收与退出。补充真实子进程故障门禁：请求超时不重放副作用，关闭可打断等待，最终子进程与reader线程退出；此项独立修复，不能由Fake Worker通过替代。
 - 已用真实Python子进程复现关闭等待慢请求3.01秒；现在stdout独立有界读取，关闭绕过请求锁并终止占用中的Worker，Restarting包装器关闭不重启。Browser内部请求设置120秒上限，超时公开为WORKER_TIMEOUT、结果未知、不自动重放动作；未给其他长构建Worker强加新超时。Transport/Browser/CoreService共47项通过（19.19秒），相关Ruff通过；独立接口目录测试补齐4个已批准入口，领域命令/Ingress/Presentation25项通过（28.42秒）。
+- 真实Core传输→Edge再复现启动失败：环境白名单缺少Playwright寻找系统安装所需的PROGRAMFILES、PROGRAMFILES(X86)、LOCALAPPDATA。只加这些系统路径及SYSTEMDRIVE，不继承全环境；增强原凭据隔离测试，仍验证宿主秘密不进入Worker。传输8项通过，连同正在接线的资源池真实Edge20次双聊天切换/回收/恢复门禁共9项通过（3.93秒）；未安装或替换用户Edge。
 - 先检查失败动作是否遗留页面：受阻新Tab必须关闭并恢复原活动Tab，连续20次失败不能累积页面；已有Session、下载策略和引用版本不变。真实Edge Worker与本机HTTP测试端点验收，不连接用户账号或访问用户页面。
 - 真实headless Edge失败复现：20次受阻file导航后1页增长到21页。openTab现于失败后关闭新页并恢复先前活动Tab；相同20次循环保持1页，完整Worker smoke通过（8.90秒），含网络隔离、秘密字段/危险动作拒绝、动态引用失效及多Session。Core Browser14项通过（0.72秒），Node语法检查通过；尚不代表Tauri可见Browser面板硬件验收。测试临时目录清理增加绝对父目录和命名检查。
 - 资源回收和新操作由同一所有者串行确认，释放失败不假报容量已空闲；恢复创建新Session/Tab身份，旧Element Ref永久失效。Native用户操作与真实Agent长任务固定留到联合门禁。

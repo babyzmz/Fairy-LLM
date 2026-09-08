@@ -125,6 +125,10 @@ for line in sys.stdin:
 
 def test_subprocess_transport_does_not_inherit_host_secrets(monkeypatch) -> None:
     monkeypatch.setenv("FAIRY_TEST_HOST_SECRET", "must-not-leak")
+    monkeypatch.setenv("SYSTEMDRIVE", "C:")
+    monkeypatch.setenv("PROGRAMFILES", "C:/Program Files")
+    monkeypatch.setenv("PROGRAMFILES(X86)", "C:/Program Files (x86)")
+    monkeypatch.setenv("LOCALAPPDATA", "C:/Users/Test/AppData/Local")
     script = """
 import json, os, sys
 for line in sys.stdin:
@@ -135,6 +139,10 @@ for line in sys.stdin:
         "result": {
             "allowed": os.environ.get("FAIRY_ALLOWED"),
             "secret": os.environ.get("FAIRY_TEST_HOST_SECRET"),
+            "system_drive": os.environ.get("SYSTEMDRIVE"),
+            "program_files": os.environ.get("PROGRAMFILES"),
+            "program_files_x86": os.environ.get("PROGRAMFILES(X86)"),
+            "local_app_data": os.environ.get("LOCALAPPDATA"),
         },
     }), flush=True)
 """
@@ -147,7 +155,14 @@ for line in sys.stdin:
     result = transport.call("environment.inspect", {})
     transport.close()
 
-    assert result == {"allowed": "yes", "secret": None}
+    assert result == {
+        "allowed": "yes",
+        "secret": None,
+        "system_drive": "C:",
+        "program_files": "C:/Program Files",
+        "program_files_x86": "C:/Program Files (x86)",
+        "local_app_data": "C:/Users/Test/AppData/Local",
+    }
 
 
 def test_subprocess_transport_surfaces_typed_worker_errors() -> None:
