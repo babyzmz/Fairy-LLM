@@ -258,6 +258,8 @@
 - 保留当前/其他聊天分组、24小时最近20条、审批/暂停/取消状态和Schedule去重语义。双聊天、双tenant、关闭重开及20项列表SQL预算验证；前端事件驱动与低频恢复轮询在下一项接线，禁止仅降低轮询掩盖N+1。
 - 正式20个工作流及20个Schedule绑定回归先复现123次SELECT；批量投影后为8次，节点读取不再包含Payload或result。批量解释摘要绑定各Turn已读取的确切Revision，不追随另一次并发更正；取消仍区分pending，新增与单条get完全一致的对照测试。
 - Background/Repository/Schedule/Workflow控制43项通过（39.27秒）；补充解释与取消对照、Schedule服务/Trigger/取消回执16项通过（16.32秒），Ruff通过。真实SQLite关闭重开及跨tenant空投影已验；公开API返回字段与上限未变，前端低频兜底仍待接线。
+- 接线前确认Schedule定义和触发状态尚未写入可订阅Ledger事件，不能直接把2.5秒轮询改慢。先补同事务的最小公开 `assistant.schedule.changed` 事件，覆盖创建/编辑/暂停/恢复/取消、排队/合并/派发/结果及上下文失效；回滚和幂等重放不新增事件，纯租约操作不发事件，事件不包含指令模板或Provider信息。
+- 已补齐同事务事件；Schedule事件/Trigger/Service/Repository/Ledger共21项通过（17.34秒），Ruff通过。新建重放不重复通知，事件失败会回滚定义变更且不唤醒，关闭重开和tenant隔离已验，重复pending租约不发无变化事件。前端新增回归实际复现10秒内5次列表请求，以及Schedule/Turn/审批事件不刷新后台投影，随后接入事件优先、30秒恢复兜底。
 
 ### Phase 3B：事件提交唤醒与推送验收契约
 

@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
+from fairy_core.assistant.schedule_events import append_schedule_change
 from fairy_core.assistant.schedule_interpretation import interpret_scheduled_instruction
 from fairy_core.assistant.schedule_models import (
     AssistantSchedule,
@@ -69,6 +70,8 @@ class AssistantScheduleApplication:
             )
             validate_schedule_rule(schedule)
             persisted = unit_of_work.assistant_schedules.create(schedule)
+            if persisted.id == schedule.id:
+                append_schedule_change(unit_of_work, persisted)
             unit_of_work.commit()
         self._trigger.wake()
         return persisted
@@ -121,6 +124,7 @@ class AssistantScheduleApplication:
                 changed,
                 expected_revision=request.expected_revision,
             )
+            append_schedule_change(unit_of_work, persisted)
             unit_of_work.commit()
         self._trigger.wake()
         return persisted
@@ -132,6 +136,7 @@ class AssistantScheduleApplication:
                 schedule.pause(now=datetime.now(UTC)),
                 expected_revision=expected_revision,
             )
+            append_schedule_change(unit_of_work, persisted)
             unit_of_work.commit()
         return persisted
 
@@ -142,6 +147,7 @@ class AssistantScheduleApplication:
                 schedule.resume(next_fire_at=schedule.next_fire_at, now=datetime.now(UTC)),
                 expected_revision=expected_revision,
             )
+            append_schedule_change(unit_of_work, persisted)
             unit_of_work.commit()
         self._trigger.wake()
         return persisted
@@ -153,6 +159,7 @@ class AssistantScheduleApplication:
                 schedule.cancel(now=datetime.now(UTC)),
                 expected_revision=expected_revision,
             )
+            append_schedule_change(unit_of_work, persisted)
             unit_of_work.commit()
         return persisted
 
@@ -184,6 +191,7 @@ class AssistantScheduleApplication:
                     now=now,
                 )
             )
+            append_schedule_change(unit_of_work, schedule, occurrence)
             unit_of_work.commit()
         self._trigger.wake()
         return occurrence

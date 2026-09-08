@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fairy_core.application.core import CoreApplication
 from fairy_core.assistant.ledger import AssistantLedgerApplication
+from fairy_core.assistant.schedule_events import append_schedule_change
 from fairy_core.assistant.schedule_interpretation import interpret_scheduled_instruction
 from fairy_core.assistant.schedule_models import (
     AssistantOccurrenceStatus,
@@ -105,7 +106,7 @@ class AssistantScheduledTurnDispatcher:
             active = unit_of_work.assistant.nonterminal_turn_for_conversation(turn.conversation_id)
             if active is not None and active.id != turn.id:
                 return False
-            unit_of_work.assistant_schedules.save_occurrence(
+            dispatched = unit_of_work.assistant_schedules.save_occurrence(
                 occurrence.dispatch(
                     turn_id=turn.id,
                     workflow_run_id=turn.workflow_run_id,
@@ -113,6 +114,7 @@ class AssistantScheduledTurnDispatcher:
                 ),
                 expected_status=AssistantOccurrenceStatus.PENDING,
             )
+            append_schedule_change(unit_of_work, schedule, dispatched)
             unit_of_work.commit()
         self._scheduler.start(turn.id)
         return True

@@ -8,6 +8,7 @@ from typing import Protocol
 from uuid import UUID
 
 from fairy_core.assistant.models import AssistantTurnStatus
+from fairy_core.assistant.schedule_events import append_schedule_change
 from fairy_core.assistant.schedule_models import (
     AssistantOccurrenceStatus,
     AssistantSchedule,
@@ -188,6 +189,7 @@ class AssistantScheduleTriggerService:
                 expected_status=AssistantOccurrenceStatus.DISPATCHED,
                 attention_code=attention_code,
             )
+            append_schedule_change(unit_of_work, result[1], result[0])
             unit_of_work.commit()
         self._wake.set()
         return result
@@ -221,6 +223,7 @@ class AssistantScheduleTriggerService:
             ):
                 return False, None
             pending = repository.get_pending_occurrence(schedule_id=schedule.id)
+            original_pending = pending
             advance = (
                 advance_due_schedule(schedule, now=now)
                 if schedule.status is AssistantScheduleStatus.ACTIVE
@@ -296,6 +299,8 @@ class AssistantScheduleTriggerService:
             settled = repository.settle_claim(claim, schedule)
             if settled is None:
                 return False, None
+            if advance is not None or pending != original_pending:
+                append_schedule_change(unit_of_work, settled, pending)
             unit_of_work.commit()
             return (
                 True,
@@ -330,7 +335,7 @@ class AssistantScheduleTriggerService:
                     if status is AssistantOccurrenceStatus.FAILED
                     else None
                 )
-                unit_of_work.assistant_schedules.record_occurrence_outcome(
+                outcome, schedule = unit_of_work.assistant_schedules.record_occurrence_outcome(
                     occurrence.settle(
                         status=status,
                         now=now,
@@ -338,6 +343,7 @@ class AssistantScheduleTriggerService:
                     ),
                     expected_status=AssistantOccurrenceStatus.DISPATCHED,
                 )
+                append_schedule_change(unit_of_work, schedule, outcome)
                 changed = True
             if changed:
                 unit_of_work.commit()
@@ -353,7 +359,7 @@ class AssistantScheduleTriggerService:
             occurrence = unit_of_work.assistant_schedules.get_occurrence(occurrence_id)
             if occurrence is None or occurrence.status is not AssistantOccurrenceStatus.PENDING:
                 return
-            unit_of_work.assistant_schedules.save_occurrence(
+            changed_occurrence = unit_of_work.assistant_schedules.save_occurrence(
                 replace(
                     occurrence,
                     status=AssistantOccurrenceStatus.ATTENTION_REQUIRED,
@@ -364,7 +370,7 @@ class AssistantScheduleTriggerService:
             )
             schedule = unit_of_work.assistant_schedules.get(occurrence.schedule_id)
             if schedule is not None and schedule.status is AssistantScheduleStatus.ACTIVE:
-                unit_of_work.assistant_schedules.save(
+                schedule = unit_of_work.assistant_schedules.save(
                     schedule.pause(now=now, attention_code=attention.code),
                     expected_revision=schedule.active_revision,
                 )
@@ -373,10 +379,12 @@ class AssistantScheduleTriggerService:
                 # occurrence is materialized. Preserve the attention reason on
                 # that terminal definition so the UI cannot misreport it as a
                 # normally completed task.
-                unit_of_work.assistant_schedules.save(
+                schedule = unit_of_work.assistant_schedules.save(
                     replace(schedule, attention_code=attention.code, updated_at=now),
                     expected_revision=schedule.active_revision,
                 )
+            if schedule is not None:
+                append_schedule_change(unit_of_work, schedule, changed_occurrence)
             unit_of_work.commit()
 
     def _abandon(self, claim: AssistantScheduleClaim) -> None:
