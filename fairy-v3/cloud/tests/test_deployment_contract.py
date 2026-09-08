@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260909_0056"]
+    assert scripts.get_heads() == ["20260909_0057"]
+    assert scripts.get_revision("20260909_0057").down_revision == "20260909_0056"
     assert scripts.get_revision("20260909_0056").down_revision == "20260909_0055"
     assert scripts.get_revision("20260909_0055").down_revision == "20260908_0054"
     assert scripts.get_revision("20260908_0054").down_revision == "20260809_0053"
@@ -318,6 +319,23 @@ def test_message_cancellation_migration_has_tenant_policy_and_reverses() -> None
     config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
     command.downgrade(config, "20260909_0056:20260909_0055", sql=True)
     assert "DROP TABLE core_assistant_message_cancellations" in output.getvalue()
+
+
+def test_existing_message_receipts_gain_tenant_rls_without_rewriting_data() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260909_0056:head", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert '"CORE_ASSISTANT_MESSAGE_SUBMISSIONS" FORCE ROW LEVEL SECURITY' in ddl
+    assert "WITH CHECK (TENANT_ID = NULLIF(CURRENT_SETTING('APP.TENANT_ID', TRUE), ''))" in ddl
+    assert "DROP TABLE" not in ddl
+    assert "DELETE FROM CORE_ASSISTANT_MESSAGE_SUBMISSIONS" not in ddl
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260909_0057:20260909_0056", sql=True)
+    rollback = " ".join(output.getvalue().upper().split())
+    assert '"CORE_ASSISTANT_MESSAGE_SUBMISSIONS" DISABLE ROW LEVEL SECURITY' in rollback
+    assert "DROP TABLE" not in rollback
 
 
 def test_message_submission_migration_is_scoped_and_reversible() -> None:
