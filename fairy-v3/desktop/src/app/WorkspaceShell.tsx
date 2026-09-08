@@ -26,8 +26,9 @@ interface WorkspaceShellProps {
   model: WorkspaceModel;
   preferences?: DesktopPreferences | null;
   fairyEyeActive?: boolean;
+  visible?: boolean;
 }
-export function WorkspaceShell({ model, preferences, fairyEyeActive = true }: WorkspaceShellProps) {
+export function WorkspaceShell({ model, preferences, fairyEyeActive = true, visible = true }: WorkspaceShellProps) {
   const [projectName, setProjectName] = useState("");
   const [importPath, setImportPath] = useState("");
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
@@ -158,6 +159,7 @@ export function WorkspaceShell({ model, preferences, fairyEyeActive = true }: Wo
             />
             <WorkspaceInspector
               model={model}
+              visible={visible}
               collapsible
               collapsed={chatInspectorCollapsed}
               onCollapse={() => setChatInspectorCollapsed(true)}
@@ -184,7 +186,7 @@ export function WorkspaceShell({ model, preferences, fairyEyeActive = true }: Wo
                 onResumeWorkflow={model.resumeProjectTurn}
                 onCancelWorkflow={model.cancelProjectTurn}
               />
-              <WorkspaceInspector model={model} />
+              <WorkspaceInspector model={model} visible={visible} />
             </main>
             <Composer
               disabled={

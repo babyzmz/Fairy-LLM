@@ -15,7 +15,7 @@ import { type FormEvent, type MouseEvent, useEffect, useState } from "react";
 
 import type { WorkspaceModel } from "./workspaceTypes";
 
-export function BrowserPanel({ model, runtimeUrl }: { model: WorkspaceModel; runtimeUrl: string | null }) {
+export function BrowserPanel({ model, runtimeUrl, visible = true }: { model: WorkspaceModel; runtimeUrl: string | null; visible?: boolean }) {
   const activeTab = model.browserSession?.tabs.find(
     (tab) => tab.id === model.browserSession?.active_tab_id,
   ) ?? null;
@@ -23,9 +23,9 @@ export function BrowserPanel({ model, runtimeUrl }: { model: WorkspaceModel; run
   const [addressError, setAddressError] = useState<string | null>(null);
 
   useEffect(() => {
-    model.setBrowserSurfaceActive(true);
+    model.setBrowserSurfaceActive(visible);
     return () => model.setBrowserSurfaceActive(false);
-  }, [model.setBrowserSurfaceActive]);
+  }, [model.setBrowserSurfaceActive, visible]);
 
   useEffect(() => {
     if (activeTab?.url && activeTab.url !== "about:blank") {

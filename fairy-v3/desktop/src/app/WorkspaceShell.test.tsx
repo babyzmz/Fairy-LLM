@@ -12,6 +12,35 @@ afterEach(() => {
 });
 
 describe("WorkspaceShell", () => {
+  it("pauses retained Browser snapshots when the inspector or workspace is hidden", () => {
+    const model = workspaceModel();
+    model.mode = "chat";
+    model.selectedChatConversation = { ...projectConversationFixture(projectFixture()), project_id: null, workspace_type: "chat_scratch" };
+    model.workspaceTask = workspaceTask();
+    const setActive = vi.fn();
+    model.setBrowserSurfaceActive = setActive;
+    const tree = (visible: boolean) => <WorkspaceShell model={model} visible={visible} />;
+    const view = render(tree(true));
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    fireEvent.click(screen.getByRole("button", { name: "Browser" }));
+    const address = screen.getByLabelText("Browser address");
+    fireEvent.change(address, { target: { value: "https://example.net/draft" } });
+    expect(setActive).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse workspace inspector" }));
+    expect(setActive).toHaveBeenLastCalledWith(false);
+    expect(address).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restore workspace inspector" }));
+    expect(setActive).toHaveBeenLastCalledWith(true);
+    expect(screen.getByLabelText("Browser address")).toBe(address);
+    expect(address).toHaveValue("https://example.net/draft");
+    view.rerender(tree(false));
+    expect(setActive).toHaveBeenLastCalledWith(false);
+    view.rerender(tree(true));
+    expect(setActive).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    expect(setActive).toHaveBeenLastCalledWith(false);
+  });
+
   it("prefetches only the intended Conversation from history hover and focus", () => {
     const project = projectFixture();
     const chat = {

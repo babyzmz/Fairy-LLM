@@ -27,6 +27,7 @@ interface WorkspaceInspectorProps {
   model: WorkspaceModel;
   collapsible?: boolean;
   collapsed?: boolean;
+  visible?: boolean;
   onCollapse?(): void;
 }
 
@@ -34,6 +35,7 @@ export function WorkspaceInspector({
   model,
   collapsible = false,
   collapsed = false,
+  visible = true,
   onCollapse,
 }: WorkspaceInspectorProps) {
   const hasFiles = model.workspaceFiles.length > 0;
@@ -293,7 +295,7 @@ export function WorkspaceInspector({
               onExport={model.exportWorkspace}
             />
           ) : tab === panel ? panel === "preview" ? (
-            <PreviewWorkspace model={model} />
+            <PreviewWorkspace model={model} visible={visible && !collapsed} />
           ) : (
             <ObsidianPanel model={model} onOpenFiles={() => selectTab("files")} />
           ) : null}

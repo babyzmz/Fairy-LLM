@@ -10,7 +10,7 @@ type PreviewMode = "runtime" | "generated" | "browser" | "responsive" | "diagnos
 
 const terminalMediaStatuses = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
-export function PreviewWorkspace({ model }: { model: WorkspaceModel }) {
+export function PreviewWorkspace({ model, visible = true }: { model: WorkspaceModel; visible?: boolean }) {
   const mediaJobs = useMemo(() => projectMediaJobs(model.mediaJobs), [model.mediaJobs]);
   const hasMedia = mediaJobs.length > 0;
   const hasActiveMedia = mediaJobs.some((job) => !terminalMediaStatuses.has(job.status));
@@ -95,7 +95,7 @@ export function PreviewWorkspace({ model }: { model: WorkspaceModel }) {
             onCancel={model.cancelMediaJob}
           />
         ) : effectiveMode === "browser" ? (
-          <BrowserPanel model={model} runtimeUrl={runtimeUrl} />
+          <BrowserPanel model={model} runtimeUrl={runtimeUrl} visible={visible} />
         ) : effectiveMode === "responsive" ? (
           <ResponsivePreview url={runtimeUrl} />
         ) : (

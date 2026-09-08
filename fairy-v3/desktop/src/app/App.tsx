@@ -131,7 +131,7 @@ function Workspace({
           preferences={preferences}
           realtimePresence={realtimePresence}
         />
-        <WorkspaceShell model={shellModel} preferences={preferences} fairyEyeActive={workspaceVisible} />
+        <WorkspaceShell model={shellModel} preferences={preferences} fairyEyeActive={workspaceVisible} visible={workspaceVisible} />
       </VoiceController>
     </>
   );

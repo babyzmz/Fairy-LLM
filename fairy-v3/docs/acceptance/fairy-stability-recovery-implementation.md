@@ -47,6 +47,13 @@
 
 ## 恢复方法
 
+### Phase 1 / F03：不可见 Browser 暂停视觉查询
+
+- 新增 WorkspaceShell 集成失败测试：收起 Inspector 后 Browser active 仍为 true。
+- App 的有效可见性经 Shell、Inspector、PreviewWorkspace 传至 BrowserPanel；收起/Settings 隐藏保持挂载但关闭视觉查询，恢复开启；地址草稿和 DOM 保持。
+- 检查实际代码确认 Preview 标签离开时当前实现会卸载该面板，已有 cleanup 生效；本修复不改变这项既有标签生命周期，不停止 Core Browser Session/Agent 工作。
+- TypeScript 通过，App/Shell/Browser Panel/hook 4文件57测试通过。原生后台 WebView 行为留待最终实机检查。
+
 ### Phase 1 / F04：Browser 页面版本
 
 - 两个新增失败场景：导航忽略较新 snapshot，普通 reload 忽略较新 tab revision；统一比较同 Session/Tab 的已知版本。
