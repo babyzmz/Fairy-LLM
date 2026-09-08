@@ -38,6 +38,7 @@
 
 ### Phase 6：领域结果与中途修订边界
 
+- 文件计划存储增加Task内generation与Workflow revision绑定，保留历史manifest/steps；SQLite旧库重建与重复重开、跨租户与版本外键等20项通过（12.09秒），Cloud离线迁移/部署契约42项通过（3.43秒）。实际桌面库已通过SQLite backup API一致性备份、未迁移；见[版本化记录](workflow-file-plan-revisions.md)。领域计划替代及Changeset只读续接仍在实现。
 - 未执行的模型预算审批可被新要求替代，旧卡只保留历史决定，新路线重新分类并按成本政策生成新审批，不继承旧授权。双会话/待定与已批准/重启/重复点击和唯一回复等联合43项通过（60.09秒），见[专项证据](steering-budget-approval.md)。Changeset审批中更新仍待单独闭环。
 - 命令心跳绑定本次Assistant实例实际领取身份，验证Task/Conversation/Scope；不替其他持有者或媒体子任务续租。模型检查点也拒绝借用有效外部租约，过期才重新领取。双引擎/接管/重启/媒体/Command Bus 48项通过（70.26秒），见[专项证据](assistant-command-heartbeat-ownership.md)。
 - 重试/延迟等待耗尽、最终中断、异常及租约回收统一在Kernel事务中投影Turn/Task/Trace失败；兄弟节点和租约同步失效，不借用外部命令所有权。14项定向验证和完整Assistant＋Workflow419项通过（317.25秒）。见[专项证据](workflow-terminal-failure-projection.md)。命令心跳所有权仍在继续审查。

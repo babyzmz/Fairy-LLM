@@ -129,6 +129,9 @@ class ExecutionPlan:
     workspace_id: UUID
     version_id: UUID
     manifest: Mapping[str, Any]
+    generation: int = 1
+    workflow_run_id: UUID | None = None
+    workflow_plan_revision: int | None = None
     status: ExecutionPlanStatus = ExecutionPlanStatus.ACTIVE
     max_model_calls: int = 12
     max_tool_calls: int = 32
@@ -149,9 +152,20 @@ class ExecutionPlan:
         manifest: Mapping[str, Any],
         initial_model_calls: int = 0,
         initial_tool_calls: int = 0,
+        generation: int = 1,
+        workflow_run_id: UUID | None = None,
+        workflow_plan_revision: int | None = None,
     ) -> tuple[ExecutionPlan, tuple[TaskStep, ...]]:
         if task.workspace_id is None or task.target_version_id is None:
             raise ValueError("Execution Plan requires a Task Workspace Version")
+        if generation < 1:
+            raise ValueError("Execution Plan generation must be positive")
+        if (workflow_run_id is None) != (workflow_plan_revision is None) or (
+            workflow_plan_revision is not None and workflow_plan_revision < 1
+        ):
+            raise ValueError(
+                "Execution Plan requires a complete positive Workflow revision binding"
+            )
         normalized = _normalize_manifest(manifest)
         plan = cls(
             id=new_id(),
@@ -159,6 +173,9 @@ class ExecutionPlan:
             workspace_id=task.workspace_id,
             version_id=task.target_version_id,
             manifest=MappingProxyType(normalized),
+            generation=generation,
+            workflow_run_id=workflow_run_id,
+            workflow_plan_revision=workflow_plan_revision,
             model_calls_used=initial_model_calls,
             tool_calls_used=initial_tool_calls,
         )

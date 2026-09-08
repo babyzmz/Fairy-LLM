@@ -84,10 +84,13 @@ class PlanningStateStoreMixin:
         with self._session.read() as connection:
             row = (
                 connection.execute(
-                    select(execution_plans).where(
+                    select(execution_plans)
+                    .where(
                         execution_plans.c.tenant_id == self._tenant_id,
                         execution_plans.c.task_id == str(task_id),
                     )
+                    .order_by(execution_plans.c.generation.desc())
+                    .limit(1)
                 )
                 .mappings()
                 .first()
@@ -172,6 +175,9 @@ class PlanningStateStoreMixin:
             "workspace_id": str(plan.workspace_id),
             "version_id": str(plan.version_id),
             "manifest": dict(plan.manifest),
+            "generation": plan.generation,
+            "workflow_run_id": str(plan.workflow_run_id) if plan.workflow_run_id else None,
+            "workflow_plan_revision": plan.workflow_plan_revision,
             "status": plan.status.value,
             "max_model_calls": plan.max_model_calls,
             "max_tool_calls": plan.max_tool_calls,
@@ -209,6 +215,9 @@ class PlanningStateStoreMixin:
             workspace_id=UUID(row["workspace_id"]),
             version_id=UUID(row["version_id"]),
             manifest=MappingProxyType(dict(row["manifest"])),
+            generation=int(row["generation"]),
+            workflow_run_id=UUID(row["workflow_run_id"]) if row["workflow_run_id"] else None,
+            workflow_plan_revision=row["workflow_plan_revision"],
             status=ExecutionPlanStatus(row["status"]),
             max_model_calls=int(row["max_model_calls"]),
             max_tool_calls=int(row["max_tool_calls"]),

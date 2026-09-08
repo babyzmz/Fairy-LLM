@@ -29,6 +29,7 @@ from fairy_core.storage.assistant_schedule_sqlite_migrations import (
     migrate_assistant_schedule_interpretation,
     migrate_assistant_schedule_operation_mode,
 )
+from fairy_core.storage.planning_sqlite_migrations import migrate_execution_plan_generations
 from fairy_core.storage.schema import state_metadata
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
 from fairy_core.storage.sqlite_evidence_migration import migrate_assistant_evidence
@@ -72,6 +73,7 @@ def create_sqlite_core_engine(
         migrate_assistant_schedule_interpretation(engine)
         migrate_assistant_model_routing(engine)
         migrate_assistant_workflow_binding(engine)
+        migrate_execution_plan_generations(engine)
         remove_legacy_assistant_turn_work(engine)
         migrate_assistant_evidence(engine)
         migrate_workspace_identity(engine)

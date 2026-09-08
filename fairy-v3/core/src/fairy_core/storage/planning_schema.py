@@ -32,6 +32,9 @@ def build_planning_schema(
         Column("workspace_id", String(36), nullable=False),
         Column("version_id", String(36), nullable=False),
         Column("manifest", JSON, nullable=False),
+        Column("generation", BigInteger, nullable=False, server_default="1"),
+        Column("workflow_run_id", String(36)),
+        Column("workflow_plan_revision", BigInteger),
         Column("status", String(32), nullable=False),
         Column("max_model_calls", BigInteger, nullable=False),
         Column("max_tool_calls", BigInteger, nullable=False),
@@ -44,7 +47,34 @@ def build_planning_schema(
         Column("created_at", DateTime(timezone=True), nullable=False),
         Column("updated_at", DateTime(timezone=True), nullable=False),
         PrimaryKeyConstraint("tenant_id", "id", name="pk_core_execution_plans"),
-        UniqueConstraint("tenant_id", "task_id", name="uq_core_execution_plans_task"),
+        UniqueConstraint(
+            "tenant_id",
+            "task_id",
+            "generation",
+            name="uq_core_execution_plans_generation",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "workflow_run_id",
+            "workflow_plan_revision",
+            name="uq_core_execution_plans_workflow_revision",
+        ),
+        CheckConstraint("generation > 0", name="ck_core_execution_plans_generation"),
+        CheckConstraint(
+            "(workflow_run_id IS NULL AND workflow_plan_revision IS NULL) OR "
+            "(workflow_run_id IS NOT NULL AND workflow_plan_revision IS NOT NULL "
+            "AND workflow_plan_revision > 0)",
+            name="ck_core_execution_plans_workflow_binding",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "workflow_run_id", "workflow_plan_revision"],
+            [
+                "core_workflow_plan_revisions.tenant_id",
+                "core_workflow_plan_revisions.run_id",
+                "core_workflow_plan_revisions.revision",
+            ],
+            name="fk_core_execution_plans_workflow_revision",
+        ),
         CheckConstraint("revision >= 0", name="ck_core_execution_plans_revision"),
         CheckConstraint(
             "max_model_calls > 0 AND max_tool_calls > 0 AND max_repairs >= 0",

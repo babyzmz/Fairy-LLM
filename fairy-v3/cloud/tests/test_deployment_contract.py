@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260909_0058"]
+    assert scripts.get_heads() == ["20260909_0059"]
+    assert scripts.get_revision("20260909_0059").down_revision == "20260909_0058"
     assert scripts.get_revision("20260909_0058").down_revision == "20260909_0057"
     assert scripts.get_revision("20260909_0057").down_revision == "20260909_0056"
     assert scripts.get_revision("20260909_0056").down_revision == "20260909_0055"
@@ -44,6 +45,25 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
     assert scripts.get_revision("20260711_0012").down_revision == "20260711_0011"
     assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
+
+
+def test_file_plan_revision_upgrade_and_lossless_downgrade_guard() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260909_0058:20260909_0059", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert "ADD COLUMN GENERATION BIGINT DEFAULT '1' NOT NULL" in ddl
+    assert "UNIQUE (TENANT_ID, TASK_ID, GENERATION)" in ddl
+    assert "UNIQUE (TENANT_ID, WORKFLOW_RUN_ID, WORKFLOW_PLAN_REVISION)" in ddl
+    assert "REFERENCES CORE_WORKFLOW_PLAN_REVISIONS (TENANT_ID, RUN_ID, REVISION)" in ddl
+    assert "DISABLE ROW LEVEL SECURITY" not in ddl
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260909_0059:20260909_0058", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert ddl.index("RAISE EXCEPTION") < ddl.index("DROP COLUMN")
+    assert "WHERE GENERATION <> 1 OR WORKFLOW_RUN_ID IS NOT NULL" in ddl
+    assert "DELETE FROM" not in ddl
 
 
 def test_knowledge_catalog_length_upgrade_and_downgrade() -> None:
@@ -417,13 +437,9 @@ def test_waiting_for_input_downgrade_blocks_active_clarification_work() -> None:
     command.downgrade(config, "20260808_0052:20260808_0051", sql=True)
 
     downgrade_ddl = " ".join(output.getvalue().upper().split())
-    guard = (
-        "CANNOT DOWNGRADE WHILE ASSISTANT CLARIFICATION WORK IS WAITING_FOR_INPUT"
-    )
+    guard = "CANNOT DOWNGRADE WHILE ASSISTANT CLARIFICATION WORK IS WAITING_FOR_INPUT"
     assert guard in downgrade_ddl
-    assert downgrade_ddl.index(guard) < downgrade_ddl.index(
-        "CK_CORE_ASSISTANT_TURNS_STATUS"
-    )
+    assert downgrade_ddl.index(guard) < downgrade_ddl.index("CK_CORE_ASSISTANT_TURNS_STATUS")
 
 
 def test_media_generation_work_migration_has_reversible_fenced_tenant_ddl() -> None:
