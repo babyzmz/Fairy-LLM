@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event, Thread, current_thread
 from time import monotonic, sleep
@@ -1112,4 +1113,45 @@ def test_assistant_does_not_reexpose_media_tool_after_success(tmp_path: Path) ->
         assert len(jobs) == 1
         assert jobs[0]["status"] == "completed"
     finally:
+        service.close()
+
+
+def test_completed_media_reply_waits_for_workflow_archive(tmp_path, monkeypatch):
+    from fairy_core.media.workflow import MediaGenerationWorkflowAdapter
+
+    archive_entered, release_archive, returned = Event(), Event(), Event()
+    original = MediaGenerationWorkflowAdapter._archive
+
+    def blocked_archive(self, job_id):
+        archive_entered.set()
+        assert release_archive.wait(5)
+        return original(self, job_id)
+
+    monkeypatch.setattr(MediaGenerationWorkflowAdapter, "_archive", blocked_archive)
+    service = build_local_service(tmp_path / "data", media_provider=RecordingMediaProvider())
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        task = _scratch_task(service)
+
+        def generate():
+            try:
+                return service.invoke(
+                    "media.images.generate",
+                    {
+                        "task_id": task["id"],
+                        "prompt": "Archive boundary",
+                        "idempotency_key": "archive-boundary",
+                    },
+                )
+            finally:
+                returned.set()
+
+        future = pool.submit(generate)
+        assert archive_entered.wait(3)
+        assert not returned.wait(0.15), "A completed reply escaped before archive settled"
+        release_archive.set()
+        assert future.result(timeout=3)["status"] == "completed"
+    finally:
+        release_archive.set()
+        pool.shutdown(wait=True)
         service.close()

@@ -82,7 +82,8 @@ class MediaScheduler:
                 job_id,
                 include_active_video=return_when_video_active,
             )
-            if result is not None:
+            if result is not None and not result.job.is_terminal:
+                # An explicitly requested active video receipt is not completion.
                 return result
             with self._unit_of_work_factory() as unit_of_work:
                 workflow = unit_of_work.workflows.get(workflow_run_id)
@@ -97,6 +98,12 @@ class MediaScheduler:
             if workflow.run.status is WorkflowRunStatus.FAILED:
                 raise RuntimeError(workflow.run.error_code or "MEDIA_WORKFLOW_FAILED")
             if workflow.run.status is WorkflowRunStatus.COMPLETED:
+                # The provider may persist its artifact in submit, before the
+                # remaining wait/poll/archive nodes settle. Do not expose a
+                # synchronous completed reply while its durable Run is active.
+                completed = result or self._application.get_result(job_id)
+                if completed is not None:
+                    return completed
                 raise RuntimeError("Media Workflow completed without a durable result")
             try:
                 cancellation.raise_if_cancelled()
