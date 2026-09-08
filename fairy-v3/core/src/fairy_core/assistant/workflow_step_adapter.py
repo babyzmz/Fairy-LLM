@@ -472,10 +472,19 @@ class AssistantStepWorkflowAdapter:
             if (
                 candidate is not None
                 and candidate.status is CommandStatus.RUNNING
+                and candidate.command_name == "model.generate"
                 and candidate.input_payload.get("turn_id") == str(turn.id)
                 and candidate.task_id == turn.task_id
+                and candidate.conversation_id == turn.conversation_id
                 and candidate.scope_digest == turn.scope_digest
+                and candidate.lease_until is not None
+                and candidate.lease_until <= datetime.now(UTC)
             ):
-                command = candidate
+                # A node Fence does not confer the current Command owner's lease.
+                # Reclaim only an expired model command, solely for settlement;
+                # never replay its Provider request or borrow a live worker's Fence.
+                command = self._application._command_bus(unit.commands).start(
+                    candidate.id, lease_until=assistant_command_lease_until(),
+                )
                 break
         self._application._fail_turn_in_unit(unit, turn.id, command, error_code=error_code)
