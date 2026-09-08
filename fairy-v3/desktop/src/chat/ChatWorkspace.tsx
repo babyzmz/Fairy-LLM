@@ -229,7 +229,8 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     files: File[],
     images: PendingImageAttachment[],
   ) => {
-    if (waitingForClarification) {
+    const command = parseSlashCommand(value, props.slashCommands);
+    if (waitingForClarification && (command === null || command.name === "unknown")) {
       setNotice(null);
       if (files.length > 0 || images.length > 0) {
         setNotice("Clarification replies cannot add attachments");
@@ -241,7 +242,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       await props.onRespondToClarification(value);
       return;
     }
-    const command = parseSlashCommand(value, props.slashCommands);
     if (command === null) {
       setNotice(null);
       if (workflowCanUpdate) {

@@ -154,6 +154,28 @@ describe("ChatWorkspace", () => {
     expect(props.onSend).not.toHaveBeenCalled();
   });
 
+  it("keeps explicit stop available while Fairy is asking for clarification", async () => {
+    const user = userEvent.setup();
+    const props = workspaceProps({ turn: { ...TURN, status: "waiting_for_input", completed_at: null } });
+    props.slashCommands.push({ name: "stop", description: "Stop the current task", argument_hint: null, required_operation: null, available: true });
+    render(<ChatWorkspace {...props} />);
+    await user.type(screen.getByRole("textbox"), "/stop");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(props.onCommand).toHaveBeenCalledWith("/stop"));
+    expect(props.onRespondToClarification).not.toHaveBeenCalled();
+    expect(props.onSend).not.toHaveBeenCalled();
+  });
+
+  it.each(["/tmp/source.py", "`/stop`"])("keeps a clarification target or quoted command as data: %s", async (value) => {
+    const user = userEvent.setup();
+    const props = workspaceProps({ turn: { ...TURN, status: "waiting_for_input", completed_at: null } });
+    render(<ChatWorkspace {...props} />);
+    await user.type(screen.getByRole("textbox"), value);
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(props.onRespondToClarification).toHaveBeenCalledWith(value));
+    expect(props.onCommand).not.toHaveBeenCalled();
+  });
+
   it("rejects Slash and button actions disabled by Core metadata", async () => {
     const user = userEvent.setup();
     const props = workspaceProps({

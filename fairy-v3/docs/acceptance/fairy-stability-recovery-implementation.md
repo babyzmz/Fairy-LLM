@@ -221,6 +221,8 @@
 - 聊天斜线命令接线：Composer保留提示和附件拒绝，但 `/new /clear /stop /project /permission /help` 的实际解释由Core dispatcher返回。前端只处理类型化导航和权限请求，权限仍经过原安全宿主流程；取消固定当前Conversation/Turn/Revision。缺少dispatcher的旧客户端明确不可用，不退回另一套前端业务执行。测试校验命令不进入模型、Core失败不执行UI副作用、权限不由文本解析直接修改。
 - 已删除ChatWorkspace内上述命令的业务分支，改接CoreClient commands；Core回执触发导航/原权限安全入口。往返过程中切聊天、切模式或A→B→A会递增UI作用域generation，迟到结果不导航或修改权限。新增适配器5项验证固定取消目标、失败零UI副作用、权限只依据类型化回执和旧作用域抑制。
 - TypeScript通过；Commands/ChatWorkspace/Shell/App63项通过（12.80秒）；Core原领域命令14项通过（16.17秒）。原斜线测试按已批准的权威迁移改为断言调用onCommand而不是直接onNewConversation，继续保留“不进入模型”；Composer既有trim契约未改。原生键盘及取消物理完成仍待联合验收，桌宠输入直接键入斜线命令尚待接线。
+- 独立日常错误复核：等待澄清时，前端优先将所有输入当作澄清文本，显式 `/stop` 无法进入取消分发。增加失败回归后调整为仅普通文本进入澄清，裸斜线命令仍走Core；引用/代码中的命令不作为操作。保留原多轮澄清和Line Sidebar断言。
+- 已复现并修复：已知裸命令优先进入Core，未知斜线开头在澄清期间仍作为数据（例如Unix绝对路径），反引号中的 `/stop` 保持数据。TypeScript通过；ChatWorkspace/Composer/Commands27项通过（6.80秒），原多轮澄清测试不修改。该错误单独提交，不涉及模型内容过滤。
 
 ### Phase 3B：事件提交唤醒与推送验收契约
 
