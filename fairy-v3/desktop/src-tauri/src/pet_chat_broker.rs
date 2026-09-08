@@ -23,8 +23,25 @@ pub struct PetChatBindingInput {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct PetChatContext {
     pub revision: u64,
+    pub projection_revision: u64,
     pub conversation_id: Option<Uuid>,
     pub turn: Option<PetTurnProjection>,
+    pub reply: Option<PetReplyProjection>,
+    pub connection_available: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PetReplyProjection {
+    pub id: Uuid,
+    pub text: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct PetSnapshotTicket {
+    pub revision: u64,
+    pub conversation_id: Uuid,
+    sequence: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -49,6 +66,8 @@ struct BrokerState {
     profile_id: Option<String>,
     model_selection: Option<PetModelSelection>,
     pending: Option<PreparedPetSubmission>,
+    snapshot_sequence: u64,
+    applied_snapshot: u64,
 }
 
 #[derive(Default)]
@@ -118,8 +137,11 @@ impl PetChatBroker {
             .revision
             .checked_add(1)
             .ok_or("PET_CHAT_REVISION_EXHAUSTED")?;
+        advance_projection(&mut state.context)?;
         if state.context.conversation_id != Some(input.conversation_id) {
             state.context.turn = None;
+            state.context.reply = None;
+            state.context.connection_available = false;
         }
         state.context.revision = revision;
         state.context.conversation_id = Some(input.conversation_id);
@@ -168,6 +190,9 @@ impl PetChatBroker {
             submission_id: submission_id.into(),
             params,
         };
+        advance_projection(&mut state.context)?;
+        state.applied_snapshot = state.snapshot_sequence;
+        state.context.reply = None;
         state.pending = Some(prepared.clone());
         Ok(prepared)
     }
@@ -187,8 +212,10 @@ impl PetChatBroker {
             return Ok(false);
         }
         let turn = scoped_turn(value, state.context.conversation_id)?;
+        advance_projection(&mut state.context)?;
         state.context.turn = Some(turn);
         state.pending = None;
+        state.context.connection_available = true;
         Ok(true)
     }
 
@@ -223,7 +250,95 @@ impl PetChatBroker {
         {
             return Ok(false);
         }
+        advance_projection(&mut state.context)?;
         state.context.turn = Some(turn);
+        state.applied_snapshot = state.snapshot_sequence;
+        state.context.connection_available = true;
+        Ok(true)
+    }
+
+    pub fn prepare_snapshot(&self) -> Result<Option<PetSnapshotTicket>, String> {
+        let mut state = self.state.lock().map_err(|_| "PET_CHAT_LOCK")?;
+        let Some(conversation_id) = state.context.conversation_id else {
+            return Ok(None);
+        };
+        if state.pending.is_some() {
+            return Ok(None);
+        }
+        state.snapshot_sequence = state
+            .snapshot_sequence
+            .checked_add(1)
+            .ok_or("PET_CHAT_REVISION_EXHAUSTED")?;
+        Ok(Some(PetSnapshotTicket {
+            revision: state.context.revision,
+            conversation_id,
+            sequence: state.snapshot_sequence,
+        }))
+    }
+
+    pub fn accept_snapshot(
+        &self,
+        ticket: &PetSnapshotTicket,
+        value: &Value,
+    ) -> Result<bool, String> {
+        let mut state = self.state.lock().map_err(|_| "PET_CHAT_LOCK")?;
+        if state.context.revision != ticket.revision
+            || state.pending.is_some()
+            || ticket.sequence <= state.applied_snapshot
+        {
+            return Ok(false);
+        }
+        let conversation_id: Uuid = serde_json::from_value(value["conversation_id"].clone())
+            .map_err(|_| "PET_CHAT_RESPONSE_INVALID")?;
+        if conversation_id != ticket.conversation_id {
+            return Err("PET_CHAT_SCOPE_MISMATCH".into());
+        }
+        let turn = if value["turn"].is_null() {
+            None
+        } else {
+            Some(scoped_turn(&value["turn"], Some(conversation_id))?)
+        };
+        let reply: Option<PetReplyProjection> = serde_json::from_value(value["reply"].clone())
+            .map_err(|_| "PET_CHAT_RESPONSE_INVALID")?;
+        if reply
+            .as_ref()
+            .is_some_and(|reply| reply.text.trim().is_empty() || reply.text.chars().count() > 1200)
+            || (reply.is_some() && turn.is_none())
+        {
+            return Err("PET_CHAT_RESPONSE_INVALID".into());
+        }
+        if let Some(current) = &state.context.turn {
+            let Some(next) = &turn else {
+                return Ok(false);
+            };
+            if current.id == next.id
+                && (current.cancellation_revision > next.cancellation_revision
+                    || (!current.cancellation_pending
+                        && ["completed", "cancelled", "failed"].contains(&current.status.as_str())
+                        && (next.status != current.status || next.cancellation_pending)))
+            {
+                return Ok(false);
+            }
+        }
+        advance_projection(&mut state.context)?;
+        state.applied_snapshot = ticket.sequence;
+        state.context.turn = turn;
+        state.context.reply = reply;
+        state.context.connection_available = true;
+        Ok(true)
+    }
+
+    pub fn reject_snapshot(&self, ticket: &PetSnapshotTicket) -> Result<bool, String> {
+        let mut state = self.state.lock().map_err(|_| "PET_CHAT_LOCK")?;
+        if state.context.revision != ticket.revision
+            || state.pending.is_some()
+            || ticket.sequence <= state.applied_snapshot
+        {
+            return Ok(false);
+        }
+        advance_projection(&mut state.context)?;
+        state.applied_snapshot = ticket.sequence;
+        state.context.connection_available = false;
         Ok(true)
     }
 
@@ -246,6 +361,14 @@ impl PetChatBroker {
             json!({"turn_id": turn.id, "expected_cancellation_revision": turn.cancellation_revision}),
         )
     }
+}
+
+fn advance_projection(context: &mut PetChatContext) -> Result<(), String> {
+    context.projection_revision = context
+        .projection_revision
+        .checked_add(1)
+        .ok_or("PET_CHAT_REVISION_EXHAUSTED")?;
+    Ok(())
 }
 
 fn scoped_turn(value: &Value, conversation_id: Option<Uuid>) -> Result<PetTurnProjection, String> {
@@ -420,6 +543,62 @@ mod tests {
         assert!(broker
             .prepare_submission(current.revision, "third", "Other request")
             .is_ok());
+    }
+
+    #[test]
+    fn snapshot_results_are_fenced_by_binding_submission_and_request_order() {
+        let broker = PetChatBroker::default();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let context = broker.bind(input(0, first), &conversation(first)).unwrap();
+        let old = broker.prepare_snapshot().unwrap().unwrap();
+        let ticket = broker
+            .prepare_submission(context.revision, "snapshot-race", "Hello")
+            .unwrap();
+        assert!(broker.prepare_snapshot().unwrap().is_none());
+        let turn = json!({"id": Uuid::new_v4(), "conversation_id": first,
+            "status": "running", "cancellation_revision": 0, "cancellation_pending": false});
+        broker.finish_submission(&ticket, &turn).unwrap();
+        let empty = json!({"conversation_id": first, "turn": null, "reply": null});
+        assert!(!broker.accept_snapshot(&old, &empty).unwrap());
+        let earlier = broker.prepare_snapshot().unwrap().unwrap();
+        let latest = broker.prepare_snapshot().unwrap().unwrap();
+        let mut done = turn.clone();
+        done["status"] = json!("completed");
+        let snapshot = json!({"conversation_id": first, "turn": done,
+            "reply": {"id": Uuid::new_v4(), "text": "Bound reply"}});
+        assert!(broker.accept_snapshot(&latest, &snapshot).unwrap());
+        assert!(broker.context().unwrap().projection_revision > context.projection_revision);
+        assert!(!broker.accept_snapshot(&earlier, &empty).unwrap());
+        assert_eq!(broker.context().unwrap().reply.unwrap().text, "Bound reply");
+        broker
+            .bind(input(context.revision, second), &conversation(second))
+            .unwrap();
+        assert!(!broker.accept_snapshot(&latest, &snapshot).unwrap());
+        assert!(broker.context().unwrap().reply.is_none());
+        let current = broker.prepare_snapshot().unwrap().unwrap();
+        assert!(broker.accept_snapshot(&current, &snapshot).is_err());
+    }
+
+    #[test]
+    fn a_late_connection_failure_cannot_hide_a_recovered_snapshot() {
+        let broker = PetChatBroker::default();
+        let id = Uuid::new_v4();
+        broker.bind(input(0, id), &conversation(id)).unwrap();
+        let earlier = broker.prepare_snapshot().unwrap().unwrap();
+        let current = broker.prepare_snapshot().unwrap().unwrap();
+        assert!(broker
+            .accept_snapshot(
+                &current,
+                &json!({"conversation_id": id, "turn": null, "reply": null})
+            )
+            .unwrap());
+        assert!(broker.context().unwrap().connection_available);
+        assert!(!broker.reject_snapshot(&earlier).unwrap());
+        assert!(broker.context().unwrap().connection_available);
+        let failing = broker.prepare_snapshot().unwrap().unwrap();
+        assert!(broker.reject_snapshot(&failing).unwrap());
+        assert!(!broker.context().unwrap().connection_available);
     }
 
     #[test]

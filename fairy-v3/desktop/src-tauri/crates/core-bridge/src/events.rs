@@ -27,6 +27,10 @@ pub struct CoreEventCancellation {
 
 impl CoreEventCancellation {
     pub fn close(&self) {
+        self.close_with_timeout(Duration::from_secs(30));
+    }
+
+    pub fn close_with_timeout(&self, timeout: Duration) {
         let removed = self
             .bridge
             .process
@@ -35,7 +39,7 @@ impl CoreEventCancellation {
             .map(|mut sinks| sinks.remove(&self.key).is_some())
             .unwrap_or(false);
         if removed {
-            let _ = self.bridge.call(serde_json::json!({"id": 0, "method": "events.unwatch", "params": {"subscription_id": self.key}}));
+            let _ = self.bridge.call_with_timeout(serde_json::json!({"id": 0, "method": "events.unwatch", "params": {"subscription_id": self.key}}), timeout);
         }
     }
 }
@@ -71,6 +75,14 @@ impl Drop for CoreEventSubscription {
 
 impl CoreBridge {
     pub fn subscribe_events(&self, cursor: u64) -> Result<CoreEventSubscription, CoreBridgeError> {
+        self.subscribe_events_with_timeout(cursor, Duration::from_secs(30))
+    }
+
+    pub fn subscribe_events_with_timeout(
+        &self,
+        cursor: u64,
+        timeout: Duration,
+    ) -> Result<CoreEventSubscription, CoreBridgeError> {
         if !self.process.event_notifications.load(Ordering::Acquire) {
             return Err(CoreBridgeError::EventsUnavailable);
         }
@@ -104,8 +116,15 @@ impl CoreBridge {
             receiver,
             overflow,
         };
-        let response = self.call(serde_json::json!({"id": 0, "method": "events.watch", "params": {"subscription_id": key, "cursor": cursor}}))?;
+        let response = match self.call_with_timeout(serde_json::json!({"id": 0, "method": "events.watch", "params": {"subscription_id": key, "cursor": cursor}}), timeout) {
+            Ok(response) => response,
+            Err(error) => {
+                subscription.cancellation().close_with_timeout(timeout);
+                return Err(error);
+            }
+        };
         if response.get("error").is_some() {
+            subscription.cancellation().close_with_timeout(timeout);
             if response
                 .pointer("/error/data/error_code")
                 .and_then(Value::as_str)

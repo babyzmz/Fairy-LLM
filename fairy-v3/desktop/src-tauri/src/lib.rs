@@ -86,6 +86,7 @@ pub mod omni_model_store;
 pub mod omni_runtime_protocol;
 pub mod omni_runtime_self_test;
 mod pet_chat_broker;
+mod pet_chat_events;
 pub mod presence_backdrop;
 pub mod presence_coordinator;
 pub mod presence_interaction;
@@ -569,7 +570,8 @@ pub fn bridge_failure_response(id: Value, error: &CoreBridgeError) -> Value {
 struct DesktopState {
     core: Arc<Mutex<Option<CoreBridge>>>,
     core_events: Arc<core_event_subscriptions::CoreEventSubscriptions>,
-    pet_chat: pet_chat_broker::PetChatBroker,
+    pet_chat: Arc<pet_chat_broker::PetChatBroker>,
+    pet_chat_events: Mutex<Option<pet_chat_events::PetChatEvents>>,
     voice: Arc<VoiceWorkerManager>,
     realtime: Arc<RealtimeWorkerManager>,
     local_model: Arc<LocalModelControl>,
@@ -1374,6 +1376,49 @@ fn publish_pet_chat_context(app: &tauri::AppHandle, state: &DesktopState) {
     if let Ok(context) = state.pet_chat.context() {
         let _ = app.emit_to(PET_INPUT_LABEL, "pet-chat-context-changed", &context);
         let _ = app.emit_to("main", "pet-chat-context-changed", &context);
+        let _ = app.emit_to(PET_RENDER_LABEL, "pet-chat-context-changed", &context);
+    }
+}
+
+fn ensure_pet_chat_events(app: &tauri::AppHandle, state: &DesktopState) -> Result<(), String> {
+    let mut owner = state.pet_chat_events.lock().map_err(|_| "PET_CHAT_LOCK")?;
+    if owner.is_none() {
+        let app = app.clone();
+        *owner = Some(pet_chat_events::PetChatEvents::start(
+            state.core.clone(),
+            state.pet_chat.clone(),
+            move |context| {
+                for label in ["main", PET_INPUT_LABEL, PET_RENDER_LABEL] {
+                    let _ = app.emit_to(label, "pet-chat-context-changed", &context);
+                }
+            },
+        )?);
+    }
+    if let Some(owner) = owner.as_ref() {
+        owner.wake();
+    }
+    Ok(())
+}
+
+fn wake_pet_chat_events(state: &DesktopState) {
+    if let Ok(owner) = state.pet_chat_events.lock() {
+        if let Some(owner) = owner.as_ref() {
+            owner.wake();
+        }
+    }
+}
+
+fn stop_pet_chat_events(app: &tauri::AppHandle) {
+    let Some(state) = app.try_state::<DesktopState>() else {
+        return;
+    };
+    let owner = state
+        .pet_chat_events
+        .lock()
+        .ok()
+        .and_then(|mut owner| owner.take());
+    if let Some(mut owner) = owner {
+        owner.stop();
     }
 }
 
@@ -1395,7 +1440,9 @@ async fn pet_chat_bind(
         )
         .await,
     )?;
+    ensure_pet_chat_events(&app, &state)?;
     let context = state.pet_chat.bind(input, &conversation)?;
+    wake_pet_chat_events(&state);
     publish_pet_chat_context(&app, &state);
     Ok(context)
 }
@@ -1441,6 +1488,7 @@ async fn pet_chat_submit(
             "binding_revision": revision, "turn_id": turn.get("id")}))
     });
     state.pet_chat.release_submission(&ticket);
+    wake_pet_chat_events(&state);
     result
 }
 
@@ -1466,6 +1514,7 @@ async fn pet_chat_cancel(
     if state.pet_chat.accept_turn(revision, &turn)? {
         publish_pet_chat_context(&app, &state);
     }
+    wake_pet_chat_events(&state);
     Ok(json!({"accepted": true, "binding_revision": revision,
         "turn_id": turn.get("id"), "cancellation_pending": turn.get("cancellation_pending")}))
 }
@@ -5785,7 +5834,8 @@ pub fn run() {
             app.manage(DesktopState {
                 core,
                 core_events: Arc::new(core_event_subscriptions::CoreEventSubscriptions::default()),
-                pet_chat: pet_chat_broker::PetChatBroker::default(),
+                pet_chat: Arc::new(pet_chat_broker::PetChatBroker::default()),
+                pet_chat_events: Mutex::new(None),
                 voice,
                 realtime,
                 local_model,
@@ -5985,6 +6035,7 @@ pub fn run() {
             }
         }
         tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. } => {
+            stop_pet_chat_events(app);
             let _ = app.emit_to(
                 PET_RENDER_LABEL,
                 PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT,

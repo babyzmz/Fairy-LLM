@@ -184,6 +184,10 @@
 - 已实现 local-only `assistant.conversations.presentation.get`，当前只接受可用 scratch 聊天。直接查询单条最新 Turn 的展示列及单条 assistant 回复，停止投影使用相关存在性查询，不加载 Workflow Graph、解释、提示词或完整历史。回复最多1200个 Unicode 字符；无公开回复时返回空，不拿上一 Turn 回复冒充当前回复。
 - Core展示/取消重启/Repository/JSON-RPC/stdio43项通过（20.30秒），TypeScript及相关Ruff通过。测试覆盖双聊天反复切换、数据库重开、Emoji完整截断、已删除和项目聊天拒绝；取消重启回归额外核对展示快照与持久停止状态一致。项目夹具最初漏填既有必需 residency，补齐 local_only 后通过，不修改产品校验。
 - 本提交仅提供快照，宿主事件所有权及前端仍待接通；查询返回量已限制，数据库历史量增长下的索引和查询计划优化继续归 Phase5，不将 LIMIT 等同于已有最优索引。
+- 后续实现宿主所有的单一 `pet-core-events` 监听生命周期，绑定时按需启动；不依附主窗口订阅，正常空闲接收有界事件队列而非轮询 SQL。只对绑定聊天的 Turn/持久回复状态取展示快照，不为每个文本 delta 发起查询；无推送/断连时5秒恢复兜底。关闭订阅和本监听只读 RPC 使用2秒期限；主窗口重载不关闭它，宿主退出显式 join 清理。未启动 Voice/Realtime。
+- 快照有绑定 Revision＋请求序号保护，发送时使旧查询失效；宿主另带单调展示 Revision，供前端拒绝迟到窗口事件。离线状态不删除已经持久化的回复，恢复时重读现有事实，不自动重新提交消息。Core→宿主仅传最小投影，pet-render仍无通用 RPC 权限。
+- Rust宿主10项通过（5.80秒），包含真实 Core 双聊天回复、终止并重启 Core、原数据库快照恢复、监听退出后8个Core订阅名额全部重新可用。CoreBridge完整14项通过（含10秒慢请求/双订阅/乱序/超时/旧generation），Desktop全targets Clippy通过（7.88秒）。测试Clippy只修正已检查Option后unwrap的写法，未改变断言。
+- 上述是真实本机Core子进程测试，不是原生WebView2重载。PetInput/Render前端、新聊天和发送中取消尚未改接；下一项继续完成接线，不宣称Phase4全部完成。
 
 ### Phase 3B：事件提交唤醒与推送验收契约
 
