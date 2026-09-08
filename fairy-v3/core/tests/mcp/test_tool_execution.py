@@ -8,12 +8,16 @@ from fairy_core.mcp.models import McpTransport
 from fairy_core.mcp.ports import McpCancelledError, McpTransportInterrupted
 from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.transports.stdio import build_local_service
+from tests.assistant.intent_support import RequestAction, bind_test_intent
 from tests.assistant.support import ScriptedProvider, wait_for_turn
 from tests.assistant.test_application import _scratch_task, _turn
 from tests.mcp.support import FakeMcpConnector, issue_tools
 
 
-def _trusted_service(tmp_path: Path, provider: ScriptedProvider, connector: FakeMcpConnector):
+def _trusted_service(
+    tmp_path: Path, provider: ScriptedProvider, connector: FakeMcpConnector,
+    *, request: str = "Use issue tracker",
+):
     service = build_local_service(
         tmp_path,
         provider_registry=ProviderRegistry((provider,)),
@@ -34,7 +38,7 @@ def _trusted_service(tmp_path: Path, provider: ScriptedProvider, connector: Fake
             "idempotency_key": "mcp:tool:configure",
         },
     )
-    task = _scratch_task(service, "Use issue tracker")
+    task = _scratch_task(service, request)
     discovered = service.invoke(
         "mcp.servers.discover",
         {
@@ -197,7 +201,10 @@ def test_idempotent_read_reconnects_once_but_uncertain_write_never_replays(
     )
     connector = FakeMcpConnector(issue_tools())
     connector.failures.append(McpTransportInterrupted("disconnect", response_started=True))
-    service, task = _trusted_service(tmp_path / "write", write_provider, connector)
+    service, task = _trusted_service(
+        tmp_path / "write", write_provider, connector,
+        request="Create one issue titled Do not duplicate using mcp.issue-tracker.create_issue",
+    )
     try:
         permissions = service.invoke("permissions.get", {})
         service.invoke(
@@ -210,6 +217,8 @@ def test_idempotent_read_reconnects_once_but_uncertain_write_never_replays(
             },
         )
         turn = _turn(service, task, "mcp:turn:no-replay-write")
+        bind_test_intent(service, turn, action=RequestAction.CREATE,
+                         targets=("mcp.issue-tracker.create_issue",))
         completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
         assert completed["status"] == "completed"
         assert len(connector.calls) == 1
@@ -240,9 +249,14 @@ def test_standard_write_waits_for_generic_approval_before_mcp_call(tmp_path: Pat
         ]
     )
     connector = FakeMcpConnector(issue_tools())
-    service, task = _trusted_service(tmp_path, provider, connector)
+    service, task = _trusted_service(
+        tmp_path, provider, connector,
+        request="Create one issue titled Approved issue using mcp.issue-tracker.create_issue",
+    )
     try:
         turn = _turn(service, task, "mcp:turn:approval")
+        bind_test_intent(service, turn, action=RequestAction.CREATE,
+                         targets=("mcp.issue-tracker.create_issue",))
         waiting = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
         assert waiting["status"] == "waiting_for_tool"
         assert connector.calls == []

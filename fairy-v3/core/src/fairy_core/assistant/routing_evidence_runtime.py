@@ -25,6 +25,7 @@ from fairy_core.assistant.routing import (
 )
 from fairy_core.assistant.turn_reader import require_turn
 from fairy_core.commanding import CommandRun
+from fairy_core.commanding.registry import SideEffect
 from fairy_core.mcp.ports import McpCancelledError
 from fairy_core.model_catalog.models import (
     MODEL_ALLOWLIST_BY_ID,
@@ -72,6 +73,7 @@ class RoutingClassifierInput:
     model_round: int
     interpretation_revision: int | None = None
     prior_interpretation: AssistantRequestInterpretationRevision | None = None
+    mcp_action_targets: tuple[str, ...] = ()
 
 
 def validate_router_attempt(deltas: tuple[ModelDelta, ...]) -> None:
@@ -140,6 +142,7 @@ class EvidenceRoutingRuntimeMixin:
                     attachment_count=attachment_count,
                     prior_interpretation=classifier_input.prior_interpretation,
                     classifier_envelope=envelope,
+                    mcp_action_targets=classifier_input.mcp_action_targets,
                 )
                 chunks: list[str] = []
                 candidates: dict[str, ToolCandidate] = {}
@@ -250,6 +253,11 @@ class EvidenceRoutingRuntimeMixin:
                 else 1
             ),
             prior_interpretation=interpretation if refresh else None,
+            mcp_action_targets=tuple(sorted(
+                definition.name for definition in self._registry.definitions()
+                if definition.source == "mcp" and definition.model_visible
+                and definition.side_effect in {SideEffect.WRITE, SideEffect.EXECUTE}
+            ))[:64],
         )
 
 

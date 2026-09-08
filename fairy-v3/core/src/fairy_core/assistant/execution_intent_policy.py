@@ -125,6 +125,21 @@ def readonly_intent_issue(
     ):
         return "EXECUTION_INTENT_READ_ONLY"
     if definition.source != "builtin":
+        if (
+            definition.source == "mcp"
+            and definition.origin_id
+            and definition.name.startswith(f"mcp.{definition.origin_id}.")
+            and intent.confidence is InterpretationConfidence.HIGH
+            and definition.name in intent.target_descriptions
+            and intent.action in {
+                RequestAction.CREATE, RequestAction.CHANGE,
+                RequestAction.RUN, RequestAction.MANAGE,
+            }
+            and "publication" not in prohibitions
+        ):
+            # Server trust, schema digest, Scope and approval still execute downstream.
+            # A generic 'change this project' intent is not authority for arbitrary MCP writes.
+            return None
         return "EXECUTION_INTENT_EXTENSION_UNDECLARED"
     if (
         intent.target_descriptions

@@ -500,6 +500,64 @@ def test_manual_model_classifies_evidence_and_rejects_uncited_plain_text(
         service.close()
 
 
+def test_manual_classifier_resolves_a_trusted_mcp_target_then_requires_approval(tmp_path: Path):
+    from tests.mcp.support import FakeMcpConnector, issue_tools
+    from tests.mcp.test_tool_execution import _trusted_service
+
+    profile = "openrouter-qwen-free"
+    target = "mcp.issue-tracker.create_issue"
+    provider = _provider(profile_id=profile, model_id=QWEN_FREE_MODEL_ID, rounds=[
+        (
+            ModelDelta.text(profile_id=profile, sequence=1, text=json.dumps({
+                "evidence_requirements": [], "requires_workspace_changes": False,
+                "public_summary": "Create the requested issue in the connected tracker",
+                "interpretation": {
+                    "normalized_goal": "Create one Beta checklist issue", "action": "create",
+                    "objectives": [{"goal": "Create one Beta checklist issue", "action": "create"}],
+                    "targets": [target], "confidence": "high", "disposition": "ready",
+                    "public_summary": "Create one Beta checklist issue",
+                },
+            })),
+            ModelDelta.done(profile_id=profile, sequence=2, finish_reason="stop"),
+        ),
+        (
+            ModelDelta.tool_call(
+                profile_id=profile, sequence=1, tool_call_id="classified-mcp-create",
+                tool_name=target, arguments_fragment='{"title":"Beta checklist"}',
+            ),
+            ModelDelta.done(profile_id=profile, sequence=2, finish_reason="tool_calls"),
+        ),
+        (
+            ModelDelta.text(profile_id=profile, sequence=1, text="Created one issue."),
+            ModelDelta.done(profile_id=profile, sequence=2, finish_reason="stop"),
+        ),
+    ])
+    connector = FakeMcpConnector(issue_tools())
+    service, task = _trusted_service(
+        tmp_path, provider, connector,
+        request="Create one issue titled Beta checklist in the connected issue tracker",
+    )
+    try:
+        service.invoke("models.selection.update", {
+            "mode": "manual", "model_id": QWEN_FREE_MODEL_ID,
+            "allow_free_fallback": False, "zero_data_retention": False,
+            "expected_revision": 0, "idempotency_key": "mcp-classifier-model",
+        })
+        turn = _auto_turn(service, task, "classified-mcp")
+        waiting = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        assert waiting["status"] == "waiting_for_tool"
+        assert connector.calls == []
+        envelope = json.loads(provider.requests[0].messages[-1].content)
+        assert envelope["available_mcp_action_targets"] == [target]
+        approval = service.invoke("approvals.list", {"task_id": task["id"]})["items"][0]
+        service.invoke("approvals.decide", {"approval_id": approval["id"], "approved": True})
+        assert wait_for_turn(service, turn["id"])["status"] == "completed"
+        assert len(connector.calls) == 1
+        assert connector.calls[0][2] == {"title": "Beta checklist"}
+    finally:
+        service.close()
+
+
 def test_route_only_classifier_cannot_grant_execution_authority(tmp_path: Path) -> None:
     from fairy_core.assistant.execution_intent_policy import readonly_intent_issue
     from fairy_core.commanding.registry import build_default_registry

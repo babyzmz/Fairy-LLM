@@ -214,6 +214,7 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
                     fallback_profile_ids=fallback_ids,
                     prior_interpretation=classifier_input.prior_interpretation,
                     classifier_envelope=envelope,
+                    mcp_action_targets=classifier_input.mcp_action_targets,
                 )
                 chunks: list[str] = []
                 for delta in self._providers.stream(

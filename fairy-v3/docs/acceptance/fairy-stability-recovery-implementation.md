@@ -100,6 +100,14 @@
 - 验证：Core cwd 执行 `ruff check src/fairy_core/assistant tests/assistant` 通过；`pytest tests/assistant tests/test_sqlite_core.py tests/test_persistence_recovery.py tests/test_jsonrpc_transport.py tests/test_stdio_transport.py -q --tb=short`：218 passed（100.54秒）。均为临时数据库与脚本 Provider；没有运行真实用户库迁移、网络模型、桌面或原生硬件。
 - 复合 objective 当前仍只保存依赖，尚无可信逐 objective 完成凭据；不能把执行模型自报“分析完成”作为修改授权。该部分与 Phase 6 真实节点共用实现，联合关闭 Phase 2，不能提前宣称本阶段完全完成。真实 Provider 与原生联合验收仍未运行。用户要求连续推进，提交不是停点。
 
+### Phase 2C：MCP 明确动作与下游执行门禁
+
+- 复现已解析 HIGH/Create 且目标为精确 MCP 工具名时，扩展工具守卫仍无条件拒绝，导致标准模式无法进入既有审批。现仅对已绑定服务器命名空间的精确 MCP 目标允许继续进入 Scope、Schema/信任和审批检查；只读、低置信、其他服务器、泛化工作区目标和发布禁令仍不授予该路径。
+- Auto/Manual Classifier 输入增加最多64个已注册 MCP 写入/执行工具名；目录只含启用、已接受且就绪工具，不含凭据、端点和参数。目录明确是数据而非指令/授权。新增真实路由→持久解释→MCP 审批集成场景，批准前外部调用为零，批准后只调用一次；模型与外部服务为脚本边界，未作为真实 Provider 验收。
+- 原 MCP 两项写入测试改用明确创建指令并绑定有效解释，Sandbox 下游测试补齐有效 RUN 解释前置条件；新 helper 只供下游执行测试使用，Classifier/解释测试不走此捷径。未修改原审批、Scope、归档、取消、结果不确定与不重复副作用断言。
+- 验证：MCP/Sandbox/意图策略57项通过（17.55秒）；真实路由组件的 MCP 集成1项通过（2.76秒）；随后 Assistant/MCP/Sandbox/stdio 并发整组275项通过（115.44秒），Ruff与 diff check 通过。旧失败缓存中的两项跨作用域用例单独及本轮整组均通过，未据缓存伪造新缺陷或修改其断言。Cloud HTTP/部署契约前一子任务54项通过（14.93秒）。
+- 仍未关闭 Phase 2：精确工具名不是任意外部账户/参数目标的完整语义验证，复合 objective 完成事实、审批等待中 Steering 和真实模型兼容仍待后续；不能宣称高置信 Classifier 可以扩大原始用户授权。
+
 ### Phase 3A：请求分发验收契约
 
 - Phase 2 独立补漏：Classifier 只有路由/证据字段、缺失完整 interpretation 时，不再由 `requires_workspace_changes` 推导出中置信执行权限；保留路由与查证信息，但意图降为只读。正式双聊天回归修复前能放行 `run.sandboxed`，修复后拒绝执行/安装且保留 `project.read`。测试使用真实路由、临时持久化和 Context，仅模型输出脚本化；未修改完整 Classifier 或显式 legacy 系统命令的语义。Core Assistant 188项通过（85.95秒），受影响 Ruff 通过。最初测试误入最终回复的既有工作区完整性门禁，已收窄为所审查的路由→持久意图→工具暴露链，不将该失败冒充权限复现。

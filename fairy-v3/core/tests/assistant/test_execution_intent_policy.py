@@ -80,6 +80,22 @@ def test_extension_cannot_impersonate_internal_evidence_cache():
     assert readonly_intent_issue(_intent(RequestAction.REVIEW), extension) is not None
 
 
+@pytest.mark.parametrize("targets,action,confidence,allowed", [
+    (("mcp.tracker.create_issue",), RequestAction.CREATE, InterpretationConfidence.HIGH, True),
+    (("mcp.other.create_issue",), RequestAction.CREATE, InterpretationConfidence.HIGH, False),
+    (("current workspace",), RequestAction.CREATE, InterpretationConfidence.HIGH, False),
+    (("mcp.tracker.create_issue",), RequestAction.REVIEW, InterpretationConfidence.HIGH, False),
+    (("mcp.tracker.create_issue",), RequestAction.CREATE, InterpretationConfidence.LOW, False),
+])
+def test_effectful_mcp_requires_an_exact_resolved_tool_target(targets, action, confidence, allowed):
+    extension = replace(
+        build_default_registry().get("memory.suggest"),
+        name="mcp.tracker.create_issue", source="mcp", origin_id="tracker",
+    )
+    intent = _intent(action, targets=targets).model_copy(update={"confidence": confidence})
+    assert (readonly_intent_issue(intent, extension) is None) is allowed
+
+
 @pytest.mark.parametrize(
     "text,expected",
     [

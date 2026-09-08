@@ -11,6 +11,7 @@ from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.runtime.models import RuntimeExecutorHealth
 from fairy_core.sandbox.models import SandboxRequest, SandboxResult, SandboxResultStatus
 from fairy_core.transports.stdio import build_local_service
+from tests.assistant.intent_support import RequestAction, bind_test_intent
 from tests.assistant.support import ScriptedProvider
 
 
@@ -172,6 +173,7 @@ def _project_turn(service, source: Path) -> tuple[dict[str, object], dict[str, o
             "idempotency_key": "sandbox:turn",
         },
     )
+    bind_test_intent(service, turn, action=RequestAction.RUN, targets=("current workspace",))
     return context, turn
 
 
@@ -375,6 +377,7 @@ def test_scratch_sandbox_uses_its_managed_version_and_scope_network(
                 "idempotency_key": "sandbox:scratch-turn",
             },
         )
+        bind_test_intent(service, turn, action=RequestAction.RUN, targets=("current workspace",))
 
         completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
 
