@@ -112,6 +112,13 @@ class SqlAlchemyAssistantRepository(
             if not hmac.compare_digest(actual, request_digest):
                 raise IdempotencyConflictError("Message idempotency key has a different request")
 
+    def message_submission_conversation(self, key_digest: str) -> UUID | None:
+        row = self._first(select(assistant_message_submissions.c.conversation_id).where(
+            assistant_message_submissions.c.tenant_id == self._tenant_id,
+            assistant_message_submissions.c.key_digest == key_digest,
+        ))
+        return UUID(row["conversation_id"]) if row is not None else None
+
     def save_turn(self, turn: AssistantTurn) -> None:
         scoped_values = {"tenant_id": self._tenant_id, **self._turn_values(turn)}
         with self._session.write() as connection:

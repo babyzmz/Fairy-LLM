@@ -61,6 +61,16 @@ it("submits a conversation-bound message without a frontend task creation chain"
 });
 
 describe("CoreClient", () => {
+  it("dispatches explicit commands with their fixed conversation and Turn context", async () => {
+    const transport = new RecordingTransport();
+    const client = new CoreClient(transport);
+    const input = {
+      text: "/stop", idempotency_key: "command:stop-once", conversation_id: "chat-a",
+      turn_id: "turn-a", expected_cancellation_revision: 3,
+    };
+    await client.assistant.commands.dispatch(input);
+    expect(transport.requests).toEqual([{ method: "assistant.commands.dispatch", params: input }]);
+  });
   it("uses a bounded fallback interval rather than 25ms idle polling", () => {
     expect(DEFAULT_EVENT_POLL_MS).toBeGreaterThanOrEqual(250);
     expect(DEFAULT_EVENT_POLL_MS).toBeLessThanOrEqual(500);

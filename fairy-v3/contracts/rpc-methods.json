@@ -61,6 +61,12 @@
       "transport": "local_only"
     },
     {
+      "name": "assistant.commands.dispatch",
+      "request_model": "AssistantCommandInput",
+      "response_model": "AssistantCommandResult",
+      "transport": "local_only"
+    },
+    {
       "name": "assistant.messages.submit",
       "request_model": "AssistantMessageSubmitInput",
       "response_model": "AssistantTurnModel",

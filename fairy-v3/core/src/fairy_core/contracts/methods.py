@@ -33,6 +33,7 @@ from fairy_core.contracts.browser import (
     BrowserWorkerHealthModel,
 )
 from fairy_core.contracts.capabilities import CapabilityManifestModel
+from fairy_core.contracts.domain_commands import AssistantCommandInput, AssistantCommandResult
 from fairy_core.contracts.extensions import (
     ExtensionCatalogPageModel,
     McpPresetInstallInput,
@@ -305,6 +306,10 @@ from fairy_core.system_actions.models import SystemActionExecution, SystemAction
 
 CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
     {
+        "assistant.commands.dispatch": CoreMethod(
+            "assistant.commands.dispatch", AssistantCommandInput, AssistantCommandResult,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
         "assistant.messages.submit": CoreMethod(
             "assistant.messages.submit", AssistantMessageSubmitInput, AssistantTurnModel,
             CoreMethodTransport.LOCAL_ONLY,

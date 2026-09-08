@@ -10,6 +10,7 @@ export const CORE_METHOD_TRANSPORT = {
   "asset_sets.create": "local_and_cloud",
   "asset_sets.list": "local_and_cloud",
   "assistant.background_tasks.list": "local_only",
+  "assistant.commands.dispatch": "local_only",
   "assistant.messages.submit": "local_only",
   "assistant.schedules.cancel": "local_only",
   "assistant.schedules.create": "local_only",
@@ -214,6 +215,7 @@ export const CORE_METHOD_TRANSPORT = {
 export const LOCAL_ONLY_CORE_METHODS = [
   "ambient.dialogue.evaluate",
   "assistant.background_tasks.list",
+  "assistant.commands.dispatch",
   "assistant.messages.submit",
   "assistant.schedules.cancel",
   "assistant.schedules.create",

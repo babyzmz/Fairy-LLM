@@ -110,6 +110,23 @@ export type ArtifactPage = Schemas["ArtifactPageModel"];
 export type AssistantTurn = Schemas["AssistantTurnModel"];
 export type AssistantTurnCancelInput = Schemas["AssistantTurnCancelInput"];
 export type AssistantTurnCreateInput = Schemas["AssistantTurnCreateInput"];
+export interface AssistantCommandInput {
+  text: string;
+  idempotency_key: string;
+  conversation_id?: string | null;
+  turn_id?: string | null;
+  expected_cancellation_revision?: number | null;
+}
+export interface AssistantCommandResult {
+  command: "new" | "clear" | "stop" | "project" | "permission" | "help";
+  conversation: Conversation | null;
+  turn: AssistantTurn | null;
+  ui_action: {
+    kind: "show_project" | "request_permission";
+    profile: "observe" | "standard" | "autonomous" | null;
+  } | null;
+  notice: string | null;
+}
 export type AssistantMessageSubmitInput = Omit<
   AssistantTurnCreateInput, "task_id" | "image_attachments"
 > & {
@@ -839,6 +856,10 @@ export interface CoreMethodMap {
   "assistant.messages.submit": {
     params: AssistantMessageSubmitInput;
     result: AssistantTurn;
+  };
+  "assistant.commands.dispatch": {
+    params: AssistantCommandInput;
+    result: AssistantCommandResult;
   };
   "assistant.background_tasks.list": {
     params: { current_conversation_id?: string | null; recent_limit?: number };

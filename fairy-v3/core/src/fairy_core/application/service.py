@@ -32,6 +32,7 @@ from fairy_core.application.service_endpoints import CoreServiceEndpointsMixin
 from fairy_core.application.workspace_service import WorkspaceService
 from fairy_core.assistant import workflow_adapter as assistant_workflow
 from fairy_core.assistant.application import AssistantApplication
+from fairy_core.assistant.domain_commands import AssistantDomainCommands
 from fairy_core.assistant.image_inputs import build_image_attachments
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.message_ingress import AssistantMessageIngress
@@ -53,6 +54,7 @@ from fairy_core.commanding.settings import (
 )
 from fairy_core.contracts.approvals import ApprovalDecisionInput
 from fairy_core.contracts.knowledge import KnowledgeSyncRunInput, KnowledgeSyncStartInput
+from fairy_core.contracts.method_primitives import EmptyInput
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import (
     AssistantTurnCreateInput,
@@ -484,12 +486,18 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             scheduler=self._assistant_scheduler, providers=self._provider_registry,
             unit_of_work_factory=unit_of_work_factory, turn_factory=self._create_assistant_turn,
         )
+        self._domain_commands = AssistantDomainCommands(
+            application=application, units=unit_of_work_factory,
+            commands=lambda: self._get_capabilities(EmptyInput())["slash_commands"],
+            cancel=self._cancel_assistant_turn,
+        )
         self._preview_idle_scheduler = (
             PreviewIdleScheduler(runtime_application) if runtime_application is not None else None
         )
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "ambient.dialogue.evaluate": self._ambient_dialogue.evaluate,
             "assistant.messages.submit": self._message_ingress.submit,
+            "assistant.commands.dispatch": self._domain_commands.dispatch,
             "approvals.decide": self._decide_approval,
             "approvals.list": self._list_approvals,
             "artifacts.list": self._list_artifacts,
