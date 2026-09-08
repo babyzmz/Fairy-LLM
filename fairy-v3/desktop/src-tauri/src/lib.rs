@@ -1468,23 +1468,38 @@ async fn pet_chat_submit(
     text: String,
 ) -> Result<Value, String> {
     authorize_pet_input_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    state
+        .pet_chat
+        .begin_submission(revision, &submission_id, &text)?;
+    let result = submit_pet_chat(&app, &state, revision, &submission_id, &text).await;
+    state.pet_chat.end_submission(&submission_id);
+    result
+}
+
+async fn submit_pet_chat(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+    revision: u64,
+    submission_id: &str,
+    text: &str,
+) -> Result<Value, String> {
     // Validate text and the binding before any new-chat side effect.
     let ticket = match state
         .pet_chat
-        .prepare_submission(revision, &submission_id, &text)
+        .prepare_submission(revision, submission_id, text)
     {
         Ok(ticket) => ticket,
         Err(error) if error == "PET_CHAT_NOT_BOUND" => {
-            let context = create_pet_chat(&app, &state, revision, &submission_id).await?;
+            let context = create_pet_chat(app, state, revision, submission_id).await?;
             state
                 .pet_chat
-                .prepare_submission(context.revision, &submission_id, &text)?
+                .prepare_submission(context.revision, submission_id, text)?
         }
         Err(error) => return Err(error),
     };
     let revision = ticket.revision;
     let response = call_core(
-        &state,
+        state,
         json!({
             "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
             "method": "assistant.messages.submit", "params": ticket.params
@@ -1494,14 +1509,47 @@ async fn pet_chat_submit(
     let result = pet_chat_core_result(response).and_then(|turn| {
         let applied = state.pet_chat.finish_submission(&ticket, &turn)?;
         if applied {
-            publish_pet_chat_context(&app, &state);
+            publish_pet_chat_context(app, state);
         }
         Ok(json!({"submission_id": submission_id, "status": "accepted",
             "binding_revision": revision, "turn_id": turn.get("id")}))
     });
     state.pet_chat.release_submission(&ticket);
-    wake_pet_chat_events(&state);
+    wake_pet_chat_events(state);
     result
+}
+
+#[tauri::command]
+async fn pet_chat_submission_cancel(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    revision: u64,
+    submission_id: String,
+) -> Result<Value, String> {
+    authorize_pet_input_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    let params = state
+        .pet_chat
+        .submission_cancel_request(revision, &submission_id)?;
+    let result = pet_chat_core_result(
+        call_core(
+            &state,
+            json!({
+                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
+                "method": "assistant.messages.cancel", "params": params,
+            }),
+        )
+        .await,
+    )?;
+    // A binding may change during cancellation. Let the scoped snapshot reader
+    // converge; never apply an old submission's Turn to the currently shown chat.
+    wake_pet_chat_events(&state);
+    publish_pet_chat_context(&app, &state);
+    Ok(
+        json!({"accepted": result["accepted"], "submission_id": submission_id,
+        "turn_id": result["turn"]["id"],
+        "cancellation_pending": result["turn"]["cancellation_pending"]}),
+    )
 }
 
 async fn create_pet_chat(
@@ -5974,6 +6022,7 @@ pub fn run() {
             pet_chat_submit,
             pet_chat_new,
             pet_chat_cancel,
+            pet_chat_submission_cancel,
             core_events_open,
             core_events_next,
             core_events_close,

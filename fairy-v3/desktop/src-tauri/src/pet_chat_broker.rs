@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::sync::Mutex;
 use uuid::Uuid;
 
@@ -87,6 +88,14 @@ struct BrokerState {
     pending: Option<PreparedPetSubmission>,
     snapshot_sequence: u64,
     applied_snapshot: u64,
+    active_submission: Option<String>,
+    owned_submissions: VecDeque<OwnedPetSubmission>,
+}
+
+struct OwnedPetSubmission {
+    id: String,
+    revision: u64,
+    conversation_id: Option<Uuid>,
 }
 
 #[derive(Default)]
@@ -95,6 +104,54 @@ pub struct PetChatBroker {
 }
 
 impl PetChatBroker {
+    // Register before the first Core await, including creation of an unbound chat.
+    // This is a bounded host identity cache; the cancellation fact belongs to Core.
+    pub fn begin_submission(&self, revision: u64, id: &str, text: &str) -> Result<(), String> {
+        if !valid_request_id(id) || text.trim().is_empty() || text.trim().chars().count() > 4_000 {
+            return Err("PET_CHAT_INPUT_INVALID".into());
+        }
+        let mut state = self.state.lock().map_err(|_| "PET_CHAT_LOCK")?;
+        if state.context.revision != revision {
+            return Err("PET_CHAT_BINDING_CHANGED".into());
+        }
+        if state.active_submission.is_some() {
+            return Err("PET_CHAT_SUBMISSION_BUSY".into());
+        }
+        if state.owned_submissions.iter().any(|owned| owned.id == id) {
+            return Err("PET_CHAT_SUBMISSION_ID_REUSED".into());
+        }
+        let conversation_id = state.context.conversation_id;
+        if state.owned_submissions.len() == 32 {
+            state.owned_submissions.pop_front();
+        }
+        state.owned_submissions.push_back(OwnedPetSubmission {
+            id: id.into(),
+            revision,
+            conversation_id,
+        });
+        state.active_submission = Some(id.into());
+        Ok(())
+    }
+
+    pub fn end_submission(&self, id: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.active_submission.as_deref() == Some(id) {
+                state.active_submission = None;
+            }
+        }
+    }
+
+    pub fn submission_cancel_request(&self, revision: u64, id: &str) -> Result<Value, String> {
+        let state = self.state.lock().map_err(|_| "PET_CHAT_LOCK")?;
+        let owned = state
+            .owned_submissions
+            .iter()
+            .find(|owned| owned.id == id && owned.revision == revision)
+            .ok_or("PET_CHAT_SUBMISSION_NOT_OWNED")?;
+        Ok(json!({"idempotency_key": format!("pet:{}", owned.id),
+            "conversation_id": owned.conversation_id}))
+    }
+
     pub fn prepare_new_chat(
         &self,
         revision: u64,
@@ -474,6 +531,68 @@ mod tests {
     }
 
     #[test]
+    fn submission_cancellation_owns_the_original_request_across_binding_changes() {
+        let broker = PetChatBroker::default();
+        assert!(broker.begin_submission(0, "invalid", " ").is_err());
+        assert!(broker.submission_cancel_request(0, "invented").is_err());
+        broker.begin_submission(0, "before-chat", "Hello").unwrap();
+        assert_eq!(
+            broker.submission_cancel_request(0, "before-chat").unwrap(),
+            json!({"idempotency_key": "pet:before-chat", "conversation_id": null})
+        );
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let bound = broker.bind(input(0, first), &conversation(first)).unwrap();
+        assert!(broker
+            .begin_submission(bound.revision, "competing", "Hello")
+            .is_err());
+        assert!(broker
+            .submission_cancel_request(bound.revision, "before-chat")
+            .is_err());
+        broker.end_submission("before-chat");
+        broker
+            .begin_submission(bound.revision, "bound-send", "Hello")
+            .unwrap();
+        let next = broker
+            .bind(input(bound.revision, second), &conversation(second))
+            .unwrap();
+        assert_eq!(
+            broker
+                .submission_cancel_request(bound.revision, "bound-send")
+                .unwrap(),
+            json!({"idempotency_key": "pet:bound-send", "conversation_id": first})
+        );
+        broker.end_submission("bound-send");
+        assert!(broker
+            .begin_submission(next.revision, "bound-send", "Changed")
+            .is_err());
+        broker
+            .begin_submission(next.revision, "new-send", "New")
+            .unwrap();
+        broker.end_submission("bound-send");
+        assert!(broker
+            .begin_submission(next.revision, "third", "Other")
+            .is_err());
+        assert_eq!(broker.context().unwrap().conversation_id, Some(second));
+    }
+
+    #[test]
+    fn recent_submission_ownership_is_bounded_without_evicting_active_requests() {
+        let broker = PetChatBroker::default();
+        for index in 0..40 {
+            let id = format!("owned-{index}");
+            broker.begin_submission(0, &id, "Hello").unwrap();
+            if index < 39 {
+                broker.end_submission(&id);
+            }
+        }
+        assert!(broker.submission_cancel_request(0, "owned-0").is_err());
+        assert!(broker.submission_cancel_request(0, "owned-39").is_ok());
+        assert_eq!(broker.state.lock().unwrap().owned_submissions.len(), 32);
+        assert!(broker.begin_submission(0, "other", "Hello").is_err());
+    }
+
+    #[test]
     fn pet_submission_is_bound_to_host_context_not_caller_supplied_rpc() {
         let broker = PetChatBroker::default();
         let id = Uuid::new_v4();
@@ -801,5 +920,39 @@ finally:
             assert_eq!(items[1]["content"], "Host-owned reply");
             assert_eq!(broker.context().unwrap().conversation_id, Some(id));
         }
+        let unbound = PetChatBroker::default();
+        unbound
+            .begin_submission(0, "cancel-before-bind", "Must not run")
+            .unwrap();
+        let cancelled = bridge
+            .call(json!({"id": 5, "method": "assistant.messages.cancel",
+            "params": unbound.submission_cancel_request(0, "cancel-before-bind").unwrap()}))
+            .unwrap();
+        assert_eq!(cancelled["result"]["accepted"], true);
+        assert_eq!(cancelled["result"]["turn"], Value::Null);
+        let created = bridge
+            .call(json!({"id": 6, "method": "conversations.create",
+            "params": {"project_id": null, "workspace_type": "chat_scratch"}}))
+            .unwrap();
+        let conversation = &created["result"];
+        let id = serde_json::from_value(conversation["id"].clone()).unwrap();
+        let context = unbound.bind(input(0, id), conversation).unwrap();
+        let ticket = unbound
+            .prepare_submission(context.revision, "cancel-before-bind", "Must not run")
+            .unwrap();
+        let rejected = bridge
+            .call(json!({"id": 7, "method": "assistant.messages.submit", "params": ticket.params}))
+            .unwrap();
+        assert!(
+            rejected.get("error").is_some(),
+            "Core must honor the earlier durable stop"
+        );
+        let transcript = bridge
+            .call(json!({"id": 8, "method": "messages.list",
+            "params": {"conversation_id": id, "limit": 100}}))
+            .unwrap();
+        assert!(transcript["result"]["items"].as_array().unwrap().is_empty());
+        unbound.release_submission(&ticket);
+        unbound.end_submission("cancel-before-bind");
     }
 }
