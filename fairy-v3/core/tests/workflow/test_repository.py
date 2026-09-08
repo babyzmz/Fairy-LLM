@@ -192,6 +192,68 @@ def test_parallel_reads_require_disjoint_resource_keys(tmp_path: Path) -> None:
     assert {claim.node_id for claim in claims} == {left.id, right.id}
 
 
+@pytest.mark.parametrize("same_batch", [True, False])
+def test_resource_keys_conflict_across_runs_but_not_unrelated_resources(
+    tmp_path: Path,
+    same_batch: bool,
+) -> None:
+    factory = _factory(tmp_path / "resources.db")
+    first, blocked, independent = (_run(key) for key in ("first", "blocked", "independent"))
+    nodes = [
+        _node(
+            run,
+            run.owner_id,
+            policy=WorkflowConcurrencyPolicy.PARALLEL_READ,
+            resource_keys=(resource,),
+        )
+        for run, resource in (
+            (first, "browser:shared"),
+            (blocked, "browser:shared"),
+            (independent, "browser:other"),
+        )
+    ]
+    try:
+        with factory() as unit:
+            for run, node in zip((first, blocked, independent), nodes, strict=True):
+                unit.workflows.create(run, nodes=(node,), edges=())
+            unit.commit()
+        with factory() as unit:
+            initial = unit.workflows.claim_ready(
+                worker_id="worker",
+                lease_until=datetime.now(UTC) + timedelta(seconds=30),
+                limit=4 if same_batch else 1,
+            )
+            unit.commit()
+        if same_batch:
+            claims = initial
+        else:
+            with factory() as unit:
+                claims = (
+                    *initial,
+                    *unit.workflows.claim_ready(
+                        worker_id="worker",
+                        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+                        limit=3,
+                    ),
+                )
+                unit.commit()
+        assert {claim.run_id for claim in claims} == {first.id, independent.id}
+        with factory() as unit:
+            for claim in claims:
+                unit.workflows.complete(claim, result={}, evidence_refs=())
+            unit.commit()
+        with factory() as unit:
+            remaining = unit.workflows.claim_ready(
+                worker_id="worker",
+                lease_until=datetime.now(UTC) + timedelta(seconds=30),
+                limit=4,
+            )
+            unit.commit()
+        assert [claim.run_id for claim in remaining] == [blocked.id]
+    finally:
+        factory._engine.dispose()
+
+
 def test_child_workflow_is_claimed_before_an_older_root_run(tmp_path: Path) -> None:
     factory = _factory(tmp_path / "core.db")
     parent = _run("parent")

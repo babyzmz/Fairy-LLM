@@ -237,6 +237,12 @@
 - Kernel现在使用tenant内UoW提交后Event唤醒，仅匹配Workflow表的实际DML；回滚、读取、幂等重放及其他领域写入不唤醒。关闭时移除订阅；丢失进程内提示以最多5秒持久查询补偿。下次READY时间、租约到期、Run预算期限以数据库聚合计算，心跳不随退避推迟。
 - 同一默认调度器稳态3秒SELECT由失败基线112降到实测0（该窗口内未碰到5秒兜底），新Run提交至Adapter启动0.007秒；不能解释为永不查询，也不是整机CPU测量。Workflow/UoW/Ledger/Assistant控制/Media/Knowledge/Eval合计67项通过（63.33秒），相关Ruff通过。SQLite真实事务与双tenant信号隔离已验；PostgreSQL聚合执行及原生性能仍未验。
 
+### Phase 5B：候选与共享资源边界
+
+- 同一Kernel内资源键必须跨Run冲突，包括同批次和已领取未完成节点；不同资源Run可并发，serial仅约束同Run不与共享资源隔离混淆。双tenant数据和冲突集合隔离。
+- ready候选必须在SQL中限量读取；按Run公平顺序扫描，不因前一Run大量冲突节点挡住其他Run。租约、取消Fence、父节点保留子任务Worker的既有规则不变；多个独立PostgreSQL调度进程的互斥另归真实并发门禁，不由单进程测试推断。
+- 新增两个失败回归确认同一资源在不同Run中会同批次或分批次重复领取。已在现有Run内serial规则之外加入tenant范围共享资源集合；完成后释放，独立资源仍可领取。Workflow/Assistant控制/Media/Knowledge58项通过（61.77秒），Ruff通过。候选SQL限量是下一项，尚未以该测试宣称全局多进程锁完成。
+
 ### Phase 3B：事件提交唤醒与推送验收契约
 
 - 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。

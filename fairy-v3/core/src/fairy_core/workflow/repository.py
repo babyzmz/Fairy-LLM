@@ -315,7 +315,9 @@ class SqlAlchemyWorkflowRepository(
         active_by_run: dict[str, list[tuple[WorkflowConcurrencyPolicy, frozenset[str]]]] = (
             defaultdict(list)
         )
+        active_resource_keys: set[str] = set()
         for active in active_rows:
+            active_resource_keys.update(string_list(active["resource_keys"]))
             active_by_run[str(active["run_id"])].append(
                 (
                     WorkflowConcurrencyPolicy(active["concurrency_policy"]),
@@ -352,12 +354,17 @@ class SqlAlchemyWorkflowRepository(
                 ):
                     next_remaining.append(row)
                     continue
-                if len(active) >= budget_limit or conflicts(policy, keys, active):
+                if (
+                    len(active) >= budget_limit
+                    or conflicts(policy, keys, active)
+                    or bool(keys & active_resource_keys)
+                ):
                     next_remaining.append(row)
                     continue
                 selected.append(row)
                 selected_run_ids.add(run_id)
                 active.append((policy, keys))
+                active_resource_keys.update(keys)
                 selected_child = selected_child or is_child
                 selected_blocking_parent = selected_blocking_parent or is_blocking_parent
                 progress = True
