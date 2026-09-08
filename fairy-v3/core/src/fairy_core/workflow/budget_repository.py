@@ -42,20 +42,25 @@ class WorkflowBudgetRepositoryMixin:
             or next_tool_invocations > run.budget.max_tool_invocations
         ):
             raise WorkflowBudgetExceeded("Workflow execution budget is exhausted")
-        self._connection.execute(
+        reserved = self._connection.execute(
             update(workflow_runs)
             .where(
                 workflow_runs.c.tenant_id == self._tenant_id,
                 workflow_runs.c.id == str(run_id),
-                workflow_runs.c.model_rounds_used == run.model_rounds_used,
-                workflow_runs.c.tool_invocations_used == run.tool_invocations_used,
+                workflow_runs.c.status.not_in(tuple(status.value for status in _TERMINAL)),
+                workflow_runs.c.model_rounds_used + model_rounds
+                <= workflow_runs.c.max_model_rounds,
+                workflow_runs.c.tool_invocations_used + tool_invocations
+                <= workflow_runs.c.max_tool_invocations,
             )
             .values(
-                model_rounds_used=next_model_rounds,
-                tool_invocations_used=next_tool_invocations,
+                model_rounds_used=workflow_runs.c.model_rounds_used + model_rounds,
+                tool_invocations_used=workflow_runs.c.tool_invocations_used + tool_invocations,
                 updated_at=datetime.now(UTC),
             )
         )
+        if reserved.rowcount != 1:
+            raise WorkflowBudgetExceeded("Workflow budget changed before the call was admitted")
         snapshot = self.get(run_id)
         assert snapshot is not None
         return snapshot
