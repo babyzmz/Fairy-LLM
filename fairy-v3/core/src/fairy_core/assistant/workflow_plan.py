@@ -3,6 +3,7 @@ from __future__ import annotations
 from itertools import pairwise
 from uuid import UUID
 
+from fairy_core.assistant.workflow_step_nodes import STEP_ROUTE
 from fairy_core.assistant.workflow_tool_plan import assistant_tool_continuation
 from fairy_core.workflow.models import (
     WorkflowEdge,
@@ -140,6 +141,24 @@ def legacy_assistant_workflow_plan(
     return (prepare, execute), (edge,)
 
 
+def assistant_step_workflow_plan(
+    *, run_id: UUID, revision: int, turn_id: UUID, ready: bool = False,
+) -> tuple[tuple[WorkflowNode, ...], tuple[WorkflowEdge, ...]]:
+    nodes = tuple(
+        WorkflowNode.create(
+            run_id=run_id, plan_revision=revision, node_key=kind, kind=kind,
+            payload={"turn_id": str(turn_id)}, public_summary=summary,
+            ready=ready and index == 0, max_attempts=16,
+            resource_keys=(f"assistant-turn:{turn_id}",),
+        )
+        for index, (kind, summary) in enumerate((
+            (ASSISTANT_REQUEST_INTERPRET_NODE_KIND, "Interpreting the request"),
+            (STEP_ROUTE, "Selecting the governed route"),
+        ))
+    )
+    return nodes, (WorkflowEdge(run_id, revision, nodes[0].id, nodes[1].id),)
+
+
 def apply_pending_assistant_steering(unit_of_work, run_id: UUID) -> bool:
     snapshot = unit_of_work.workflows.get(run_id)
     if snapshot is None:
@@ -155,11 +174,12 @@ def apply_pending_assistant_steering(unit_of_work, run_id: UUID) -> bool:
         raise ValueError("Assistant Workflow has conflicting pending instructions")
     instruction = pending[0]
     next_revision = snapshot.run.active_plan_revision + 1
-    planner = (
-        assistant_workflow_plan
-        if snapshot.run.engine_version >= ASSISTANT_WORKFLOW_ENGINE_VERSION
-        else legacy_assistant_workflow_plan
-    )
+    if snapshot.run.engine_version == 4:
+        planner = assistant_step_workflow_plan
+    elif snapshot.run.engine_version >= ASSISTANT_WORKFLOW_ENGINE_VERSION:
+        planner = assistant_workflow_plan
+    else:
+        planner = legacy_assistant_workflow_plan
     nodes, edges = planner(
         run_id=run_id,
         revision=next_revision,
@@ -191,6 +211,7 @@ __all__ = [
     "ASSISTANT_WORKFLOW_NODE_KIND",
     "ASSISTANT_WORKFLOW_PREPARE_NODE_KIND",
     "apply_pending_assistant_steering",
+    "assistant_step_workflow_plan",
     "assistant_tool_continuation",
     "assistant_workflow_node",
     "assistant_workflow_plan",

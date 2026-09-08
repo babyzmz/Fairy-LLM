@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from fairy_core.domain.errors import IdempotencyConflictError
 from fairy_core.perception.models import ImageAttachment, ImagePersistence
+from fairy_core.perception.tool_images import ToolImageHandoff
 from fairy_core.security.path_guard import PathGuard
 
 
@@ -17,6 +18,7 @@ class ImageAttachmentStore:
         self._root = root.resolve() if root is not None else None
         self._attachments: dict[UUID, tuple[ImageAttachment, ...]] = {}
         self._lock = RLock()
+        self.tool_images = ToolImageHandoff()
 
     def register(
         self,
@@ -53,11 +55,13 @@ class ImageAttachmentStore:
             return self._attachments.get(turn_id, ())
 
     def release(self, turn_id: UUID) -> None:
+        self.tool_images.release(turn_id)
         with self._lock:
             attachments = self._attachments.pop(turn_id, ())
         _zero(attachments)
 
     def close(self) -> None:
+        self.tool_images.close()
         with self._lock:
             values = tuple(self._attachments.values())
             self._attachments.clear()
@@ -73,6 +77,7 @@ class ImageAttachmentStore:
         selected = frozenset(task_ids)
         if not selected:
             return 0
+        self.tool_images.purge_tasks(selected)
         with self._lock:
             released = tuple(
                 self._attachments.pop(turn_id)

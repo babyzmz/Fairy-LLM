@@ -216,6 +216,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         obsidian_connector: ObsidianConnector | None = None,
         browser_service: BrowserService | None = None,
         default_execution_target: str = "local",
+        assistant_workflow_engine_version: int = 3,
         on_close: Callable[[], None] | None = None,
     ) -> None:
         if default_execution_target not in {"local", "cloud"}:
@@ -314,6 +315,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             ),
         )
         self._assistant_ledger = AssistantLedgerApplication(
+            workflow_engine_version=assistant_workflow_engine_version,
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
             registry=registry,

@@ -74,6 +74,7 @@ def build_local_service(
     model_catalog_source: ModelCatalogSource | None = None,
     media_provider: MediaProvider | None = None,
     media_staging_store: MediaStagingStore | None = None,
+    assistant_workflow_engine_version: int = 3,
 ) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
     resources = ExitStack()
@@ -239,6 +240,7 @@ def build_local_service(
         )
         service = CoreService(
             application,
+            assistant_workflow_engine_version=assistant_workflow_engine_version,
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
             provider_registry=provider_registry,

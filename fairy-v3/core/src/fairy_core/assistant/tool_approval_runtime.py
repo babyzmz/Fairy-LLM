@@ -67,6 +67,7 @@ class AssistantToolApprovalMixin:
         cancellation: CancellationToken,
         *,
         invocation_id: UUID | None = None,
+        image_receiver=None,
     ) -> bool:
         cancellation.raise_if_cancelled()
         with self._unit_of_work_factory() as unit_of_work:
@@ -221,7 +222,7 @@ class AssistantToolApprovalMixin:
                 )
             unit_of_work.commit()
 
-        self._execute_running_tool(
+        _, _, _, images = self._execute_running_tool(
             turn_id=turn_id,
             invocation=invocation,
             running=running,
@@ -230,6 +231,12 @@ class AssistantToolApprovalMixin:
             arguments=invocation.arguments,
             cancellation=cancellation,
         )
+        if image_receiver is not None:
+            image_receiver(images)
+        else:
+            from fairy_core.perception.tool_images import zero_images
+
+            zero_images(images)
         return False
 
 

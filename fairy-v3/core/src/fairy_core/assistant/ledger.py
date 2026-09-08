@@ -27,6 +27,7 @@ from fairy_core.assistant.turn_reader import require_turn
 from fairy_core.assistant.workflow_plan import (
     ASSISTANT_WORKFLOW_ENGINE_VERSION,
     apply_pending_assistant_steering,
+    assistant_step_workflow_plan,
     assistant_workflow_plan,
 )
 from fairy_core.commanding.models import CommandStatus, EventVisibility
@@ -64,7 +65,11 @@ class AssistantLedgerApplication:
         registry: ToolRegistry | None = None,
         execution_policy: ExecutionPolicyResolver | None = None,
         execution_target: ExecutionTarget = ExecutionTarget.LOCAL,
+        workflow_engine_version: int = ASSISTANT_WORKFLOW_ENGINE_VERSION,
     ) -> None:
+        if workflow_engine_version not in {3, 4}:
+            raise ValueError("Unsupported new Assistant workflow engine version")
+        self._workflow_engine_version = workflow_engine_version
         self._unit_of_work_factory = unit_of_work_factory
         self._scope_resolver = scope_resolver
         self._knowledge_snapshots = KnowledgeSnapshotBuilder()
@@ -125,7 +130,7 @@ class AssistantLedgerApplication:
                 profile_id=profile_id,
                 idempotency_key=idempotency_key,
                 model_selection=model_selection,
-                execution_engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION,
+                execution_engine_version=self._workflow_engine_version,
             )
             persisted, inserted = unit_of_work.assistant.create_turn_if_absent(turn)
             if not inserted:
@@ -436,7 +441,7 @@ class AssistantLedgerApplication:
                 profile_id=original.profile_id,
                 idempotency_key=normalized_key,
                 model_selection=original.model_selection,
-                execution_engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION,
+                execution_engine_version=self._workflow_engine_version,
             )
             persisted, inserted = unit_of_work.assistant.create_turn_if_absent(retry)
             if not inserted:
@@ -479,20 +484,24 @@ class AssistantLedgerApplication:
             conversation_id=turn.conversation_id,
             task_id=turn.task_id,
             project_id=task.project_id,
-            engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION,
+            engine_version=self._workflow_engine_version,
         )
-        nodes, edges = assistant_workflow_plan(
+        planner = (
+            assistant_step_workflow_plan if self._workflow_engine_version == 4
+            else assistant_workflow_plan
+        )
+        nodes, edges = planner(
             run_id=run.id,
             revision=1,
             turn_id=turn.id,
         )
         unit_of_work.workflows.create(run, nodes=nodes, edges=edges)
         unit_of_work.workflows.request_pause(run.id)
-        turn.bind_workflow(run.id, engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION)
+        turn.bind_workflow(run.id, engine_version=self._workflow_engine_version)
         unit_of_work.assistant.bind_turn_workflow(
             turn.id,
             workflow_run_id=run.id,
-            engine_version=ASSISTANT_WORKFLOW_ENGINE_VERSION,
+            engine_version=self._workflow_engine_version,
         )
 
     @staticmethod

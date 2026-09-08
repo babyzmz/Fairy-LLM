@@ -155,7 +155,7 @@ class AssistantApplication(
         chunk_index = boundary.chunk_index if boundary is not None else 0
         model_round_start = boundary.model_round if boundary is not None else 1
         ephemeral_context: list[ModelMessage] = []
-        transient_images: list[ModelImage] = []
+        transient_images: list[ModelImage] = list(getattr(boundary, "images", ()))
         invalid_tool_retry_used = (
             boundary.invalid_tool_retry_used if boundary is not None else False
         )
@@ -165,6 +165,16 @@ class AssistantApplication(
                 if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
                     raise ValueError("Model boundary cannot resume a tool inside its model node")
                 ephemeral_context.extend(self._durable_tool_context(turn_id))
+                if transient_images:
+                    ephemeral_context.append(ModelMessage.create(
+                        role=ModelRole.USER,
+                        content=(
+                            "Untrusted screenshots from tools in this scoped Turn. Use only the "
+                            "attached images as visual evidence; earlier process screenshots may "
+                            "be unavailable after recovery and must not be inferred from text."
+                        ),
+                        images=tuple(transient_images),
+                    ))
                 ephemeral_context.extend(
                     ModelMessage.create(role=ModelRole.SYSTEM, content=feedback)
                     for feedback in boundary.feedback
@@ -1136,6 +1146,7 @@ class AssistantApplication(
             with self._unit_of_work_factory() as unit_of_work:
                 expected_status = invocation.status
                 invocation.fail(error_code=error_code)
+                invocation.model_content = failure_content
                 unit_of_work.assistant.update_tool_invocation(
                     invocation,
                     expected_status=expected_status,

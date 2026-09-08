@@ -290,11 +290,32 @@ def register_assistant_workflow_adapter(
     application: AssistantApplication,
     ledger: AssistantLedgerApplication,
 ) -> None:
+    from fairy_core.assistant.workflow_step_adapter import AssistantStepWorkflowAdapter
+    from fairy_core.assistant.workflow_step_nodes import (
+        STEP_FINALIZE,
+        STEP_MODEL,
+        STEP_ROUTE,
+        STEP_VERIFY,
+    )
+    from fairy_core.assistant.workflow_tool_plan import (
+        ASSISTANT_STEP_JOIN_KIND,
+        ASSISTANT_STEP_TOOL_KIND,
+    )
+
     adapter = AssistantTurnWorkflowAdapter(application, ledger, unit_of_work_factory)
     adapters.register(ASSISTANT_WORKFLOW_PREPARE_NODE_KIND, adapter)
     adapters.register(ASSISTANT_WORKFLOW_NODE_KIND, adapter)
     for kind in ASSISTANT_CONTINUATION_NODE_KINDS:
         adapters.register(kind, adapter)
+    steps = AssistantStepWorkflowAdapter(application, ledger, unit_of_work_factory, adapter)
+    for kind in (STEP_ROUTE, STEP_MODEL, STEP_VERIFY, STEP_FINALIZE):
+        adapters.register(kind, steps)
+    adapters.register(ASSISTANT_STEP_JOIN_KIND, steps)
+    tool_steps = AssistantStepWorkflowAdapter(application, ledger, unit_of_work_factory, adapter)
+    # Media submission still awaits its domain Run; retain the child-worker reservation
+    # until that domain handoff itself yields instead of blocking.
+    tool_steps.may_wait_for_child_workflow = True
+    adapters.register(ASSISTANT_STEP_TOOL_KIND, tool_steps)
 
 
 def resumable_assistant_turn_ids(ledger: AssistantLedgerApplication) -> tuple[UUID, ...]:

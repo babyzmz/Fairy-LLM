@@ -1070,29 +1070,30 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
         candidate_count: int,
     ) -> None:
         with self._unit_of_work_factory() as unit_of_work:
-            turn = require_turn(unit_of_work, turn_id)
-            expected_status = turn.status
-            expected_revision = turn.cancellation_revision
-            turn.wait_for_tool()
-            unit_of_work.assistant.update_turn(
-                turn,
-                expected_status=expected_status,
-                expected_cancellation_revision=expected_revision,
-            )
-            self._trace.transition_command_step_in_unit(
-                unit_of_work,
-                run=run,
-                kind=TraceStepKind.MODEL,
-                status=TraceStepStatus.SUCCEEDED,
-                public_summary="Tool request prepared",
-            )
-            self._command_bus(unit_of_work.commands).complete(
-                run.id,
-                output={"tool_candidates": candidate_count},
-                lease_owner=run.lease_owner,
-                lease_fence=run.lease_fence,
+            self._wait_for_tools_in_unit(
+                unit_of_work, turn_id=turn_id, run=run, candidate_count=candidate_count,
             )
             unit_of_work.commit()
+
+    def _wait_for_tools_in_unit(
+        self, unit_of_work, *, turn_id: UUID, run: CommandRun, candidate_count: int,
+    ) -> None:
+        turn = require_turn(unit_of_work, turn_id)
+        expected_status = turn.status
+        expected_revision = turn.cancellation_revision
+        turn.wait_for_tool()
+        unit_of_work.assistant.update_turn(
+            turn, expected_status=expected_status,
+            expected_cancellation_revision=expected_revision,
+        )
+        self._trace.transition_command_step_in_unit(
+            unit_of_work, run=run, kind=TraceStepKind.MODEL,
+            status=TraceStepStatus.SUCCEEDED, public_summary="Tool request prepared",
+        )
+        self._command_bus(unit_of_work.commands).complete(
+            run.id, output={"tool_candidates": candidate_count},
+            lease_owner=run.lease_owner, lease_fence=run.lease_fence,
+        )
 
     def _append_route_trace_in_unit(
         self,
