@@ -429,7 +429,7 @@ class AssistantLedgerApplication:
                 raise KeyError(f"Assistant Turn not found: {turn_id}")
             if original.cancellation_pending:
                 raise InvalidTransitionError("The previous operation is still stopping")
-            if original.error_code == "TOOL_RESULT_UNCERTAIN":
+            if original.error_code in {"TOOL_RESULT_UNCERTAIN", "CHANGESET_APPLY_FAILED"}:
                 raise InvalidTransitionError(
                     "Check the actual result before requesting another action; "
                     "an uncertain operation cannot be blindly retried"

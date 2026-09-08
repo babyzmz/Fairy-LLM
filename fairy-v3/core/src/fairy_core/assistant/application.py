@@ -207,6 +207,8 @@ class AssistantApplication(
                         return self._turns.get(turn_id)
                     if approval_state == "rejected":
                         return self._cancel_turn(turn_id, None)
+                    if approval_state == "failed":
+                        return self._fail_turn(turn_id, None, error_code="CHANGESET_APPLY_FAILED")
                     self._resume_after_tools(turn_id)
                     ephemeral_context.extend(self._durable_tool_context(turn_id))
                     model_round_start = self._next_model_round(turn_id)
@@ -593,6 +595,8 @@ class AssistantApplication(
                         return self._turns.get(turn_id)
                     if approval_state == "rejected":
                         return self._cancel_turn(turn_id, None)
+                    if approval_state == "failed":
+                        return self._fail_turn(turn_id, None, error_code="CHANGESET_APPLY_FAILED")
                     if not self._resume_after_tools(turn_id):
                         return self._cancel_turn(turn_id, current_run)
                     current_run = None
@@ -1262,6 +1266,11 @@ class AssistantApplication(
             )
             if changeset_status == "rejected":
                 self._tool_trace.reject_in_unit(unit_of_work, run=running)
+            elif changeset_status == "failed":
+                self._tool_trace.approve_in_unit(unit_of_work, run=running)
+                self._tool_trace.fail_in_unit(
+                    unit_of_work, run=running, error_code="CHANGESET_APPLY_FAILED",
+                )
             elif result.awaiting_approval:
                 self._tool_trace.wait_for_external_approval_in_unit(
                     unit_of_work,

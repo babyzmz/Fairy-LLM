@@ -663,6 +663,10 @@ def _public_failure_detail(error_code: str) -> str:
             "The previous action may already have taken effect. Automatic recovery stopped. "
             "Check the actual result before deciding whether to request another action."
         ),
+        "CHANGESET_APPLY_FAILED": (
+            "File application failed. Some files may have changed. "
+            "Inspect the Workspace before requesting another action."
+        ),
     }.get(error_code, "Fairy could not complete this step.")
 
 

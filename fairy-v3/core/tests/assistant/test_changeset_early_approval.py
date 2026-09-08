@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 
+from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.transports.stdio import build_local_service
 from tests.assistant.support import wait_for_turn
@@ -21,15 +22,23 @@ from tests.assistant.test_model_routing import (
 from tests.assistant.test_steering_changeset_plan import _PROFILE, _call, _classification
 
 
-@pytest.mark.parametrize("approved,hold_apply", [(True, False), (False, False), (True, True)])
+@pytest.mark.parametrize("approved,hold_apply,failure", [
+    (True, False, None), (False, False, None), (True, True, None),
+    (True, False, "before-write"), (True, True, "before-write"),
+    (True, False, "after-write"), (True, True, "after-write"),
+])
 @pytest.mark.parametrize("engine_version", [3, 4])
 def test_early_changeset_decision_converges_receipt_and_trace(
     tmp_path,
     monkeypatch,
     approved,
     hold_apply,
+    failure,
     engine_version,
+    lost_notification=False,
 ):
+    successful = approved and failure is None
+    expected_status = "failed" if failure else "completed" if approved else "cancelled"
     source = tmp_path / "source"
     source.mkdir()
     (source / "README.md").write_text("base", encoding="utf-8")
@@ -90,10 +99,17 @@ def test_early_changeset_decision_converges_receipt_and_trace(
         if hold_apply:
             applying.set()
             assert release_apply.wait(8), "test must release file application"
-        return original_apply(*args, **kwargs)
+        if failure == "before-write":
+            raise OSError("injected private apply error")
+        result = original_apply(*args, **kwargs)
+        if failure == "after-write":
+            raise OSError("injected private post-write error")
+        return result
 
     monkeypatch.setattr(service._application, "propose_changeset", blocked_propose)
     monkeypatch.setattr(service._application._workspaces, "apply_changeset", controlled_apply)
+    if lost_notification:
+        monkeypatch.setattr(service, "_resume_failed_changeset_owner", lambda _approval: None)
     pool = ThreadPoolExecutor(max_workers=1)
     try:
         service.invoke("models.catalog.refresh", {})
@@ -161,37 +177,81 @@ def test_early_changeset_decision_converges_receipt_and_trace(
             assert workflow.status == "waiting_for_approval"
             assert len(provider.requests) == 4
             release_apply.set()
-            decision.result(timeout=6)
+            if failure:
+                with pytest.raises(OSError, match="injected private"):
+                    decision.result(timeout=6)
+            else:
+                decision.result(timeout=6)
         else:
-            decision.result(timeout=6)
+            if failure:
+                with pytest.raises(OSError, match="injected private"):
+                    decision.result(timeout=6)
+            else:
+                decision.result(timeout=6)
             release_receipt.set()
+        if lost_notification:
+            assert failure and hold_apply
+            with service._unit_of_work_factory() as unit:
+                assert unit.assistant.get_turn(UUID(turn["id"])).status == "waiting_for_tool"
+            service.close()
+            service = build_local_service(
+                tmp_path / "data",
+                provider_registry=ProviderRegistry((provider,)),
+                assistant_workflow_engine_version=engine_version,
+                model_catalog_source=PricedCatalogSource(),
+            )
         completed = wait_for_turn(
             service,
             turn["id"],
-            status="completed" if approved else "cancelled",
+            status=expected_status,
             timeout_seconds=6,
         )
-        assert completed["status"] == ("completed" if approved else "cancelled")
+        assert completed["status"] == expected_status
         with service._unit_of_work_factory() as unit:
             invocation = unit.assistant.list_tool_invocations(UUID(turn["id"]))[-1]
             trace = unit.assistant.list_trace_steps(UUID(turn["id"]))
             assert unit.assistant.get_turn(UUID(other["id"])).status == "created"
         receipt = json.loads(invocation.model_content)
-        assert receipt["status"] == ("applied" if approved else "rejected")
+        assert receipt["status"] == ("failed" if failure else "applied" if approved else "rejected")
         assert [
             (step.kind.value, step.status.value)
             for step in trace
             if step.status in {"pending", "running", "waiting"}
         ] == []
         assert len(apply_calls) == int(approved)
-        assert len(provider.requests) == (5 if approved else 4)
+        assert len(provider.requests) == (5 if successful else 4)
         messages = service.invoke("messages.list", {"conversation_id": conversation["id"]})["items"]
-        assert len([item for item in messages if item["role"] == "assistant"]) == int(approved)
+        assert len([item for item in messages if item["role"] == "assistant"]) == int(successful)
         assert (source / "README.md").read_text(encoding="utf-8") == "base"
         managed = Path(context["target_version"]["project_root"]) / "README.md"
-        assert managed.read_text(encoding="utf-8") == ("updated" if approved else "base")
+        assert managed.read_text(encoding="utf-8") == (
+            "updated" if successful or failure == "after-write" else "base"
+        )
+        if failure:
+            assert completed["error_code"] == "CHANGESET_APPLY_FAILED"
+            assert "injected private" not in str(trace) + str(receipt) + str(completed)
+            with service._unit_of_work_factory() as unit:
+                approval = unit.state.get_approval(UUID(approval_id))
+                assert approval.decision == "approved"
+                assert unit.commands.get_run(approval.command_run_id).status == "failed"
+                assert unit.state.get_task(UUID(turn["task_id"])).status == "failed"
+            with pytest.raises(InvalidTransitionError, match="Check the actual result"):
+                service.invoke("assistant.turns.retry", {
+                    "turn_id": turn["id"], "idempotency_key": "unsafe-file-retry",
+                })
     finally:
         release_receipt.set()
         release_apply.set()
         pool.shutdown(wait=True, cancel_futures=True)
         service.close()
+
+
+@pytest.mark.parametrize("engine_version", [3, 4])
+@pytest.mark.parametrize("failure", ["before-write", "after-write"])
+def test_failed_changeset_recovers_after_lost_approval_notification(
+    tmp_path, monkeypatch, engine_version, failure,
+):
+    test_early_changeset_decision_converges_receipt_and_trace(
+        tmp_path, monkeypatch, approved=True, hold_apply=True,
+        failure=failure, engine_version=engine_version, lost_notification=True,
+    )

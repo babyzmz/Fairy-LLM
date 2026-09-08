@@ -76,6 +76,7 @@ from fairy_core.storage.schema import (
     assistant_request_interpretations,
     assistant_tool_invocations,
     assistant_turns,
+    changesets,
     conversation_moves,
     tasks,
     workflow_runs,
@@ -923,7 +924,31 @@ class SqlAlchemyAssistantRepository(
                     resumable_command,
                 )
             ).all()
-        turn_ids = {UUID(str(row[0])) for row in (*tool_rows, *budget_rows)}
+            failed_apply_rows = connection.execute(
+                select(assistant_turns.c.id).join(tasks, and_(
+                    tasks.c.tenant_id == assistant_turns.c.tenant_id,
+                    tasks.c.id == assistant_turns.c.task_id,
+                    tasks.c.conversation_id == assistant_turns.c.conversation_id,
+                )).join(workflow_runs, and_(
+                    workflow_runs.c.tenant_id == assistant_turns.c.tenant_id,
+                    workflow_runs.c.id == assistant_turns.c.workflow_run_id,
+                    workflow_runs.c.owner_id == assistant_turns.c.id,
+                    workflow_runs.c.owner_kind == "assistant_turn",
+                    workflow_runs.c.engine_version == assistant_turns.c.execution_engine_version,
+                )).where(
+                    assistant_turns.c.tenant_id == self._tenant_id,
+                    assistant_turns.c.status == "waiting_for_tool",
+                    tasks.c.status == "failed",
+                    workflow_runs.c.status.in_(("waiting_for_approval", "paused")),
+                    select(changesets.c.id).where(
+                        changesets.c.tenant_id == assistant_turns.c.tenant_id,
+                        changesets.c.task_id == assistant_turns.c.task_id,
+                        changesets.c.conversation_id == assistant_turns.c.conversation_id,
+                        changesets.c.status == "failed",
+                    ).exists(),
+                ),
+            ).all()
+        turn_ids = {UUID(str(row[0])) for row in (*tool_rows, *budget_rows, *failed_apply_rows)}
         return tuple(sorted(turn_ids, key=str))
 
     def resumable_workflow_turn_ids(self) -> tuple[UUID, ...]:

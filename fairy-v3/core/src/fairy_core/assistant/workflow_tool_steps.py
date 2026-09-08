@@ -96,6 +96,10 @@ def execute_tool_step(adapter, node, claim, cancellation, turn):
     approval = adapter._application._changeset_approval_state(turn.id)
     if approval == "waiting":
         raise WorkflowWaitingForApproval(checkpoint)
+    if approval == "failed":
+        from fairy_core.assistant.workflow_adapter import AssistantWorkflowError
+
+        raise AssistantWorkflowError("CHANGESET_APPLY_FAILED")
     if approval == "rejected":
         # The model command completed when publishing the tool graph; this join
         # owns no running model lease and must not borrow another command's lease.

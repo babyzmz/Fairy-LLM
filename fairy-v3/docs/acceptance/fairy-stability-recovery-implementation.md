@@ -36,6 +36,13 @@
 
 ## 执行证据
 
+### Phase 6：审批后的文件应用失败收敛
+
+- 正式复现“文件应用失败但聊天仍等待工具”，以及失败通知丢失后重启仍卡住；原审批决定和实际文件结果保留，节点按失败收敛，不再继续生成成功回复。
+- 启动恢复从持久化的所属 Task/Changeset 失败状态恢复等待节点；不重做文件写入。聊天和 Core retry 同时阻止对可能部分生效的文件操作直接重跑，提示先检查 Workspace。
+- 相关恢复回归 **59通过（91.48秒）**；Core application/service/execution-domain **47通过（29.10秒）**；TypeScript及ChatWorkspace **17项**通过。详见[专项验收](changeset-approval-failure.md)。
+- 下一项为复合任务的逐objective执行与可信完成边界；本记录不将其提前标记完成。
+
 ### Phase 6：显式修订后的工具身份与媒体配额
 
 - 已复现并修复同参 `execution.plan` 在 Steering 新版本撞上 Turn 级唯一约束的问题。

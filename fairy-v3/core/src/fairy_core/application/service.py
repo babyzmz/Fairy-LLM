@@ -1178,11 +1178,15 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         assistant_turn_id = self._assistant_turn_id_for_approval(approval)
         changeset = None
         if approval.changeset_id is not None:
-            changeset = self._application.decide_approval(
-                approval_id=validated.approval_id,
-                approved=validated.approved,
-                decided_by="user",
-            )
+            try:
+                changeset = self._application.decide_approval(
+                    approval_id=validated.approval_id,
+                    approved=validated.approved,
+                    decided_by="user",
+                )
+            except Exception:
+                self._resume_failed_changeset_owner(approval)
+                raise
         else:
             self._application.record_approval_decision(
                 approval_id=validated.approval_id,
@@ -1235,6 +1239,25 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             "assistant_turn_id": assistant_turn_id,
             "resume_requested": assistant_turn_id is not None,
         }
+
+    def _resume_failed_changeset_owner(self, original: Approval) -> None:
+        with self._unit_of_work_factory() as unit:
+            approval = unit.state.get_approval(original.id)
+            changeset = unit.state.get_changeset(original.changeset_id)
+            command = unit.commands.get_run(original.command_run_id)
+            if (
+                approval is None or approval.decision is not ApprovalDecision.APPROVED
+                or changeset is None or changeset.status is not ChangesetStatus.FAILED
+                or changeset.task_id != original.task_id
+                or command is None or command.status is not CommandStatus.FAILED
+                or command.command_name != "edit.apply_changeset"
+                or command.task_id != changeset.task_id
+                or command.conversation_id != changeset.conversation_id
+            ):
+                return
+            invocation = self._changeset_tool_invocation(unit, approval)
+        if invocation is not None:
+            self._assistant_scheduler.start(invocation.turn_id, restart_if_running=True)
 
     @staticmethod
     def _changeset_tool_invocation(unit_of_work, approval: Approval):

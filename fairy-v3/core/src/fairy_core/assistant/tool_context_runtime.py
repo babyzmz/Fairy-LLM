@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fairy_core.assistant.candidates import ToolCandidate
+from fairy_core.assistant.changeset_receipts import reconcile_failed_changeset_receipts
 from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.durable_context import durable_tool_context
 from fairy_core.assistant.models import (
@@ -62,10 +63,20 @@ class AssistantToolContextMixin:
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
             task = require_task(unit_of_work, turn.task_id)
+            changesets = unit_of_work.state.changesets_for_task(turn.task_id)
+            failed_ids = {
+                item.id for item in changesets if item.status is ChangesetStatus.FAILED
+            }
+            if task.status is TaskStatus.FAILED and failed_ids:
+                reconcile_failed_changeset_receipts(
+                    unit_of_work, turn, failed_ids, self._tool_trace,
+                )
+                unit_of_work.commit()
+                return "failed"
             if any(changeset.status in {
                 ChangesetStatus.PROPOSED, ChangesetStatus.AWAITING_APPROVAL,
                 ChangesetStatus.APPLYING,
-            } for changeset in unit_of_work.state.changesets_for_task(turn.task_id)):
+            } for changeset in changesets):
                 return "waiting"
         if task.status is TaskStatus.AWAITING_APPROVAL:
             return "waiting"
