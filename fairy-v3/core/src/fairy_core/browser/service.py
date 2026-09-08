@@ -6,10 +6,11 @@ import hashlib
 import ipaddress
 import json
 import socket
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import RLock
+from time import monotonic
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -25,6 +26,7 @@ from fairy_core.assistant.tools import (
     ToolExecutor,
     ToolResult,
 )
+from fairy_core.browser.resources import ActivityProbe, BrowserResources, resource_operation
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.contracts.browser import (
     BrowserActionInput,
@@ -60,6 +62,7 @@ class BrowserService:
         worker: BrowserWorker | None,
         state_path: Path,
         profile_root: Path,
+        clock: Callable[[], float] = monotonic,
     ) -> None:
         self._worker = worker
         self._state_path = state_path
@@ -69,6 +72,49 @@ class BrowserService:
         self._idempotency: dict[str, UUID] = {}
         self._worker_generation = self._current_worker_generation()
         self._load_interrupted_state()
+        self._resources = BrowserResources(
+            sessions=self._resource_sessions,
+            suspend=self._suspend_for_resources,
+            clock=clock,
+        )
+
+    def configure_activity_probe(self, probe: ActivityProbe, *, maintenance: bool = True) -> None:
+        self._resources.configure_activity(probe, maintenance=maintenance)
+
+    def reap_idle_resources(self) -> None:
+        self._resources.reap_idle()
+
+    def close(self) -> None:
+        self._resources.request_stop()
+        try:
+            close_worker = getattr(self._worker, "close", None)
+            if callable(close_worker):
+                close_worker()
+        finally:
+            self._resources.close()
+
+    def _resource_sessions(self) -> tuple[BrowserSessionModel, ...]:
+        with self._lock:
+            return tuple(self._sessions.values())
+
+    def _suspend_for_resources(self, session_id: UUID) -> None:
+        previous = self.get(session_id)
+        result = self._required_worker().call(
+            "browser.sessions.stop", {"session_id": str(session_id)}
+        )
+        if result.get("status") != "stopped" or result.get("tabs"):
+            raise RuntimeError("Browser Worker did not confirm resource release")
+        with self._lock:
+            self._sessions[session_id] = previous.model_copy(
+                update={
+                    "status": BrowserSessionStatus.SUSPENDED,
+                    "revision": previous.revision + 1,
+                    "updated_at": datetime.now(UTC),
+                    "error_code": None,
+                    "public_error": None,
+                }
+            )
+            self._save()
 
     @property
     def handlers(self) -> Mapping[str, object]:
@@ -108,6 +154,7 @@ class BrowserService:
                 diagnostic=str(error)[:500],
             )
 
+    @resource_operation
     def start(self, request: BrowserSessionStartInput) -> BrowserSessionModel:
         if request.execution_target.value != "local":
             raise ToolExecutionUnavailableError("Cloud browser sessions require an OCI worker")
@@ -117,6 +164,8 @@ class BrowserService:
             existing_id = self._idempotency.get(request.idempotency_key)
             if existing_id is not None:
                 return self._sessions[existing_id]
+        self._resources.ensure_capacity(sessions=1, tabs=1)
+        with self._lock:
             session_id = uuid4()
             now = datetime.now(UTC)
             session = BrowserSessionModel(
@@ -177,10 +226,14 @@ class BrowserService:
             items=tuple(sorted(items, key=lambda item: item.updated_at, reverse=True))
         )
 
+    @resource_operation
     def stop(self, session_id: UUID) -> BrowserSessionModel:
         session = self.get(session_id)
         if session.status in {BrowserSessionStatus.STOPPED, BrowserSessionStatus.FAILED}:
             return session
+        if session.status is BrowserSessionStatus.SUSPENDED:
+            # Resource suspension already confirmed physical release in the Worker.
+            return self._replace_from_worker(session_id, {"status": "stopped", "tabs": []})
         worker = self._required_worker()
         try:
             result = worker.call("browser.sessions.stop", {"session_id": str(session_id)})
@@ -188,6 +241,7 @@ class BrowserService:
         except Exception as error:
             return self._fail(session_id, error)
 
+    @resource_operation
     def resume(self, session_id: UUID) -> BrowserSessionModel:
         session = self.get(session_id)
         if session.status is BrowserSessionStatus.ACTIVE:
@@ -229,17 +283,23 @@ class BrowserService:
                 )
         return resumed
 
+    @resource_operation
     def open_tab(self, request: BrowserTabOpenInput) -> BrowserSessionModel:
+        url = _validated_url(request.url)
+        if self.get(request.session_id).status is not BrowserSessionStatus.ACTIVE:
+            raise ToolExecutionUnavailableError("Resume the Browser session before opening a tab")
+        self._resources.ensure_capacity(tabs=1, protect=request.session_id)
         try:
             result = self._required_worker().call(
                 "browser.tabs.open",
-                {"session_id": str(request.session_id), "url": _validated_url(request.url)},
+                {"session_id": str(request.session_id), "url": url},
             )
             return self._replace_from_worker(request.session_id, result)
         except Exception as error:
             self._interrupt_on_worker_failure(request.session_id, error)
             raise
 
+    @resource_operation
     def select_tab(self, request: BrowserTabIdInput) -> BrowserSessionModel:
         try:
             result = self._required_worker().call(
@@ -251,6 +311,7 @@ class BrowserService:
             self._interrupt_on_worker_failure(request.session_id, error)
             raise
 
+    @resource_operation
     def close_tab(self, request: BrowserTabIdInput) -> BrowserSessionModel:
         try:
             result = self._required_worker().call(
@@ -262,6 +323,7 @@ class BrowserService:
             self._interrupt_on_worker_failure(request.session_id, error)
             raise
 
+    @resource_operation
     def execute(self, request: BrowserActionInput) -> BrowserActionResultModel:
         try:
             params = request.model_dump(mode="json")
@@ -305,6 +367,7 @@ class BrowserService:
             self._interrupt_on_worker_failure(request.session_id, error)
             raise
 
+    @resource_operation
     def snapshot(self, request: BrowserSnapshotInput) -> BrowserSnapshotModel:
         try:
             result = self._required_worker().call(
@@ -314,6 +377,7 @@ class BrowserService:
             if snapshot.session_id != request.session_id or snapshot.tab_id != request.tab_id:
                 raise ValueError("Browser Worker returned an out-of-scope snapshot")
             self._merge_snapshot(snapshot)
+            self._resources.touch(request.session_id)
             return snapshot
         except Exception as error:
             self._interrupt_on_worker_failure(request.session_id, error)
@@ -369,11 +433,12 @@ class BrowserService:
             )
             self._sessions[session_id] = session
             self._save()
-            return session
+        self._resources.touch(session_id)
+        return session
 
     def _interrupt_on_worker_failure(self, session_id: UUID, error: Exception) -> None:
         error_code = getattr(error, "error_code", None)
-        if error_code in {None, "WORKER_INTERRUPTED"}:
+        if error_code in {None, "WORKER_INTERRUPTED", "WORKER_TIMEOUT"}:
             self._fail(session_id, error)
 
     def _merge_snapshot(self, snapshot: BrowserSnapshotModel) -> None:

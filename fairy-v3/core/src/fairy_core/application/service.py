@@ -46,6 +46,7 @@ from fairy_core.assistant.trace_service import TurnTraceService
 from fairy_core.assistant.turn_scheduler import AssistantTurnScheduler
 from fairy_core.assistant.turn_selection import resolve_turn_model_source
 from fairy_core.browser import BrowserService, BrowserToolExecutor, browser_service_handlers
+from fairy_core.browser.activity import BrowserTaskActivityProbe
 from fairy_core.commanding.local_device_bus import LocalDeviceCommandBus
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
@@ -322,6 +323,8 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         self._turn_trace_service = TurnTraceService(unit_of_work_factory)
         self._turn_trace_runtime = TurnTraceRuntime(unit_of_work_factory)
         self._browser_service = browser_service
+        if browser_service is not None:
+            browser_service.configure_activity_probe(BrowserTaskActivityProbe(unit_of_work_factory))
         self._execution_planning = application.execution_planning
         self._workflow_adapters = WorkflowAdapterRegistry()
         self._workflow_scheduler = WorkflowScheduler(
@@ -637,6 +640,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
         if self._media_scheduler is not None:
             self._media_scheduler.close()
         close_resources(
+            self._browser_service,
             self._image_attachments,
             self._model_catalog_service,
             self._provider_registry,
