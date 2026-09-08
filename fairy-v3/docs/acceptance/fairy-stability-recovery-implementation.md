@@ -251,6 +251,10 @@
 - 使用1千/1万/10万条真实SQLite历史验证上下文读取SQL固定、返回顺序相同；双聊天、双tenant、导入消息、内部消息排除和关闭重开分别覆盖。这里只验证数据库读取量，不将其等同于端到端模型延迟。
 - Workspace Task查询随后按当前聊天/项目作用域和游标分页接线，跨聊天通知定位不能依赖全量Task缓存；不改Line Sidebar、草稿或Inspector保存策略。
 - 原1千/1万/10万记录回归分别复现18/180/1800次SELECT；新路径在三种规模均为2次有LIMIT查询，最多各解码40条原生/导入消息后合并。双聊天、双tenant及导入消息重开保持原内容/顺序；近期历史、Repository、Context、Tool Dispatch共39项通过（24.82秒），Ruff通过。未修改公开分页或历史消息，不以该测试宣称Workspace全量Task读取已解决。
+- Task前端接线约束：只读取活动聊天第一页，项目Timeline显式加载更早任务；当前/选中Task可按ID补读并检查Conversation。删除/归档提示不得依赖不完整分页缓存，改为操作时按目标作用域读取真实活动数；加载或失败期间不可确认，但可取消。跨聊天通知直接解析目标Conversation/Turn，不再等待全量Task缓存。旧聊天迟到结果不得覆盖新聊天，任务加载不阻塞History。
+- 已接入当前会话每页100条、Timeline显式加载与所需Task补读；query key和结果均检查Conversation，历史Loading不再依赖Task。新增App失败回归先确认无作用域全量请求和慢Task阻塞History，修复后通过。通知按Conversation/Turn直接定位，连续通知、更换聊天/项目及迟到失败均由generation抑制，不把旧错误写入新页面。
+- 删除/归档改为打开确认框后读取目标范围所有分页的活动数，分页不前进或读取失败不允许确认，取消仍可用。原删除测试增强为异步活动数断言，原归档测试等检查完成后点击（新增产品安全契约），没有降低后端生命周期保护。
+- TypeScript通过；定向65项通过（13.00秒），完整Desktop111文件660项通过（73.68秒）；聊天/History Playwright16项通过（27.8秒），含880×680、640×700、Line Sidebar、计划卡、审批恢复、澄清和Reduced Motion。RPC边界仍为受控夹具，真实Core/native联动待联合门禁；已确认测试Node退出，仅保留原先5个Codex Node进程。
 
 ### Phase 5D：后台列表批量投影
 

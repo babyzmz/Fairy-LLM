@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceShell } from "./WorkspaceShell";
@@ -519,12 +519,19 @@ describe("WorkspaceShell", () => {
       created_at: "2026-07-12T00:00:00Z",
       updated_at: "2026-07-12T00:00:00Z",
     };
-    const model = { ...workspaceModel(), chatConversations: [chat] };
+    let resolveCount!: (value: number) => void;
+    const loadHistoryActiveTaskCount = vi.fn(() => new Promise<number>((resolve) => { resolveCount = resolve; }));
+    const model = { ...workspaceModel(), chatConversations: [chat], loadHistoryActiveTaskCount };
     render(<WorkspaceShell model={model} />);
 
     fireEvent.contextMenu(screen.getByTitle("Research notes"));
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent("synchronization tombstone");
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    await waitFor(() => expect(loadHistoryActiveTaskCount).toHaveBeenCalledWith({ conversationId: chat.id }));
+    await act(async () => resolveCount(2));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("2 active execution");
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(model.deleteConversation).toHaveBeenCalledWith(chat));
@@ -585,6 +592,7 @@ describe("WorkspaceShell", () => {
     expect(screen.getByRole("menuitem", { name: "Archive" })).toBeVisible();
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
     expect(screen.getByRole("dialog", { name: "Archive project" })).toHaveTextContent("1 chat");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Archive" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Archive" }));
 
     await waitFor(() => expect(model.archiveProject).toHaveBeenCalledWith(project));
@@ -1057,6 +1065,11 @@ function workspaceModel(): WorkspaceModel {
     chatConversations: [],
     tasks: [],
     allTasks: [],
+    tasksLoading: false,
+    tasksHasMore: false,
+    tasksLoadingMore: false,
+    loadMoreTasks: vi.fn(async () => undefined),
+    loadHistoryActiveTaskCount: vi.fn(async () => 0),
     versions: [],
     approvals: [],
     chatApprovals: [],

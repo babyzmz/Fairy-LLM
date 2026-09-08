@@ -7,6 +7,10 @@ import type { Approval, AssistantTurn, EventEnvelope, Task, TurnTrace } from "..
 interface TaskTimelineProps {
   task: Task | null;
   tasks: Task[];
+  tasksLoading?: boolean;
+  tasksHasMore?: boolean;
+  tasksLoadingMore?: boolean;
+  onLoadMoreTasks?(): Promise<void>;
   events: EventEnvelope[];
   approvals: Approval[];
   turn: AssistantTurn | null;
@@ -24,6 +28,10 @@ interface TaskTimelineProps {
 export function TaskTimeline({
   task,
   tasks,
+  tasksLoading = false,
+  tasksHasMore = false,
+  tasksLoadingMore = false,
+  onLoadMoreTasks,
   events,
   approvals,
   turn,
@@ -70,10 +78,16 @@ export function TaskTimeline({
         ) : null}
       </div>
 
+      {tasksHasMore ? (
+        <button className="secondary-command" type="button" disabled={tasksLoadingMore}
+          onClick={() => { if (onLoadMoreTasks) settle(onLoadMoreTasks()); }}>
+          {tasksLoadingMore ? "Loading older tasks..." : "Load older tasks"}
+        </button>
+      ) : null}
       {task === null ? (
         <div className="pane-empty" role="status">
           <Clock3 size={22} />
-          <strong>No task selected</strong>
+          <strong>{tasksLoading ? "Loading tasks..." : "No task selected"}</strong>
         </div>
       ) : (
         <>

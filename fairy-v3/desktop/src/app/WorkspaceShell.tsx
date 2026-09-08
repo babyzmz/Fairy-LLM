@@ -174,6 +174,10 @@ export function WorkspaceShell({ model, preferences, fairyEyeActive = true, visi
               <TaskTimeline
                 task={model.selectedTask}
                 tasks={model.tasks}
+                tasksLoading={model.tasksLoading}
+                tasksHasMore={model.tasksHasMore}
+                tasksLoadingMore={model.tasksLoadingMore}
+                onLoadMoreTasks={model.loadMoreTasks}
                 events={model.events}
                 approvals={model.approvals}
                 turn={model.projectTurn}

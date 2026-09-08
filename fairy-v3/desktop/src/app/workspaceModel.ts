@@ -29,10 +29,10 @@ import { previewStartIdempotencyKey } from "./workspacePreviewActions";
 import { usePreviewActivation } from "./usePreviewActivation";
 import { useAssistantScheduling } from "./useAssistantScheduling";
 import { useWorkspacePermissions } from "./useWorkspacePermissions";
+import { countHistoryActiveTasks, useWorkspaceTasks, type HistoryTaskScope } from "./workspaceTaskQueries";
 import { useWorkspaceKnowledge } from "./workspaceKnowledgeModel";
 import { useWorkspaceBrowser } from "./workspaceBrowserModel";
 import {
-  collectCursorPages,
   createWorkspaceHistoryActions,
   projectOverviewSelection,
   sortHistoryItems,
@@ -147,13 +147,17 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     modelController.selection,
   );
 
-  const tasksQuery = useQuery({
-    queryKey: [...workspaceKey, "tasks"],
-    queryFn: () => collectCursorPages((cursor) => client.tasks.list({ limit: 100, cursor })),
-    enabled: healthQuery.isSuccess,
-    retry: false,
-  });
-  const allTasks = tasksQuery.data?.items ?? [];
+  const tasksQuery = useWorkspaceTasks(
+    client, healthQuery.isSuccess,
+    (mode === "chat" ? selectedChatConversation : selectedConversation)?.id ?? null,
+    mode === "chat"
+      ? [chatTaskId, selectedChatConversation?.active_task_id ?? null]
+      : [taskSelection, projectTurnTaskId, selectedConversation?.active_task_id ?? null],
+  );
+  const allTasks = tasksQuery.items;
+  const loadHistoryActiveTaskCount = useCallback(
+    (scope: HistoryTaskScope) => countHistoryActiveTasks(client, scope), [client],
+  );
   const tasks = allTasks.filter((task) => task.conversation_id === selectedConversation?.id);
   const requestedProjectTask = selectedItem(tasks, taskSelection);
   const chatTasks = allTasks.filter((task) => task.conversation_id === selectedChatConversation?.id);
@@ -487,10 +491,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     client,
     enabled: healthQuery.isSuccess && mode === "chat",
     currentConversationId: selectedChatConversation?.id ?? null,
+    navigationScopeKey: `${mode}:${projectSelection}:${conversationSelection}:${chatConversationSelection}`,
     selectedProfileId,
     modelSelection: modelController.selection,
-    allConversations,
-    allTasks,
     runAction,
     invalidateHistory,
     setMode,
@@ -868,9 +871,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   );
   const historyLoading =
     healthQuery.isSuccess &&
-    (projectsQuery.isPending ||
-      conversationsQuery.isPending ||
-      tasksQuery.isPending);
+    (projectsQuery.isPending || conversationsQuery.isPending);
   const isWorkspaceLoading =
     healthQuery.isPending ||
     (healthQuery.isSuccess && permissionsQuery.isPending) ||
@@ -932,6 +933,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     chatConversations,
     tasks,
     allTasks,
+    tasksLoading: tasksQuery.loading,
+    tasksHasMore: tasksQuery.hasMore,
+    tasksLoadingMore: tasksQuery.loadingMore,
+    loadMoreTasks: tasksQuery.loadMore,
+    loadHistoryActiveTaskCount,
     versions,
     approvals,
     chatApprovals,

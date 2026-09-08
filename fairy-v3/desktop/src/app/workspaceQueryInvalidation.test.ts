@@ -40,6 +40,10 @@ describe("workspace query invalidation", () => {
     expect(matches(batch, ["workspace", "project-messages", "conversation-a"])).toBe(true);
     expect(matches(batch, ["workspace", "messages", "conversation-b"])).toBe(false);
     expect(matches(batch, ["workspace", "tasks"])).toBe(true);
+    expect(matches(batch, ["workspace", "tasks", "conversation-a"])).toBe(true);
+    expect(matches(batch, ["workspace", "tasks", "conversation-b"])).toBe(false);
+    expect(matches(batch, ["workspace", "task-detail", "conversation-a", "task-a"])).toBe(true);
+    expect(matches(batch, ["workspace", "task-detail", "conversation-b", "task-b"])).toBe(false);
     expect(matches(batch, ["workspace", "turn-trace", "turn-a"])).toBe(true);
     expect(matches(batch, ["workspace", "conversations"])).toBe(true);
     expect(matches(batch, ["workspace", "providers"])).toBe(false);

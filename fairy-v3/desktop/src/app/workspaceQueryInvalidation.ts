@@ -216,7 +216,9 @@ export function workspaceQueryMatchesInvalidation(
   if (batch.domains.has("realtimeTranscript") && kind === "realtime-transcript") {
     return scopeMatches(keyPart(queryKey, 2), batch.conversationIds);
   }
-  if (batch.domains.has("tasks") && kind === "tasks") return true;
+  if (batch.domains.has("tasks") && ["tasks", "task-detail"].includes(kind)) {
+    return scopeMatches(keyPart(queryKey, 2), batch.conversationIds);
+  }
   if (batch.domains.has("traces") && kind === "turn-trace") {
     return scopeMatches(keyPart(queryKey, 2), batch.turnIds);
   }

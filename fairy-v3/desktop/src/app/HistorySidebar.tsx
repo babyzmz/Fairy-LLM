@@ -22,7 +22,7 @@ import {
   SubmenuTrigger,
 } from "react-aria-components";
 
-import type { Conversation, Project, Task } from "../core/client";
+import type { Conversation, Project } from "../core/client";
 import { ActionDialog } from "../ui/ActionDialog";
 import type { WorkspaceModel } from "./workspaceModel";
 import "./history-sidebar.css";
@@ -51,6 +51,23 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
   const [expandedProjects, setExpandedProjects] = usePersistedProjectExpansion();
   const [menu, setMenu] = useState<MenuTarget | null>(null);
   const [action, setAction] = useState<HistoryAction | null>(null);
+  const [taskCheck, setTaskCheck] = useState<{ action: HistoryAction; count: number | null; failed: boolean } | null>(null);
+  const requiresTaskCheck = action !== null && ["delete-conversation", "delete-project", "archive-project"].includes(action.kind);
+  const currentTaskCheck = taskCheck?.action === action ? taskCheck : null;
+  const loadTaskCount = model.loadHistoryActiveTaskCount;
+  useEffect(() => {
+    if (!requiresTaskCheck || action === null) return;
+    let active = true;
+    const scope = action.kind === "delete-conversation"
+      ? { conversationId: action.conversation.id }
+      : "project" in action ? { projectId: action.project.id } : null;
+    if (scope === null) return;
+    void loadTaskCount(scope).then(
+      (count) => { if (active) setTaskCheck({ action, count, failed: false }); },
+      () => { if (active) setTaskCheck({ action, count: null, failed: true }); },
+    );
+    return () => { active = false; };
+  }, [action, requiresTaskCheck, loadTaskCount]);
   const [sidebarWidth, setSidebarWidth] = usePersistedSidebarWidth();
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
@@ -191,9 +208,13 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
         <ActionDialog
           open
           busy={model.isActing}
+          confirmBlocked={requiresTaskCheck && currentTaskCheck?.count == null}
           destructive={action.kind.startsWith("delete-")}
           title={historyActionTitle(action)}
-          description={historyActionDescription(model, action)}
+          description={historyActionDescription(model, action, currentTaskCheck?.count ?? 0)
+            + (requiresTaskCheck && currentTaskCheck?.count == null
+              ? currentTaskCheck?.failed ? " Could not check active tasks. Cancel and reopen to retry."
+                : " Checking active tasks..." : "")}
           confirmLabel={historyActionConfirmLabel(action)}
           inputLabel={action.kind.startsWith("rename-") ? "Title" : undefined}
           initialValue={
@@ -584,18 +605,16 @@ function historyActionTitle(action: HistoryAction) {
   }
 }
 
-function historyActionDescription(model: WorkspaceModel, action: HistoryAction) {
+function historyActionDescription(model: WorkspaceModel, action: HistoryAction, active: number) {
   if (action.kind === "rename-project") return `Choose a new name for “${action.project.name}”.`;
   if (action.kind === "rename-conversation") return `Choose a new title for “${action.conversation.title}”.`;
   if (action.kind === "move-conversation") {
     return `Copy “${action.conversation.title}” and its Workspace into ${action.project.name}, then move the source chat to Recently deleted.`;
   }
   if (action.kind === "delete-conversation") {
-    const active = activeTaskCount(model, [action.conversation.id]);
     return `Move “${action.conversation.title}” to Recently deleted. Its synchronization tombstone and audit provenance remain durable.${active > 0 ? ` ${active} active execution must finish or be cancelled first.` : " You can restore it from Settings."}`;
   }
   const conversations = conversationsFor(model, action.project);
-  const active = activeTaskCount(model, conversations.map((conversation) => conversation.id));
   if (action.kind === "archive-project") {
     return `Archive “${action.project.name}” with ${conversations.length} chat${conversations.length === 1 ? "" : "s"}.${active > 0 ? ` ${active} active execution must finish before archiving.` : " Restore it from Settings → General → Project management."}`;
   }
@@ -636,15 +655,6 @@ function conversationsFor(model: WorkspaceModel, project: Project) {
 function projectMatches(model: WorkspaceModel, project: Project, query: string) {
   if (!query || matches(project.name, query)) return true;
   return conversationsFor(model, project).some((conversation) => matches(conversation.title, query));
-}
-
-function activeTaskCount(model: WorkspaceModel, conversationIds: string[]) {
-  const ids = new Set(conversationIds);
-  return model.allTasks.filter((task) => ids.has(task.conversation_id) && !terminalTask(task)).length;
-}
-
-function terminalTask(task: Task) {
-  return ["ready", "accepted", "rejected", "archived", "failed"].includes(task.status);
 }
 
 function matches(value: string, query: string) {

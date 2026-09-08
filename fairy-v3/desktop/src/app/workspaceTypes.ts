@@ -150,6 +150,11 @@ export interface WorkspaceModel {
   chatConversations: Conversation[];
   tasks: Task[];
   allTasks: Task[];
+  tasksLoading: boolean;
+  tasksHasMore: boolean;
+  tasksLoadingMore: boolean;
+  loadMoreTasks(): Promise<void>;
+  loadHistoryActiveTaskCount(scope: { conversationId: string } | { projectId: string }): Promise<number>;
   versions: Version[];
   approvals: Approval[];
   chatApprovals: Approval[];

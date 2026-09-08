@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ScheduleRuleDraft } from "../chat/scheduleRules";
 import type { ChatTimelineTarget } from "../chat/timelineTarget";
@@ -7,9 +7,7 @@ import type {
   AssistantBackgroundTask,
   AssistantBackgroundTaskPage,
   AssistantSchedule,
-  Conversation,
   ModelSelectionPreference,
-  Task,
 } from "../core/client";
 import type {
   BackgroundTaskAction,
@@ -25,10 +23,9 @@ interface AssistantSchedulingInput {
   client: WorkspaceClient;
   enabled: boolean;
   currentConversationId: string | null;
+  navigationScopeKey: string;
   selectedProfileId: string | null;
   modelSelection: ModelSelectionPreference | null;
-  allConversations: Conversation[];
-  allTasks: Task[];
   runAction: RunAction;
   invalidateHistory(): Promise<void>;
   setMode(value: WorkspaceMode): void;
@@ -50,10 +47,9 @@ export function useAssistantScheduling({
   client,
   enabled,
   currentConversationId,
+  navigationScopeKey,
   selectedProfileId,
   modelSelection,
-  allConversations,
-  allTasks,
   runAction,
   invalidateHistory,
   setMode,
@@ -65,10 +61,11 @@ export function useAssistantScheduling({
 }: AssistantSchedulingInput) {
   const queryClient = useQueryClient();
   const [chatTimelineTarget, setChatTimelineTarget] = useState<ChatTimelineTarget | null>(null);
-  const [pendingLocation, setPendingLocation] = useState<{
-    conversationId: string;
-    turnId: string | null;
-  } | null>(null);
+  const navigationGeneration = useRef(0);
+  useEffect(() => {
+    navigationGeneration.current += 1;
+    return () => { navigationGeneration.current += 1; };
+  }, [currentConversationId, navigationScopeKey]);
   const backgroundTasksQuery = useQuery({
     queryKey: [...workspaceKey, "background-tasks", currentConversationId],
     queryFn: () => client.assistant.backgroundTasks.list(currentConversationId),
@@ -222,46 +219,42 @@ export function useAssistantScheduling({
 
   const openBackgroundTaskLocation = useCallback(
     (conversationId: string, turnId: string | null) => {
-      setPendingLocation({ conversationId, turnId });
-      void invalidateHistory();
+      const generation = ++navigationGeneration.current;
+      void runAction(async () => {
+        try {
+        const conversation = await client.conversations.get(conversationId);
+        if (generation !== navigationGeneration.current) return;
+        if (conversation.id !== conversationId || conversation.deleted_at !== null || conversation.purged_at !== null) {
+          throw new Error("Background task conversation is no longer available.");
+        }
+        let taskId = conversation.active_task_id;
+        if (turnId !== null) {
+          const turn = await client.assistant.turns.get(turnId);
+          if (generation !== navigationGeneration.current) return;
+          if (turn.conversation_id !== conversationId) throw new Error("Background task scope changed.");
+          taskId = turn.task_id;
+        }
+        await invalidateHistory();
+        if (generation !== navigationGeneration.current) return;
+        if (conversation.project_id !== null) {
+          setMode("project");
+          setProjectSelection(conversation.project_id);
+          setConversationSelection(conversation.id);
+          setTaskSelection(taskId);
+        } else {
+          setChatTimelineTarget({ key: crypto.randomUUID(), scheduleId: null, turnId });
+          setMode("chat");
+          setChatConversationSelection(conversation.id);
+          setChatTaskId(taskId);
+        }
+        } catch (error) {
+          if (generation === navigationGeneration.current) throw error;
+        }
+      }).catch(() => undefined);
     },
-    [invalidateHistory],
+    [client, invalidateHistory, runAction, setMode, setProjectSelection,
+      setConversationSelection, setTaskSelection, setChatConversationSelection, setChatTaskId],
   );
-
-  useEffect(() => {
-    if (pendingLocation === null) return;
-    const { conversationId, turnId } = pendingLocation;
-    const conversation = allConversations.find((item) => item.id === conversationId);
-    if (conversation === undefined) return;
-    const conversationTasks = allTasks.filter((task) => task.conversation_id === conversationId);
-    const targetTask = conversationTasks.find(
-      (task) => task.id === conversation.active_task_id,
-    ) ?? [...conversationTasks]
-      .sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0] ?? null;
-    if (conversation.project_id !== null) {
-      setMode("project");
-      setProjectSelection(conversation.project_id);
-      setConversationSelection(conversation.id);
-      setTaskSelection(targetTask?.id ?? null);
-      setPendingLocation(null);
-      return;
-    }
-    setChatTimelineTarget({ key: crypto.randomUUID(), scheduleId: null, turnId });
-    setMode("chat");
-    setChatConversationSelection(conversation.id);
-    setChatTaskId(targetTask?.id ?? null);
-    setPendingLocation(null);
-  }, [
-    allConversations,
-    allTasks,
-    pendingLocation,
-    setChatConversationSelection,
-    setChatTaskId,
-    setConversationSelection,
-    setMode,
-    setProjectSelection,
-    setTaskSelection,
-  ]);
 
   return {
     backgroundTasks: backgroundTasksQuery.data ?? EMPTY_BACKGROUND_TASKS,

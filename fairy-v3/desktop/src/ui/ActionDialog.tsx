@@ -11,6 +11,7 @@ interface ActionDialogProps {
   cancelLabel?: string;
   destructive?: boolean;
   busy?: boolean;
+  confirmBlocked?: boolean;
   inputLabel?: string;
   initialValue?: string;
   onCancel(): void;
@@ -25,6 +26,7 @@ export function ActionDialog({
   cancelLabel = "Cancel",
   destructive = false,
   busy = false,
+  confirmBlocked = false,
   inputLabel,
   initialValue = "",
   onCancel,
@@ -37,7 +39,7 @@ export function ActionDialog({
   }, [initialValue, open]);
 
   const normalized = inputLabel === undefined ? null : value.trim();
-  const confirmDisabled = busy || (normalized !== null && normalized.length === 0);
+  const confirmDisabled = busy || confirmBlocked || (normalized !== null && normalized.length === 0);
 
   return (
     <ModalOverlay

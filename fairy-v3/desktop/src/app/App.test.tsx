@@ -220,6 +220,30 @@ beforeEach(() => window.localStorage.clear());
 afterEach(cleanup);
 
 describe("App", () => {
+  it("reads only the active conversation task page and loads older tasks on demand", async () => {
+    const client = createClient(async () => ({ status: "ok", service: "fairy-core", protocol: "core-service-v1" }), [project]);
+    const older = { ...task, id: "older-task", user_request: "Older scoped task" };
+    const list = vi.fn<WorkspaceClient["tasks"]["list"]>(async (input) => ({
+      items: input?.cursor ? [older] : [task],
+      next_cursor: input?.cursor ? null : "older-page",
+    }));
+    client.tasks.list = list;
+    render(<App client={client} />);
+    await waitFor(() => expect(list).toHaveBeenCalled());
+    expect(list.mock.calls[0][0]).toEqual(expect.objectContaining({ conversation_id: ID.conversation, limit: 100 }));
+    expect(list).toHaveBeenCalledTimes(1);
+    await userEvent.click(await screen.findByRole("button", { name: "Load older tasks" }));
+    expect(await screen.findByRole("option", { name: "Older scoped task" })).toBeInTheDocument();
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ conversation_id: ID.conversation, cursor: "older-page" }));
+  });
+
+  it("does not block history while the selected conversation task page is slow", async () => {
+    const client = createClient(async () => ({ status: "ok", service: "fairy-core", protocol: "core-service-v1" }), [project]);
+    client.tasks.list = () => new Promise(() => {});
+    render(<App client={client} />);
+    await waitFor(() => expect(screen.getByLabelText("History navigation")).toHaveTextContent("Atlas Console"));
+    await waitFor(() => expect(screen.queryByText("Loading history...")).not.toBeInTheDocument());
+  });
   it("recovers when the first health check races Core startup", async () => {
     const health = vi
       .fn<WorkspaceClient["health"]>()
