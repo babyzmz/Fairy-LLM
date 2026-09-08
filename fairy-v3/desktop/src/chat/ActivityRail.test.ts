@@ -57,6 +57,7 @@ const TURN: AssistantTurn = {
   execution_engine_version: 2,
   status: "running",
   cancellation_revision: 0,
+  cancellation_pending: false,
   cited_evidence_receipt_ids: [],
   usage: {},
   error_code: null,

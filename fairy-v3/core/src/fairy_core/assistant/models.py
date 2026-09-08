@@ -359,6 +359,7 @@ class AssistantTurn:
     cited_evidence_receipt_ids: tuple[UUID, ...] = ()
     status: AssistantTurnStatus = AssistantTurnStatus.CREATED
     cancellation_revision: int = 0
+    cancellation_pending: bool = False
     usage: dict[str, int] = field(default_factory=dict)
     error_code: str | None = None
     created_at: datetime = field(default_factory=_now)

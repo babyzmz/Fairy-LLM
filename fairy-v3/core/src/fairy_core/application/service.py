@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from fairy_core.application.ambient_dialogue_service import AmbientDialogueService
 from fairy_core.application.assistant_cancellation import AssistantCancellationMixin
+from fairy_core.application.cancellation_cleanup import CancellationCleanupQueue
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.execution_helpers import (
     execution_plan_requests_preview,
@@ -433,6 +434,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             delegate=effective_tool_executor,
         )
         self._tool_executor = effective_tool_executor
+        self._cancellation_cleanup = CancellationCleanupQueue()
         self._assistant_application = AssistantApplication(
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
@@ -606,6 +608,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
 
     def close(self) -> None:
         self._assistant_schedule_service.close()
+        self._cancellation_cleanup.close()
         if self._preview_idle_scheduler is not None:
             self._preview_idle_scheduler.close()
         self._knowledge_sync_scheduler.close()

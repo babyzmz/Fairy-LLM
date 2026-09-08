@@ -51,6 +51,55 @@ describe("assistantDeltaText", () => {
 });
 
 describe("useAssistantTurn", () => {
+  it("does not apply a late cancellation acknowledgement to another conversation", async () => {
+    const otherConversation = "00000000-0000-4000-8000-000000000011";
+    const otherId = "00000000-0000-4000-8000-000000000031";
+    const running = assistantTurn({ status: "running" });
+    const other = assistantTurn({
+      id: otherId, conversation_id: otherConversation, status: "waiting_for_input",
+    });
+    let acknowledge!: (turn: AssistantTurn) => void;
+    const client = assistantClient({
+      getTurn: async (id) => id === otherId ? other : running,
+      cancelTurn: () => new Promise((resolve) => { acknowledge = resolve; }),
+    });
+    const { result, rerender } = renderHook(({ conversation, id }) => useAssistantTurn({
+      client, conversationId: conversation, persistedTurnId: id,
+      profileId: "openrouter-free", operationMode: "answer", events: [],
+    }), { initialProps: { conversation: conversationId, id: turnId } });
+    await waitFor(() => expect(result.current.turn).toEqual(running));
+    let cancelling!: Promise<void>;
+    act(() => { cancelling = result.current.cancel(); });
+    rerender({ conversation: otherConversation, id: otherId });
+    await waitFor(() => expect(result.current.turn).toEqual(other));
+    await act(async () => {
+      acknowledge({ ...running, status: "cancelled", cancellation_pending: true });
+      await cancelling;
+    });
+    expect(result.current.turn).toEqual(other);
+    expect(result.current.isBusy).toBe(false);
+  });
+
+  it("restores an accepted cancellation as busy until a durable stop event settles it", async () => {
+    let current = assistantTurn({ status: "cancelled", cancellation_pending: true });
+    const client = assistantClient({ getTurn: async () => current });
+    const { result, rerender } = renderHook(({ events }: { events: EventEnvelope[] }) =>
+      useAssistantTurn({
+        client, conversationId, persistedTurnId: turnId, profileId: "openrouter-free",
+        operationMode: "answer", events,
+      }), { initialProps: { events: [] as EventEnvelope[] } });
+    await waitFor(() => expect(result.current.turn).toEqual(current));
+    expect(result.current.isBusy).toBe(true);
+    await expect(result.current.send("Do more", [])).rejects.toThrow("already running");
+    current = { ...current, cancellation_pending: false };
+    rerender({ events: [{
+      ...deltaEvent("stopped", 20, turnId, 1, 0, ""),
+      event_type: "assistant.turn.cancelled", payload: { turn_id: turnId },
+    }] });
+    await waitFor(() => expect(result.current.isBusy).toBe(false));
+    expect(result.current.turn?.cancellation_pending).toBe(false);
+  });
+
   it("restores a persisted clarification turn and submits against its revision", async () => {
     const waiting = assistantTurn({
       status: "waiting_for_input",
@@ -892,6 +941,7 @@ function assistantTurn(overrides: Partial<AssistantTurn> = {}): AssistantTurn {
     budget_approval_run_id: null,
     execution_engine_version: 2,
     cancellation_revision: 2,
+    cancellation_pending: false,
     cited_evidence_receipt_ids: [],
     usage: {},
     created_at: "2026-07-11T00:00:00Z",

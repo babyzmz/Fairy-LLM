@@ -105,7 +105,7 @@ class AssistantTurnScheduler:
             return self._ledger.get_turn(turn_id)
         while True:
             turn = self._ledger.get_turn(turn_id)
-            if turn.status in _TERMINAL_TURN_STATUSES:
+            if turn.status in _TERMINAL_TURN_STATUSES and not turn.cancellation_pending:
                 return turn
             if time.monotonic() >= deadline:
                 raise TimeoutError("Assistant Turn did not settle with its Workflow")

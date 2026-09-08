@@ -124,6 +124,11 @@
 - 取消版本竞态独立修复：旧代码先调用 Scheduler.cancel 再校验 Turn revision，新增阻塞 Provider 回归实际观察到“RPC 拒绝但 Workflow 已取消”。现改为先事务提交版本校验后的 Turn 取消，再触碰 Worker/领域运行时；相同请求遇到已经提交的相邻取消 Revision 可幂等收敛。过期请求不改变任务，释放 Provider 后仍能正常完成。取消/Workflow/Assistant 定向13项通过（17.03秒），Ruff通过。领域停止仍为同步，此项不冒充快速取消门禁。
 
 - 停止传递链独立复现：Core 实际组合的 Project/Memory/Knowledge 包装层会截断 `cancel_command`，底层工具已运行但停止钩子未收到信号。补齐这些层及 Browser/Document/Research/System/ProjectExecution/Media 的透传，原样携带已授权 CommandRun，不按名称创建新操作。实际组合链回归通过；本轮扩大门禁另外发现旧 Sandbox/MCP 写工具测试没有有效执行意图前置条件，不能把这些未通过场景算作停止链验收完成。
+- 已实现有界停止队列、停止投影、接受事件与前端展示。停止钩子阻塞时取消确认<0.9秒；钩子返回但实际工具尚未退出时仍保持 `cancellation_pending`，不生成迟到回复、不允许同聊天新 Turn/重试/严格项目清理。投影来自持久 Tool Invocation/Provider Attempt，不依赖前端计时器或进程内“已发送停止”标记；不新增数据库迁移。
+- Core close与已预留取消请求的竞态先失败复现，现等待预留提交后再排空停止队列；控制通道明确加入 `assistant.turns.cancel`，有阻塞普通请求下的透传回归。严格删除路径仍等待领域停止，未定时报告 ProjectBusy，不把接受信号视为物理停止。
+- 原取消版本契约复验发现需要区分“处理期间另一写者完成取消”和“重复请求旧 Revision”；已保留前者容错、恢复后者拒绝，没有修改原断言。`assistant.turns.run` 现在等待实际停止投影收敛，再返回同步执行结果；异步取消接口保持快速确认。
+- 验证：Assistant＋JSON-RPC/stdio 213项通过（98.41秒）；之后新增取消事件与控制通道回归16项通过（7.40秒），取消/调用结果定向6项通过；Ruff通过。TypeScript通过，聊天取消/工作链/Activity Rail 39项通过；App/ChatWorkspace扩展70项通过。4处既有TS夹具仅补 `cancellation_pending:false`；stdio既有场景扩展pause/cancel参数，未放宽断言。迟到取消确认跨聊天覆盖先通过移除generation守卫复现，再恢复守卫验证。
+- 剩余风险明确保留：重启时未定副作用的人工恢复决策与最终原生/WSL验收尚未完成；不能把本机阻塞脚本工具当作真实WSL。扩大跨域门禁曾出现2个MCP与7个Sandbox意图前置失败，继续独立补齐；视频重启场景整组运行1次超过3秒、单独2次通过，列入后续调度负载/恢复复查，不增加测试超时掩盖。
 
 ### Phase 3B：事件提交唤醒与推送验收契约
 

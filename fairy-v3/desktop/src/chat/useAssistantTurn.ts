@@ -330,22 +330,28 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
 
   const cancel = useCallback(async () => {
     const current = turnRef.current;
-    if (current === null || isTerminal(current)) return;
-    ++operationRef.current;
-    busyRef.current = false;
+    if (current === null || isTerminal(current) || current.cancellation_pending) return;
+    const operation = ++operationRef.current;
     setError(null);
     try {
       const cancelled = await options.client.assistant.turns.cancel({
         turn_id: current.id,
         expected_cancellation_revision: current.cancellation_revision,
       });
-      commitTurn(cancelled);
+      if (
+        operation === operationRef.current &&
+        conversationRef.current === current.conversation_id
+      ) commitTurn(cancelled);
     } catch (caught) {
-      setError(errorMessage(caught));
+      if (operation === operationRef.current) setError(errorMessage(caught));
       throw caught;
     } finally {
-      setIsBusy(false);
-      await settle();
+      if (operation === operationRef.current) {
+        const active = turnRef.current !== null && isActive(turnRef.current);
+        busyRef.current = active;
+        setIsBusy(active);
+        if (!active) await settle();
+      }
     }
   }, [commitTurn, options.client.assistant.turns, settle]);
 
@@ -645,6 +651,7 @@ const STATUS_EVENT_TYPES = new Set([
   "assistant.turn.started",
   "assistant.turn.completed",
   "assistant.turn.cancelled",
+  "assistant.turn.cancel_requested",
   "assistant.turn.failed",
   "assistant.turn.steered",
   "assistant.turn.clarification_requested",
@@ -655,6 +662,7 @@ const STATUS_EVENT_TYPES = new Set([
 ]);
 
 function isActive(turn: AssistantTurn): boolean {
+  if (turn.cancellation_pending) return true;
   if (turn.workflow_summary !== null && turn.workflow_summary !== undefined) {
     return ["queued", "running"].includes(turn.workflow_summary.status);
   }
@@ -763,7 +771,7 @@ function toAssistantDelta(event: EventEnvelope): AssistantDelta | null {
 }
 
 function isTerminal(turn: AssistantTurn): boolean {
-  return ["completed", "cancelled", "failed"].includes(turn.status);
+  return !turn.cancellation_pending && ["completed", "cancelled", "failed"].includes(turn.status);
 }
 
 function required(value: string | null | undefined, message: string): string {

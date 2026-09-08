@@ -117,7 +117,7 @@ export function ActivityRail({
       {workflow !== null ? (
         <div className="activity-workflow-overview" aria-label="Workflow status">
           <span className={`workflow-state workflow-state-${workflow.status}`}>
-            {workflowStatusLabel(workflow)}
+            {turn?.cancellation_pending ? "Stopping" : workflowStatusLabel(workflow)}
           </span>
           {workflow.current_phase ? <span>{workflow.current_phase}</span> : null}
           {activeBranches > 1 ? <span>{activeBranches} parallel branches</span> : null}

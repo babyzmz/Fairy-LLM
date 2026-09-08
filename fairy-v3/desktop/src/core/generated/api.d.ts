@@ -3026,6 +3026,11 @@ export interface components {
             active_interpretation_revision?: number | null;
             /** Budget Approval Run Id */
             budget_approval_run_id: string | null;
+            /**
+             * Cancellation Pending
+             * @default false
+             */
+            cancellation_pending: boolean;
             /** Cancellation Revision */
             cancellation_revision: number;
             /**

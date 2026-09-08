@@ -181,7 +181,9 @@ export function projectWorkChain({
   const active = ordered.filter((step) => ACTIVE_STATUSES.has(step.status));
   const projectedCurrent =
     active.at(-1) ?? ordered.at(-1) ?? fallbackStep(turn, trace, traceState, resolvedTurnId);
-  const current = terminalStatus !== null && (
+  const current = turn?.cancellation_pending
+    ? { ...projectedCurrent, status: "waiting" as const, summary: "Stopping current operations" }
+    : terminalStatus !== null && (
     staleActiveStepIds.has(projectedCurrent.id) ||
     ACTIVE_MODEL_SUMMARIES.has(projectedCurrent.summary)
   )
@@ -468,6 +470,7 @@ function resolvedTerminalStatus(
   traceState: TurnTraceQueryState | null,
   steps: WorkChainStep[],
 ): TraceStepStatus | null {
+  if (turn?.cancellation_pending) return null;
   if (turn?.status === "completed") return "succeeded";
   if (turn?.status === "failed") return "failed";
   if (turn?.status === "cancelled") return "cancelled";

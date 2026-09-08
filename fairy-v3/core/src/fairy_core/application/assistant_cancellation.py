@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, cast
 from uuid import UUID
 
@@ -34,6 +35,25 @@ class AssistantCancellationMixin:
         expected_cancellation_revision: int,
         strict_tool_cancellation: bool = False,
     ) -> Any:
+        if strict_tool_cancellation:
+            return self._commit_assistant_cancellation(
+                turn_id, expected_cancellation_revision=expected_cancellation_revision,
+                strict_tool_cancellation=True,
+            )
+        with self._cancellation_cleanup.reserve() as defer:
+            return self._commit_assistant_cancellation(
+                turn_id, expected_cancellation_revision=expected_cancellation_revision,
+                runtime_cleanup=defer,
+            )
+
+    def _commit_assistant_cancellation(
+        self,
+        turn_id: UUID,
+        *,
+        expected_cancellation_revision: int,
+        strict_tool_cancellation: bool = False,
+        runtime_cleanup: Callable[[Callable[[], None]], None] | None = None,
+    ) -> Any:
         persisted = self._assistant_ledger.get_turn(turn_id)
         if persisted.status in {
             AssistantTurnStatus.COMPLETED,
@@ -42,14 +62,22 @@ class AssistantCancellationMixin:
             self._image_attachments.release(turn_id)
             return persisted
         try:
-            cancelled = self._assistant_ledger.cancel_turn(
-                turn_id=turn_id,
-                expected_cancellation_revision=expected_cancellation_revision,
-            )
+            if (
+                strict_tool_cancellation
+                and persisted.status is AssistantTurnStatus.CANCELLED
+                and persisted.cancellation_revision == expected_cancellation_revision
+            ):
+                cancelled = persisted
+            else:
+                cancelled = self._assistant_ledger.cancel_turn(
+                    turn_id=turn_id,
+                    expected_cancellation_revision=expected_cancellation_revision,
+                )
         except InvalidTransitionError:
             cancelled = self._assistant_ledger.get_turn(turn_id)
             if (
-                cancelled.status is not AssistantTurnStatus.CANCELLED
+                persisted.status is AssistantTurnStatus.CANCELLED
+                or cancelled.status is not AssistantTurnStatus.CANCELLED
                 or cancelled.cancellation_revision != expected_cancellation_revision + 1
             ):
                 raise
@@ -57,12 +85,15 @@ class AssistantCancellationMixin:
         # A stale caller must not cancel the Workflow and only then receive a conflict.
         was_running = self._assistant_scheduler.cancel(turn_id)
         if was_running or strict_tool_cancellation:
-            self._cancel_running_tool_command(
-                turn_id,
-                strict=strict_tool_cancellation,
-            )
+            if runtime_cleanup is not None:
+                runtime_cleanup(lambda: self._cancel_running_tool_command(turn_id))
+            else:
+                self._cancel_running_tool_command(turn_id, strict=strict_tool_cancellation)
         self._image_attachments.release(turn_id)
-        return cancelled
+        projected = self._assistant_ledger.get_turn(turn_id)
+        if strict_tool_cancellation and projected.cancellation_pending:
+            raise ProjectBusyError("The previous operation is still stopping")
+        return projected
 
     def _cancel_running_tool_command(self, turn_id: UUID, *, strict: bool = False) -> None:
         with self._unit_of_work_factory() as unit_of_work:

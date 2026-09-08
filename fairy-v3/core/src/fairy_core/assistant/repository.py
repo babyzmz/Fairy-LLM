@@ -244,13 +244,19 @@ class SqlAlchemyAssistantRepository(
                     .where(
                         assistant_turns.c.tenant_id == self._tenant_id,
                         assistant_turns.c.task_id.in_(tuple(map(str, task_ids))),
-                        assistant_turns.c.status.in_(
-                            (
-                                AssistantTurnStatus.CREATED.value,
-                                AssistantTurnStatus.RUNNING.value,
-                                AssistantTurnStatus.WAITING_FOR_TOOL.value,
-                                AssistantTurnStatus.WAITING_FOR_INPUT.value,
-                            )
+                        or_(
+                            assistant_turns.c.status.in_(
+                                (
+                                    AssistantTurnStatus.CREATED.value,
+                                    AssistantTurnStatus.RUNNING.value,
+                                    AssistantTurnStatus.WAITING_FOR_TOOL.value,
+                                    AssistantTurnStatus.WAITING_FOR_INPUT.value,
+                                )
+                            ),
+                            and_(
+                                assistant_turns.c.status == AssistantTurnStatus.CANCELLED.value,
+                                self._pending_operations(assistant_turns.c.id),
+                            ),
                         ),
                     )
                     .order_by(assistant_turns.c.created_at.asc(), assistant_turns.c.id.asc())
@@ -269,13 +275,19 @@ class SqlAlchemyAssistantRepository(
             .where(
                 assistant_turns.c.tenant_id == self._tenant_id,
                 assistant_turns.c.conversation_id == str(conversation_id),
-                assistant_turns.c.status.in_(
-                    (
-                        AssistantTurnStatus.CREATED.value,
-                        AssistantTurnStatus.RUNNING.value,
-                        AssistantTurnStatus.WAITING_FOR_TOOL.value,
-                        AssistantTurnStatus.WAITING_FOR_INPUT.value,
-                    )
+                or_(
+                    assistant_turns.c.status.in_(
+                        (
+                            AssistantTurnStatus.CREATED.value,
+                            AssistantTurnStatus.RUNNING.value,
+                            AssistantTurnStatus.WAITING_FOR_TOOL.value,
+                            AssistantTurnStatus.WAITING_FOR_INPUT.value,
+                        )
+                    ),
+                    and_(
+                        assistant_turns.c.status == AssistantTurnStatus.CANCELLED.value,
+                        self._pending_operations(assistant_turns.c.id),
+                    ),
                 ),
             )
             .order_by(assistant_turns.c.created_at, assistant_turns.c.id)
@@ -923,6 +935,14 @@ class SqlAlchemyAssistantRepository(
         )
 
     def _with_workflow_summary(self, turn: AssistantTurn) -> AssistantTurn:
+        if turn.status is AssistantTurnStatus.CANCELLED:
+            turn.cancellation_pending = self._first(
+                select(assistant_turns.c.id).where(
+                    assistant_turns.c.tenant_id == self._tenant_id,
+                    assistant_turns.c.id == str(turn.id),
+                    self._pending_operations(assistant_turns.c.id),
+                ).limit(1)
+            ) is not None
         projected = attach_workflow_summary(
             self._session,
             tenant_id=self._tenant_id,
@@ -934,6 +954,20 @@ class SqlAlchemyAssistantRepository(
                 projected.active_interpretation_revision,
             )
         return projected
+
+    def _pending_operations(self, turn_id):
+        return or_(
+            select(assistant_tool_invocations.c.id).where(
+                assistant_tool_invocations.c.tenant_id == self._tenant_id,
+                assistant_tool_invocations.c.turn_id == turn_id,
+                assistant_tool_invocations.c.status == ToolInvocationStatus.RUNNING.value,
+            ).exists(),
+            select(assistant_provider_attempts.c.id).where(
+                assistant_provider_attempts.c.tenant_id == self._tenant_id,
+                assistant_provider_attempts.c.turn_id == turn_id,
+                assistant_provider_attempts.c.status == "started",
+            ).exists(),
+        )
 
     @staticmethod
     def _provider_attempt_from_row(row: Mapping[str, Any]) -> ProviderAttempt:

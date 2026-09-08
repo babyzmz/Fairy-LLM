@@ -8,9 +8,9 @@ from typing import TextIO
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.transports.stdio_events import EventCursorResyncRequired, StdioEventWatches
 
-# Names are audited, not inferred from '.get' or '.cancel' suffixes. In particular,
-# assistant cancellation still invokes domain cleanup and is not a fast-lane action.
-CONTROL_METHODS = frozenset({"health", "assistant.turns.pause"})
+# Names are audited, not inferred from '.get' or '.cancel' suffixes. Assistant
+# cancellation commits a request; slow runtime stop signals use its bounded owner lane.
+CONTROL_METHODS = frozenset({"health", "assistant.turns.pause", "assistant.turns.cancel"})
 READ_METHODS = frozenset(
     {
         "assistant.turns.get",

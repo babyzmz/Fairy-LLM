@@ -1003,6 +1003,11 @@
             ],
             "title": "Budget Approval Run Id"
           },
+          "cancellation_pending": {
+            "default": false,
+            "title": "Cancellation Pending",
+            "type": "boolean"
+          },
           "cancellation_revision": {
             "minimum": 0.0,
             "title": "Cancellation Revision",

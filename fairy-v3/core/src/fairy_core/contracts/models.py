@@ -702,6 +702,7 @@ class AssistantTurnModel(ContractModel):
     workflow_summary: AssistantWorkflowSummaryModel | None = None
     status: AssistantTurnStatus
     cancellation_revision: int = Field(ge=0)
+    cancellation_pending: bool = False
     usage: dict[str, int]
     error_code: str | None
     created_at: datetime

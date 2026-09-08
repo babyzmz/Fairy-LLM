@@ -4,6 +4,8 @@ import io
 import json
 from threading import Event, Thread
 
+import pytest
+
 from fairy_core.transports.stdio import process_stream
 from fairy_core.transports.stdio_dispatch import LANE_CAPACITY, StdioRequestDispatcher
 
@@ -12,7 +14,8 @@ def _request(key: int, method: str) -> str:
     return json.dumps({"jsonrpc": "2.0", "id": key, "method": method, "params": {}}) + "\n"
 
 
-def test_negotiated_control_and_reads_bypass_a_blocked_serial_request():
+@pytest.mark.parametrize("control_method", ["assistant.turns.pause", "assistant.turns.cancel"])
+def test_negotiated_control_and_reads_bypass_a_blocked_serial_request(control_method):
     slow_started, release, control_done, read_done = (Event() for _ in range(4))
 
     class Dispatcher:
@@ -21,7 +24,7 @@ def test_negotiated_control_and_reads_bypass_a_blocked_serial_request():
             if method == "slow.write":
                 slow_started.set()
                 assert release.wait(5)
-            if method == "assistant.turns.pause":
+            if method == control_method:
                 control_done.set()
             if method == "assistant.turns.get":
                 read_done.set()
@@ -30,7 +33,7 @@ def test_negotiated_control_and_reads_bypass_a_blocked_serial_request():
     source = io.StringIO(
         _request(0, "transport.negotiate")
         + _request(1, "slow.write")
-        + _request(2, "assistant.turns.pause")
+        + _request(2, control_method)
         + _request(3, "assistant.turns.get")
     )
     destination = io.StringIO()

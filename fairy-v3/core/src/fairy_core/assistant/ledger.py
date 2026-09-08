@@ -109,6 +109,9 @@ class AssistantLedgerApplication:
                 if self._ensure_trace(unit_of_work, existing, legacy=True):
                     unit_of_work.commit()
                 return existing
+            active = unit_of_work.assistant.nonterminal_turn_for_conversation(task.conversation_id)
+            if active is not None and active.cancellation_pending:
+                raise InvalidTransitionError("The previous operation is still stopping")
             scope = self._bind_harness_context(
                 unit_of_work,
                 task=task,
@@ -398,6 +401,8 @@ class AssistantLedgerApplication:
             original = unit_of_work.assistant.get_turn(turn_id)
             if original is None:
                 raise KeyError(f"Assistant Turn not found: {turn_id}")
+            if original.cancellation_pending:
+                raise InvalidTransitionError("The previous operation is still stopping")
             if original.status not in {
                 AssistantTurnStatus.COMPLETED,
                 AssistantTurnStatus.CANCELLED,
@@ -521,6 +526,18 @@ class AssistantLedgerApplication:
                 turn,
                 expected_status=expected_status,
                 expected_cancellation_revision=expected_cancellation_revision,
+            )
+            unit_of_work.commands.append_domain_event(
+                event_type="assistant.turn.cancel_requested",
+                visibility=EventVisibility.USER,
+                message="Cancellation accepted; running operations may still be stopping",
+                payload={
+                    "turn_id": str(turn.id),
+                    "cancellation_revision": turn.cancellation_revision,
+                },
+                actor="user",
+                conversation_id=turn.conversation_id,
+                task_id=turn.task_id,
             )
             unit_of_work.commit()
         return turn

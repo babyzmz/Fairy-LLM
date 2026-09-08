@@ -219,6 +219,20 @@ describe("projectWorkChain", () => {
     );
   });
 
+  it("does not report stopped while a cancelled turn still has live operations", () => {
+    const turn = {
+      id: TURN_ID, conversation_id: CONVERSATION_ID, task_id: TASK_ID,
+      status: "cancelled", cancellation_pending: true,
+    } as AssistantTurn;
+    const trace = turnTrace([step({ status: "running", public_summary: "Using web search" })]);
+    const stopping = projectWorkChain({ turn, trace });
+    expect(stopping.terminal).toBe(false);
+    expect(stopping.current.summary).toBe("Stopping current operations");
+    const stopped = projectWorkChain({ turn: { ...turn, cancellation_pending: false }, trace });
+    expect(stopped.terminal).toBe(true);
+    expect(stopped.current.summary).toBe("Response stopped");
+  });
+
   it("settles missing and failed trace loads without leaving active work", () => {
     const missing = projectWorkChain({
       turnId: TURN_ID,
