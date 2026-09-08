@@ -116,6 +116,8 @@
 
 ### Phase 3B：事件提交唤醒与推送验收契约
 
+- 取消版本竞态独立修复：旧代码先调用 Scheduler.cancel 再校验 Turn revision，新增阻塞 Provider 回归实际观察到“RPC 拒绝但 Workflow 已取消”。现改为先事务提交版本校验后的 Turn 取消，再触碰 Worker/领域运行时；相同请求遇到已经提交的相邻取消 Revision 可幂等收敛。过期请求不改变任务，释放 Provider 后仍能正常完成。取消/Workflow/Assistant 定向13项通过（17.03秒），Ruff通过。领域停止仍为同步，此项不冒充快速取消门禁。
+
 - 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。
 - 本地 watch/unwatch 必须协商启用；响应和事件使用不同 envelope。每个订阅独立有界队列/游标，溢出进入显式 resync，终态与审批依靠持久回放补齐。主窗口卸载或取消清理订阅，迟到消息不能重建旧订阅。
 - 验证双 tenant 提交/回滚隔离，双订阅各自游标，丢唤醒后的5秒持久补读，慢订阅者不阻塞其他窗口、unwatch及重连清理；真实 Rust→Core 联通后再接 Tauri，最后做原生主窗口重载验收。

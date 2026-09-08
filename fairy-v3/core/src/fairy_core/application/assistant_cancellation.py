@@ -41,27 +41,28 @@ class AssistantCancellationMixin:
         }:
             self._image_attachments.release(turn_id)
             return persisted
+        try:
+            cancelled = self._assistant_ledger.cancel_turn(
+                turn_id=turn_id,
+                expected_cancellation_revision=expected_cancellation_revision,
+            )
+        except InvalidTransitionError:
+            cancelled = self._assistant_ledger.get_turn(turn_id)
+            if (
+                cancelled.status is not AssistantTurnStatus.CANCELLED
+                or cancelled.cancellation_revision != expected_cancellation_revision + 1
+            ):
+                raise
+        # Commit the revision-checked request before touching a live worker or runtime.
+        # A stale caller must not cancel the Workflow and only then receive a conflict.
         was_running = self._assistant_scheduler.cancel(turn_id)
         if was_running or strict_tool_cancellation:
             self._cancel_running_tool_command(
                 turn_id,
                 strict=strict_tool_cancellation,
             )
-        try:
-            cancelled = self._assistant_ledger.cancel_turn(
-                turn_id=turn_id,
-                expected_cancellation_revision=expected_cancellation_revision,
-            )
-            self._image_attachments.release(turn_id)
-            return cancelled
-        except InvalidTransitionError:
-            if not was_running:
-                raise
-            persisted = self._assistant_ledger.get_turn(turn_id)
-            if persisted.status is not AssistantTurnStatus.CANCELLED:
-                raise
-            self._image_attachments.release(turn_id)
-            return persisted
+        self._image_attachments.release(turn_id)
+        return cancelled
 
     def _cancel_running_tool_command(self, turn_id: UUID, *, strict: bool = False) -> None:
         with self._unit_of_work_factory() as unit_of_work:

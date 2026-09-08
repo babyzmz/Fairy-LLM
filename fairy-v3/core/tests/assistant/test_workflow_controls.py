@@ -10,7 +10,11 @@ from uuid import UUID
 import pytest
 
 from fairy_core.assistant.routing import QWEN_FREE_MODEL_ID
-from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
+from fairy_core.domain.errors import (
+    IdempotencyConflictError,
+    InvalidTransitionError,
+    VersionConflictError,
+)
 from fairy_core.providers import (
     CancellationToken,
     ModelDelta,
@@ -20,7 +24,32 @@ from fairy_core.providers import (
 )
 from fairy_core.transports.stdio import build_local_service
 from tests.assistant.support import ScriptedProvider, wait_for_turn
-from tests.assistant.test_application import _scratch_task, _turn
+from tests.assistant.test_application import BlockingProvider, _scratch_task, _turn
+
+
+def test_stale_cancel_cannot_signal_or_stop_the_current_workflow(tmp_path: Path) -> None:
+    provider = BlockingProvider()
+    service = build_local_service(tmp_path, provider_registry=ProviderRegistry((provider,)))
+    try:
+        task = _scratch_task(service, "Explain the current project")
+        turn = _turn(service, task, "stale-cancel")
+        service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
+        assert provider.started.wait(3)
+        before = service.invoke("assistant.turns.get", {"turn_id": turn["id"]})
+        with pytest.raises(InvalidTransitionError, match="revision"):
+            service.invoke("assistant.turns.cancel", {
+                "turn_id": turn["id"],
+                "expected_cancellation_revision": before["cancellation_revision"] + 1,
+            })
+        after = service.invoke("assistant.turns.get", {"turn_id": turn["id"]})
+        assert after["cancellation_revision"] == before["cancellation_revision"]
+        assert after["status"] == "running"
+        assert after["workflow_summary"]["status"] == "running"
+        provider.release.set()
+        assert wait_for_turn(service, turn["id"])["status"] == "completed"
+    finally:
+        provider.release.set()
+        service.close()
 
 
 class _BoundaryProvider(ScriptedProvider):
