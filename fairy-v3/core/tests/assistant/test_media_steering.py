@@ -15,7 +15,7 @@ from tests.media import test_media_service as contracts
 
 
 @pytest.mark.parametrize("lost_handoff", [False, True])
-@pytest.mark.parametrize("control", ["steer", "pause"])
+@pytest.mark.parametrize("control", ["steer", "pause", "repeat"])
 def test_steering_waits_for_deferred_media_outcome(tmp_path, monkeypatch, lost_handoff, control):
     monkeypatch.setattr(contracts, "build_local_service", partial(
         contracts.build_local_service, assistant_workflow_engine_version=4,
@@ -71,7 +71,20 @@ def test_steering_waits_for_deferred_media_outcome(tmp_path, monkeypatch, lost_h
             })),
             contracts.ModelDelta.done(profile_id=profile, sequence=2, finish_reason="stop"),
         )
-        if control == "steer":
+        if control == "repeat":
+            instruction = "Generate another Fairy image using exactly the same prompt."
+            classification = contracts._media_interpretation(profile, instruction)
+            provider.rounds.insert(0, (
+                contracts.ModelDelta.tool_call(
+                    profile_id=profile, sequence=1, tool_call_id="generate-again",
+                    tool_name="media.images.generate",
+                    arguments_fragment='{"prompt":"A translucent Fairy core"}',
+                ),
+                contracts.ModelDelta.done(
+                    profile_id=profile, sequence=2, finish_reason="tool_calls",
+                ),
+            ))
+        if control != "pause":
             provider.rounds.insert(0, classification)
             service.invoke("assistant.turns.steer", {
                 "turn_id": turn["id"], "instruction": instruction,
@@ -104,15 +117,22 @@ def test_steering_waits_for_deferred_media_outcome(tmp_path, monkeypatch, lost_h
             final = unit.workflows.get(run_id)
             invocations = unit.assistant.list_tool_invocations(UUID(turn["id"]))
             jobs = unit.state.list_media_jobs(UUID(task["id"]))
-        assert final.run.active_plan_revision == (2 if control == "steer" else 1)
-        assert len(jobs) == len(invocations) == len(media.image_requests) == 1
+        assert final.run.active_plan_revision == (1 if control == "pause" else 2)
+        assert len(jobs) == len(invocations) == len(media.image_requests) == (
+            2 if control == "repeat" else 1
+        )
+        if control == "repeat":
+            assert invocations[0].argument_hash == invocations[1].argument_hash
+            assert [item.workflow_plan_revision for item in invocations] == [1, 2]
+            assert invocations[0].command_run_id != invocations[1].command_run_id
+            assert len({job.artifact_id for job in jobs}) == 2
         assert invocations[0].status == "completed"
         assert next(node for node in final.nodes if node.id == tool.id).status == "succeeded"
         context = "\n".join(message.content for message in provider.requests[-1].messages)
-        if control == "steer":
+        if control != "pause":
             assert instruction in context
         assert str(jobs[0].artifact_id) in context
-        assert len(provider.requests) == (4 if control == "steer" else 3)
+        assert len(provider.requests) == {"pause": 3, "steer": 4, "repeat": 5}[control]
         assert bool(lost) == lost_handoff
     finally:
         release.set()

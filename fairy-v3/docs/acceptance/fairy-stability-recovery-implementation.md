@@ -36,6 +36,14 @@
 
 ## 执行证据
 
+### Phase 6：显式修订后的工具身份与媒体配额
+
+- 已复现并修复同参 `execution.plan` 在 Steering 新版本撞上 Turn 级唯一约束的问题。
+- Tool Invocation 绑定可信 Run/Revision；参数和 Provider Call ID 在版本内去重，原版本 Command 恢复身份不变，新版本提案重新审批；SQLite/Cloud 0060 保留历史并拒绝有歧义的回填。
+- 媒体层按当前版本判断新生成完成与配额；“只描述旧结果”与“再生成一次”分别验证，旧操作未结束时仍阻止重叠生成。
+- Assistant/Workflow/Media/SQLite/文件计划组合回归 **506通过（434.25秒）**；Cloud 离线迁移/部署契约 **43通过（3.45秒）**；Ruff及diff检查通过。详见[专项证据](workflow-tool-revision-identity.md)。
+- 实际桌面数据库、远端仓库未改动；真实 Provider/PostgreSQL/WSL/原生未由此验收。版本4仍为opt-in，复合objective、并发联合门禁、资源治理与默认切换继续推进。
+
 ### Phase 6：领域结果与中途修订边界
 
 - Deep重路由不再尝试升级已经取消的旧文件计划；Workflow总预算仍按既有规则配置，旧计划预算保留。先失败复现后，文件修订/完整路由/控制/预算Steering共41项通过（43.90秒），见[计划修订记录](workflow-file-plan-revisions.md)。

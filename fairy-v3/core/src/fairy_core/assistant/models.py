@@ -587,6 +587,8 @@ class ToolInvocation:
     scope_digest: str
     argument_hash: str
     arguments: dict[str, Any]
+    workflow_run_id: UUID | None = None
+    workflow_plan_revision: int = 1
     command_run_id: UUID | None = None
     status: ToolInvocationStatus = ToolInvocationStatus.CREATED
     public_summary: str | None = None
@@ -608,7 +610,17 @@ class ToolInvocation:
         tool_name: str,
         scope_digest: str,
         arguments: dict[str, Any],
+        workflow_run_id: UUID | None = None,
+        workflow_plan_revision: int = 1,
     ) -> ToolInvocation:
+        if (
+            isinstance(workflow_plan_revision, bool)
+            or not isinstance(workflow_plan_revision, int)
+            or workflow_plan_revision < 1
+            or (workflow_run_id is None and workflow_plan_revision != 1)
+            or (workflow_run_id is not None and workflow_run_id != turn.workflow_run_id)
+        ):
+            raise ValueError("Tool Invocation requires a valid Turn Workflow revision")
         if isinstance(model_round, bool) or model_round < 1:
             raise ValueError("tool invocation model_round must be positive")
         if isinstance(sequence, bool) or sequence < 1:
@@ -652,6 +664,8 @@ class ToolInvocation:
             scope_digest=scope_digest,
             argument_hash=hashlib.sha256(canonical).hexdigest(),
             arguments=normalized_arguments,
+            workflow_run_id=workflow_run_id,
+            workflow_plan_revision=workflow_plan_revision,
         )
 
     def queue(self, *, command_run_id: UUID) -> None:

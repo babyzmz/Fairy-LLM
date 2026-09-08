@@ -959,12 +959,13 @@ def migrate_generic_approval(engine: Engine) -> None:
                     "SET model_content = public_summary "
                     "WHERE model_content IS NULL AND public_summary IS NOT NULL"
                 )
-            connection.exec_driver_sql(
-                "CREATE UNIQUE INDEX IF NOT EXISTS "
-                "uq_core_assistant_tool_invocations_turn_provider_call "
-                "ON core_assistant_tool_invocations "
-                "(tenant_id, turn_id, provider_call_id)"
-            )
+            if "workflow_plan_revision" not in columns:
+                connection.exec_driver_sql(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "uq_core_assistant_tool_invocations_turn_provider_call "
+                    "ON core_assistant_tool_invocations "
+                    "(tenant_id, turn_id, provider_call_id)"
+                )
         if "core_approvals" in tables:
             columns = {
                 column["name"] for column in inspect(connection).get_columns("core_approvals")

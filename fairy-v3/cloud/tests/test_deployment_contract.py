@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260909_0059"]
+    assert scripts.get_heads() == ["20260909_0060"]
+    assert scripts.get_revision("20260909_0060").down_revision == "20260909_0059"
     assert scripts.get_revision("20260909_0059").down_revision == "20260909_0058"
     assert scripts.get_revision("20260909_0058").down_revision == "20260909_0057"
     assert scripts.get_revision("20260909_0057").down_revision == "20260909_0056"
@@ -45,6 +46,25 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
     assert scripts.get_revision("20260711_0012").down_revision == "20260711_0011"
     assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
+
+
+def test_tool_revision_upgrade_backfill_and_lossless_downgrade_guard() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260909_0059:20260909_0060", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert "UNIQUE (TENANT_ID, TURN_ID, WORKFLOW_PLAN_REVISION, ARGUMENT_HASH)" in ddl
+    assert "REFERENCES CORE_WORKFLOW_PLAN_REVISIONS (TENANT_ID, RUN_ID, REVISION)" in ddl
+    assert "N.PAYLOAD ->> 'INVOCATION_ID'" in ddl
+    assert "N.TENANT_ID = I.TENANT_ID" in ddl
+    assert "AMBIGUOUS WORKFLOW PROVENANCE" in ddl
+    assert "DISABLE ROW LEVEL SECURITY" not in ddl
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260909_0060:20260909_0059", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert ddl.index("RAISE EXCEPTION") < ddl.index("DROP COLUMN")
+    assert "DELETE FROM" not in ddl
 
 
 def test_file_plan_revision_upgrade_and_lossless_downgrade_guard() -> None:

@@ -70,15 +70,17 @@ def _classification(action):
 
 
 @pytest.mark.parametrize(
-    "approved,restart,apply_started,new_plan",
+    "approved,restart,apply_started,new_plan,repeat_arguments",
     [
-        (False, False, False, False),
-        (True, False, False, False),
-        (False, True, False, False),
-        (True, True, False, False),
-        (True, False, True, False),
-        (False, False, False, True),
-        (True, True, False, True),
+        (False, False, False, False, False),
+        (True, False, False, False, False),
+        (False, True, False, False, False),
+        (True, True, False, False, False),
+        (True, False, True, False, False),
+        (False, False, False, True, False),
+        (True, True, False, True, False),
+        (False, False, False, True, True),
+        (True, True, False, True, True),
     ],
 )
 def test_explain_update_supersedes_unapplied_changeset_and_its_file_plan(
@@ -87,7 +89,10 @@ def test_explain_update_supersedes_unapplied_changeset_and_its_file_plan(
     restart,
     apply_started,
     new_plan,
+    repeat_arguments,
 ):
+    revised_content = "draft" if repeat_arguments else "revised"
+    revised_reason = "Update copy" if repeat_arguments else "Revised copy"
     source = tmp_path / "source"
     source.mkdir()
     (source / "README.md").write_text("base", encoding="utf-8")
@@ -127,7 +132,7 @@ def test_explain_update_supersedes_unapplied_changeset_and_its_file_plan(
                             "files": [
                                 {
                                     "path": "README.md",
-                                    "purpose": "Revised copy",
+                                    "purpose": revised_reason,
                                     "batch": 1,
                                     "expected_hash": hashlib.sha256(b"base").hexdigest(),
                                 }
@@ -139,8 +144,8 @@ def test_explain_update_supersedes_unapplied_changeset_and_its_file_plan(
                     _call(
                         "edit.propose_changeset",
                         {
-                            "files": [{"path": "README.md", "content": "revised"}],
-                            "reason": "Revised copy",
+                            "files": [{"path": "README.md", "content": revised_content}],
+                            "reason": revised_reason,
                         },
                         suffix="-revised",
                     ),
@@ -301,7 +306,7 @@ def test_explain_update_supersedes_unapplied_changeset_and_its_file_plan(
         assert receipt["reason_code"] == "EXECUTION_INTENT_CHANGED"
         assert (source / "README.md").read_text(encoding="utf-8") == "base"
         managed = Path(context["target_version"]["project_root"]) / "README.md"
-        assert managed.read_text(encoding="utf-8") == ("revised" if new_plan else "base")
+        assert managed.read_text(encoding="utf-8") == (revised_content if new_plan else "base")
         assert len(provider.requests) == (8 if new_plan else 6)
         assert [
             (step.kind.value, step.status.value, step.public_summary)
@@ -312,6 +317,11 @@ def test_explain_update_supersedes_unapplied_changeset_and_its_file_plan(
         if new_plan:
             assert latest.id != plan.id
             assert latest.generation == latest.workflow_plan_revision == 2
+            assert [item.workflow_plan_revision for item in invocations] == [1, 1, 1, 2, 2]
+            if repeat_arguments:
+                assert invocations[1].argument_hash == invocations[3].argument_hash
+                assert invocations[2].argument_hash == invocations[4].argument_hash
+                assert invocations[2].command_run_id != invocations[4].command_run_id
         service.invoke("assistant.turns.steer", request)
         messages = service.invoke("messages.list", {"conversation_id": conversation["id"]})["items"]
         assert len([item for item in messages if item["role"] == "assistant"]) == 1

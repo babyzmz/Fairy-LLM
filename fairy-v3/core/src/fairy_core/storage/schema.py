@@ -590,6 +590,8 @@ assistant_tool_invocations = Table(
     Column("scope_digest", String(64), nullable=False),
     Column("argument_hash", String(64), nullable=False),
     Column("arguments", JSON, nullable=False),
+    Column("workflow_run_id", String(ID_LENGTH)),
+    Column("workflow_plan_revision", BigInteger, nullable=False, server_default="1"),
     Column("command_run_id", String(ID_LENGTH)),
     Column("status", String(32), nullable=False),
     Column("public_summary", String),
@@ -609,17 +611,30 @@ assistant_tool_invocations = Table(
     UniqueConstraint(
         "tenant_id",
         "turn_id",
+        "workflow_plan_revision",
         "argument_hash",
-        name="uq_core_assistant_tool_invocations_turn_arguments",
+        name="uq_core_assistant_tool_invocations_revision_arguments",
     ),
     UniqueConstraint(
         "tenant_id",
         "turn_id",
+        "workflow_plan_revision",
         "provider_call_id",
-        name="uq_core_assistant_tool_invocations_turn_provider_call",
+        name="uq_core_assistant_tool_invocations_revision_provider_call",
     ),
     CheckConstraint("model_round > 0", name="ck_core_assistant_tool_invocations_model_round"),
     CheckConstraint("sequence > 0", name="ck_core_assistant_tool_invocations_sequence"),
+    CheckConstraint(
+        "workflow_plan_revision > 0 AND "
+        "(workflow_run_id IS NOT NULL OR workflow_plan_revision = 1)",
+        name="ck_core_assistant_tool_invocations_workflow_binding",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "workflow_run_id", "workflow_plan_revision"],
+        ["core_workflow_plan_revisions.tenant_id", "core_workflow_plan_revisions.run_id",
+         "core_workflow_plan_revisions.revision"],
+        name="fk_core_assistant_tool_invocations_workflow_revision",
+    ),
     CheckConstraint(
         "status IN ('created', 'queued', 'running', 'completed', 'failed', "
         "'rejected', 'cancelled')",

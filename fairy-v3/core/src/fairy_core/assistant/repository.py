@@ -738,6 +738,10 @@ class SqlAlchemyAssistantRepository(
             "scope_digest": invocation.scope_digest,
             "argument_hash": invocation.argument_hash,
             "arguments": invocation.arguments,
+            "workflow_run_id": (
+                str(invocation.workflow_run_id) if invocation.workflow_run_id else None
+            ),
+            "workflow_plan_revision": invocation.workflow_plan_revision,
             "command_run_id": (
                 str(invocation.command_run_id) if invocation.command_run_id else None
             ),
@@ -775,6 +779,11 @@ class SqlAlchemyAssistantRepository(
                     assistant_tool_invocations.c.tool_name == invocation.tool_name,
                     assistant_tool_invocations.c.scope_digest == invocation.scope_digest,
                     assistant_tool_invocations.c.argument_hash == invocation.argument_hash,
+                    assistant_tool_invocations.c.workflow_run_id == (
+                        str(invocation.workflow_run_id) if invocation.workflow_run_id else None
+                    ),
+                    assistant_tool_invocations.c.workflow_plan_revision
+                    == invocation.workflow_plan_revision,
                     assistant_tool_invocations.c.status == expected_status.value,
                 )
                 .values(
@@ -1216,6 +1225,8 @@ class SqlAlchemyAssistantRepository(
             scope_digest=row["scope_digest"],
             argument_hash=row["argument_hash"],
             arguments=dict(row["arguments"]),
+            workflow_run_id=UUID(row["workflow_run_id"]) if row["workflow_run_id"] else None,
+            workflow_plan_revision=int(row["workflow_plan_revision"]),
             command_run_id=UUID(row["command_run_id"]) if row["command_run_id"] else None,
             status=ToolInvocationStatus(row["status"]),
             public_summary=row["public_summary"],

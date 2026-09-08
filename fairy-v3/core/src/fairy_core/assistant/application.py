@@ -26,6 +26,7 @@ from fairy_core.assistant.execution_intent_policy import (
     file_target_issue,
     readonly_intent_issue,
 )
+from fairy_core.assistant.interpretation import RequestAction
 from fairy_core.assistant.media_routing import constrain_context_for_media
 from fairy_core.assistant.model_boundary import AssistantModelBoundary, AssistantModelYield
 from fairy_core.assistant.models import (
@@ -43,6 +44,7 @@ from fairy_core.assistant.routing import RoutingDecision
 from fairy_core.assistant.routing_runtime import AssistantRoutingMixin
 from fairy_core.assistant.tool_approval_runtime import AssistantToolApprovalMixin
 from fairy_core.assistant.tool_context_runtime import AssistantToolContextMixin
+from fairy_core.assistant.tool_revision import active_tool_revision, tool_command_key
 from fairy_core.assistant.tool_trace import ToolTraceCoordinator
 from fairy_core.assistant.tools import (
     DEFERRED_MEDIA_TOOLS,
@@ -891,6 +893,7 @@ class AssistantApplication(
             turn = require_turn(unit_of_work, turn_id)
             task = require_task(unit_of_work, turn.task_id)
             scope = self._scope_resolver(unit_of_work.state, task)
+            workflow_run_id, workflow_revision = active_tool_revision(unit_of_work, turn)
             invocation = ToolInvocation.create(
                 turn=turn,
                 model_round=model_round,
@@ -899,6 +902,8 @@ class AssistantApplication(
                 tool_name=definition.name,
                 scope_digest=scope.scope_digest,
                 arguments=arguments,
+                workflow_run_id=workflow_run_id,
+                workflow_plan_revision=workflow_revision,
             )
             if prepared_invocation_id is not None:
                 prepared = unit_of_work.assistant.get_tool_invocation(prepared_invocation_id)
@@ -907,11 +912,14 @@ class AssistantApplication(
                     or prepared.turn_id != turn.id or prepared.task_id != task.id
                     or prepared.scope_digest != scope.scope_digest
                     or prepared.argument_hash != invocation.argument_hash
+                    or prepared.workflow_run_id != invocation.workflow_run_id
+                    or prepared.workflow_plan_revision != invocation.workflow_plan_revision
                 ):
                     raise ValueError("prepared Tool Invocation changed before dispatch")
                 invocation = prepared
             existing = unit_of_work.assistant.list_tool_invocations(turn_id)
             if any(item.argument_hash == invocation.argument_hash and item.id != invocation.id
+                   and item.workflow_plan_revision == invocation.workflow_plan_revision
                    for item in existing):
                 duplicate = True
                 running = None
@@ -962,9 +970,7 @@ class AssistantApplication(
                                     and definition.name in DEFERRED_MEDIA_TOOLS
                                 ) else {}),
                             },
-                            idempotency_key=(
-                                f"assistant:{turn.id}:tool:{invocation.argument_hash}"
-                            ),
+                            idempotency_key=tool_command_key(invocation),
                         ),
                         profile=policy.profile,
                         capability_overrides=dict(policy.capability_overrides),
@@ -1067,9 +1073,19 @@ class AssistantApplication(
         if decision is None or decision.media_tool_name is None:
             return False
         with self._unit_of_work_factory() as unit_of_work:
+            turn = require_turn(unit_of_work, turn_id)
+            _, revision = active_tool_revision(unit_of_work, turn)
+            intent = unit_of_work.assistant.get_execution_intent(turn_id)
+            describe_existing = (
+                revision > 1 and intent is not None
+                and intent.action in {
+                    RequestAction.ANSWER, RequestAction.EXPLAIN, RequestAction.REVIEW,
+                }
+            )
             return any(
                 invocation.tool_name == decision.media_tool_name
                 and invocation.status is ToolInvocationStatus.COMPLETED
+                and (invocation.workflow_plan_revision == revision or describe_existing)
                 for invocation in unit_of_work.assistant.list_tool_invocations(turn_id)
             )
 

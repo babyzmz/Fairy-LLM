@@ -33,8 +33,9 @@ from fairy_core.providers import (
 class MediaOutputLimitError(RuntimeError):
     error_code = "MEDIA_OUTPUT_LIMIT_REACHED"
     model_detail = (
-        "The planned media output was already attempted in this Turn. Do not create another "
-        "media job; report the existing result or ask the user to start a new Turn."
+        "The planned media output was already attempted in this plan revision, or an earlier "
+        "output is still active. Do not create another media job; report the existing result "
+        "and wait for an explicit user request after that operation settles."
     )
 
 

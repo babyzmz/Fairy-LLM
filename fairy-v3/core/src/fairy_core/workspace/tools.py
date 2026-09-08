@@ -24,6 +24,7 @@ from fairy_core.assistant.tools import (
     ToolResult,
     UnavailableToolExecutor,
 )
+from fairy_core.commanding import CommandRun
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.contracts.models import ChangesetProposal, FileMutation
 from fairy_core.contracts.planning import ExecutionPlanCreateInput, PlannedFileInput
@@ -92,6 +93,25 @@ class ProjectToolExecutor(DelegatingToolCancellation):
         if definition.name == "execution.plan":
             return self._create_execution_plan(scope, arguments)
         return self._propose_changeset(scope, arguments)
+
+    def execute_command(
+        self,
+        definition: ToolDefinition,
+        scope: ScopeContract,
+        arguments: dict[str, object],
+        *,
+        command_run: CommandRun,
+    ) -> ToolResult:
+        if definition.name == "edit.propose_changeset":
+            if command_run.scope_digest != scope.scope_digest:
+                raise ScopeViolationError("Changeset Command scope does not match")
+            return self._propose_changeset(scope, arguments, command_run=command_run)
+        if definition.name in _PROJECT_TOOLS:
+            return self.execute(definition, scope, arguments)
+        execute = getattr(self._delegate, "execute_command", None)
+        if callable(execute):
+            return execute(definition, scope, arguments, command_run=command_run)
+        return self._delegate.execute(definition, scope, arguments)
 
     def _list_project(
         self,
@@ -591,6 +611,8 @@ class ProjectToolExecutor(DelegatingToolCancellation):
         self,
         scope: ScopeContract,
         arguments: dict[str, object],
+        *,
+        command_run: CommandRun | None = None,
     ) -> ToolResult:
         if scope.target_version_id is None:
             raise ScopeViolationError("Task has no writable Workspace Version")
@@ -682,6 +704,11 @@ class ProjectToolExecutor(DelegatingToolCancellation):
                     "files": [file.model_dump(mode="json") for file in files],
                     "reason": reason,
                     "scope_digest": scope.scope_digest,
+                    **({"command_id": str(command_run.id)} if (
+                        command_run is not None
+                        and plan.workflow_plan_revision is not None
+                        and plan.workflow_plan_revision > 1
+                    ) else {}),
                 },
                 ensure_ascii=True,
                 allow_nan=False,

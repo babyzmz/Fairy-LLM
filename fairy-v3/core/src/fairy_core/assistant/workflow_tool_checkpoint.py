@@ -5,7 +5,8 @@ from uuid import UUID
 
 from fairy_core.assistant.candidates import arguments_for_definition
 from fairy_core.assistant.models import ToolInvocation
-from fairy_core.assistant.tools import ToolCandidateError
+from fairy_core.assistant.tool_revision import active_tool_revision
+from fairy_core.assistant.tools import DuplicateToolCandidateError, ToolCandidateError
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.assistant.workflow_tool_plan import (
     ASSISTANT_STEP_JOIN_KIND,
@@ -29,6 +30,9 @@ def prepare_tool_checkpoint(boundary, application, payload):
         turn = require_turn(unit, payload["turn_id"])
         task = require_task(unit, turn.task_id)
         scope = application._scope_resolver(unit.state, task)
+        run_id, revision = active_tool_revision(unit, turn)
+        if (run_id, revision) != (boundary.node.run_id, boundary.node.plan_revision):
+            raise ValueError("Tool checkpoint does not own the current Workflow revision")
         existing = unit.assistant.list_tool_invocations(turn.id)
         sequence = max((item.sequence for item in existing), default=0)
         invocations = tuple(
@@ -40,6 +44,8 @@ def prepare_tool_checkpoint(boundary, application, payload):
                 tool_name=candidate.name,
                 scope_digest=scope.scope_digest,
                 arguments=arguments,
+                workflow_run_id=run_id,
+                workflow_plan_revision=revision,
             )
             for index, (candidate, arguments) in enumerate(parsed, 1)
         )
@@ -48,8 +54,13 @@ def prepare_tool_checkpoint(boundary, application, payload):
             if invocation.tool_name.startswith("browser."):
                 # Browser operations share mutable sessions, even snapshot reads.
                 resources[invocation.id] = (f"browser-workspace:{scope.workspace_id}",)
-            if any(item.argument_hash == invocation.argument_hash for item in existing):
-                invocation.reject(error_code="DUPLICATE_TOOL_CALL")
+            if any(
+                item.workflow_plan_revision == invocation.workflow_plan_revision
+                and (item.argument_hash == invocation.argument_hash
+                     or item.provider_call_id == invocation.provider_call_id)
+                for item in existing
+            ):
+                raise DuplicateToolCandidateError("Repeated tool call in this plan was rejected")
         nodes, edges = assistant_tool_continuation(
             source=boundary.node,
             turn=turn,

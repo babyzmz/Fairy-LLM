@@ -6,7 +6,7 @@ from uuid import UUID
 from fairy_core.assistant.command_leases import assistant_command_lease_until
 from fairy_core.assistant.model_boundary import AssistantModelYield
 from fairy_core.assistant.models import AssistantTurnStatus
-from fairy_core.assistant.tools import ToolCandidateError
+from fairy_core.assistant.tools import DuplicateToolCandidateError, ToolCandidateError
 from fairy_core.assistant.workflow_step_nodes import (
     STEP_FINALIZE,
     STEP_MODEL,
@@ -104,7 +104,7 @@ class _ModelBoundary:
         except WorkflowFenceError:
             self.cancellation.interrupt()
             raise ProviderCancelledError("Tool plan lost its Workflow fence") from None
-        except ToolCandidateError:
+        except ToolCandidateError as error:
             if self.invalid_tool_retry_used:
                 raise
             self.retry(
@@ -118,9 +118,17 @@ class _ModelBoundary:
                         "chunk_index",
                     )
                 },
-                error_code="PROVIDER_PROTOCOL_ERROR",
+                error_code=(
+                    "DUPLICATE_TOOL_CALL" if isinstance(error, DuplicateToolCandidateError)
+                    else "PROVIDER_PROTOCOL_ERROR"
+                ),
                 invalid_tool_retry_used=True,
-                feedback="Use only offered tools with arguments matching their JSON schema.",
+                feedback=(
+                    "This plan already attempted that tool call. Use its recorded result; "
+                    "do not repeat its arguments or reuse its call ID."
+                    if isinstance(error, DuplicateToolCandidateError) else
+                    "Use only offered tools with arguments matching their JSON schema."
+                ),
             )
         raise AssistantModelYield
 

@@ -59,6 +59,10 @@ class ToolCandidateError(ValueError):
     pass
 
 
+class DuplicateToolCandidateError(ToolCandidateError):
+    pass
+
+
 class ToolExecutionUnavailableError(RuntimeError):
     error_code = "CAPABILITY_NOT_AVAILABLE"
 

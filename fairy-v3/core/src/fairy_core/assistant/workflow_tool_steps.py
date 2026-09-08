@@ -42,6 +42,8 @@ def can_reconcile_while_paused(adapter, node, turn):
             invocation is None or invocation.turn_id != turn.id
             or invocation.task_id != turn.task_id or invocation.scope_digest != turn.scope_digest
             or invocation.tool_name not in DEFERRED_MEDIA_TOOLS
+            or invocation.workflow_run_id != node.run_id
+            or invocation.workflow_plan_revision != node.plan_revision
         ):
             return False
         if invocation.status in _TERMINAL:
@@ -70,6 +72,8 @@ def execute_tool_step(adapter, node, claim, cancellation, turn):
                 or item.task_id != turn.task_id
                 or item.scope_digest != turn.scope_digest
                 or item.model_round != node.payload["model_round"]
+                or item.workflow_run_id != node.run_id
+                or item.workflow_plan_revision != node.plan_revision
                 or item.status not in _TERMINAL
                 for item in ordered
             )
@@ -153,6 +157,8 @@ def _execute_invocation_attempt(adapter, node, claim, cancellation, turn):
             or invocation.turn_id != turn.id
             or invocation.task_id != turn.task_id
             or invocation.scope_digest != turn.scope_digest
+            or invocation.workflow_run_id != node.run_id
+            or invocation.workflow_plan_revision != node.plan_revision
         ):
             raise WorkflowFenceError("Tool node does not own this Invocation")
         if invocation.tool_name in DEFERRED_MEDIA_TOOLS and (

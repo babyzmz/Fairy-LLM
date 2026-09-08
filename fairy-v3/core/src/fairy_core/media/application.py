@@ -9,6 +9,7 @@ from uuid import UUID
 
 from fairy_core.assistant.models import ToolInvocation
 from fairy_core.assistant.provider_attempts import ProviderAttemptRecorder
+from fairy_core.assistant.tool_revision import active_tool_revision
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 from fairy_core.domain.execution import Artifact, ArtifactVisibility
@@ -558,6 +559,28 @@ class MediaApplication:
             unit_of_work.commit()
         return job
 
+    @staticmethod
+    def _has_planned_output(unit, turn, invocation, kind):
+        run_id, revision = active_tool_revision(unit, turn)
+        if invocation is None or (
+            invocation.workflow_run_id, invocation.workflow_plan_revision
+        ) != (run_id, revision):
+            raise RuntimeError("Media dispatch does not own the current Workflow revision")
+        calls = {
+            item.command_run_id: item
+            for item in unit.assistant.list_tool_invocations(turn.id)
+        }
+        for job in unit.state.list_media_jobs(turn.task_id):
+            if job.turn_id != turn.id or job.kind is not kind:
+                continue
+            previous = calls.get(job.command_run_id)
+            if (
+                not job.is_terminal or previous is None
+                or previous.workflow_plan_revision == revision
+            ):
+                return True
+        return False
+
     def _prepare_job(
         self,
         *,
@@ -641,9 +664,8 @@ class MediaApplication:
                     ),
                     max_workspace_bytes=workspace.max_bytes,
                 )
-            if turn is not None and any(
-                job.turn_id == turn.id and job.kind is kind
-                for job in unit_of_work.state.list_media_jobs(task.id)
+            if turn is not None and self._has_planned_output(
+                unit_of_work, turn, invocation, kind,
             ):
                 raise media_invariants.MediaOutputLimitError(
                     "Assistant Turn already owns its planned media output"
