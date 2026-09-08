@@ -6,7 +6,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
-from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
+from fairy_core.assistant.tools import (
+    DelegatingToolCancellation,
+    ToolExecutor,
+    ToolResult,
+    UnavailableToolExecutor,
+)
 from fairy_core.commanding import CommandRun, CommandStatus
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
@@ -513,7 +518,7 @@ class ProjectExecutionApplication:
             )
 
 
-class ProjectExecutionToolExecutor:
+class ProjectExecutionToolExecutor(DelegatingToolCancellation):
     def __init__(
         self,
         *,

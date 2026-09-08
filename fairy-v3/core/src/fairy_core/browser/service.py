@@ -19,7 +19,12 @@ from fairy_core.assistant.evidence import (
     EvidenceRequirementKind,
     EvidenceSourceKind,
 )
-from fairy_core.assistant.tools import ToolExecutionUnavailableError, ToolExecutor, ToolResult
+from fairy_core.assistant.tools import (
+    DelegatingToolCancellation,
+    ToolExecutionUnavailableError,
+    ToolExecutor,
+    ToolResult,
+)
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.contracts.browser import (
     BrowserActionInput,
@@ -547,7 +552,7 @@ class BrowserService:
         temporary.replace(self._state_path)
 
 
-class BrowserToolExecutor:
+class BrowserToolExecutor(DelegatingToolCancellation):
     def __init__(self, *, service: BrowserService, delegate: ToolExecutor | None) -> None:
         self._service = service
         self._delegate = delegate

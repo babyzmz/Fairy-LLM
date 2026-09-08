@@ -114,9 +114,18 @@
 - Core stdio/JSON-RPC 定向20项通过；Capabilities stdio3项通过；TypeScript 通过，Client/Tauri/Cloud Transport 30项通过。新增 EOF/满载/重复 ID/未知 get 串行/断管不再派发场景；既有低于50ms轮询常量断言按批准方案改成250–500ms初始间隔，并补10秒空闲最多7次请求、取消后无计时器/迟到事件的行为测试（修复前401次）。
 - 默认请求30秒，显式 Voice/Browser 长操作120秒；超时返回 `RPC_DEADLINE_EXCEEDED`，不会映射成可重试的启动失联。未协商推送的客户端退避至5秒，读取到新事件后重置。事件 watch、提交后唤醒、慢订阅者重同步仍未实现，Phase 3 尚未完成。
 
-### Phase 3B：事件提交唤醒与推送验收契约
+### Phase 3C：取消接受与底层停止
+
+- 取消请求先做持久 Turn Revision 校验，再信号化 Kernel；WSL/MCP 等停止清理由 Core 所有的单 Worker、最多32个请求的有界生命周期队列处理。该队列只停止已经存在的 CommandRun，不创建模型/工具业务，不负责 Workflow 调度或重试。
+- 队列容量在提交取消前预留，容量不足不能取消一半再报告未接受；重复停止不改变原 CommandRun 绑定。关闭 Core 先停止接收并排空停止信号，再关闭 Workflow/领域运行时。
+- Turn 的 cancelled 兼容字段保留，额外只读停止投影以持久运行中调用为依据；底层调用没有退出时不能显示已经停止，也不能把收到停止信号当作副作用回滚。进程重启后的未定调用必须保留恢复决策，不能自动重放写入。
+- 验证真实 CommandBus/临时数据库下阻塞工具＋阻塞 cancel hook，取消确认<1秒、另一聊天仍可读、迟到结果不写成回复、停止投影在实际退出后收敛；验证容量拒绝在任何状态修改前发生、Core close等待己有清理、过期 Revision不触发清理。脚本工具不替代真实 WSL停止门禁。
 
 - 取消版本竞态独立修复：旧代码先调用 Scheduler.cancel 再校验 Turn revision，新增阻塞 Provider 回归实际观察到“RPC 拒绝但 Workflow 已取消”。现改为先事务提交版本校验后的 Turn 取消，再触碰 Worker/领域运行时；相同请求遇到已经提交的相邻取消 Revision 可幂等收敛。过期请求不改变任务，释放 Provider 后仍能正常完成。取消/Workflow/Assistant 定向13项通过（17.03秒），Ruff通过。领域停止仍为同步，此项不冒充快速取消门禁。
+
+- 停止传递链独立复现：Core 实际组合的 Project/Memory/Knowledge 包装层会截断 `cancel_command`，底层工具已运行但停止钩子未收到信号。补齐这些层及 Browser/Document/Research/System/ProjectExecution/Media 的透传，原样携带已授权 CommandRun，不按名称创建新操作。实际组合链回归通过；本轮扩大门禁另外发现旧 Sandbox/MCP 写工具测试没有有效执行意图前置条件，不能把这些未通过场景算作停止链验收完成。
+
+### Phase 3B：事件提交唤醒与推送验收契约
 
 - 唤醒信号由同一 Core 的 UnitOfWorkFactory 持有，按 tenant 隔离；Ledger 写入成功提交之后才通知，回滚/普通只读提交不通知。信号只表示“重新读取 Ledger”，不携带消息正文，不取代持久游标。
 - 本地 watch/unwatch 必须协商启用；响应和事件使用不同 envelope。每个订阅独立有界队列/游标，溢出进入显式 resync，终态与审批依靠持久回放补齐。主窗口卸载或取消清理订阅，迟到消息不能重建旧订阅。

@@ -10,7 +10,12 @@ from fairy_core.assistant.evidence import (
     EvidenceSourceKind,
     query_digest,
 )
-from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
+from fairy_core.assistant.tools import (
+    DelegatingToolCancellation,
+    ToolExecutor,
+    ToolResult,
+    UnavailableToolExecutor,
+)
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.domain.models import ScopeContract
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -19,7 +24,7 @@ _TOOLS = frozenset({"knowledge.search", "knowledge.read", "knowledge.links"})
 _MAX_READ_CHARACTERS = 24_000
 
 
-class KnowledgeToolExecutor:
+class KnowledgeToolExecutor(DelegatingToolCancellation):
     def __init__(
         self,
         *,

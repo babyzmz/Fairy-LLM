@@ -9,7 +9,12 @@ from fairy_core.assistant.evidence import (
     EvidenceSourceKind,
     query_digest,
 )
-from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
+from fairy_core.assistant.tools import (
+    DelegatingToolCancellation,
+    ToolExecutor,
+    ToolResult,
+    UnavailableToolExecutor,
+)
 from fairy_core.commanding.models import CommandRun
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.domain.models import ScopeContract
@@ -19,7 +24,7 @@ from fairy_core.memory.models import MemoryNamespace
 _TOOLS = frozenset({"memory.search", "memory.suggest"})
 
 
-class MemoryToolExecutor:
+class MemoryToolExecutor(DelegatingToolCancellation):
     def __init__(
         self,
         *,

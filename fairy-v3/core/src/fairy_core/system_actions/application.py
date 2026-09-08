@@ -7,7 +7,12 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
-from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
+from fairy_core.assistant.tools import (
+    DelegatingToolCancellation,
+    ToolExecutor,
+    ToolResult,
+    UnavailableToolExecutor,
+)
 from fairy_core.commanding import (
     CommandRun,
     CommandStatus,
@@ -228,7 +233,7 @@ class SystemActionApplication:
             unit_of_work.commit()
 
 
-class SystemActionToolExecutor:
+class SystemActionToolExecutor(DelegatingToolCancellation):
     def __init__(
         self,
         *,

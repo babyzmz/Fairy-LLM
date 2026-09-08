@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from fairy_core.assistant.evidence import EvidenceDraft
+from fairy_core.commanding.models import CommandRun
 from fairy_core.commanding.registry import ToolDefinition, ToolRegistry
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.domain.models import ScopeContract
@@ -119,6 +120,17 @@ class UnavailableToolExecutor:
     ) -> ToolResult:
         del scope, arguments
         raise ToolExecutionUnavailableError(f"tool executor is unavailable: {definition.executor}")
+
+
+class DelegatingToolCancellation:
+    """Preserve the existing command's cancellation identity through wrapper layers."""
+
+    _delegate: ToolExecutor | None
+
+    def cancel_command(self, command_run: CommandRun) -> None:
+        cancel = getattr(self._delegate, "cancel_command", None)
+        if callable(cancel):
+            cancel(command_run)
 
 
 def model_tools(

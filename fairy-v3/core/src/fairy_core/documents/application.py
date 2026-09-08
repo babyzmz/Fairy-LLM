@@ -15,7 +15,12 @@ from fairy_core.assistant.evidence import (
     EvidenceSourceKind,
     query_digest,
 )
-from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
+from fairy_core.assistant.tools import (
+    DelegatingToolCancellation,
+    ToolExecutor,
+    ToolResult,
+    UnavailableToolExecutor,
+)
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
@@ -356,7 +361,7 @@ class DocumentApplication:
             )
 
 
-class DocumentToolExecutor:
+class DocumentToolExecutor(DelegatingToolCancellation):
     def __init__(
         self,
         *,

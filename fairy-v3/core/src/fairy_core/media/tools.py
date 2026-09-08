@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
+from fairy_core.assistant.tools import (
+    DelegatingToolCancellation,
+    ToolExecutor,
+    ToolResult,
+    UnavailableToolExecutor,
+)
 from fairy_core.commanding import CommandRun
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.domain.models import ScopeContract
@@ -9,7 +14,7 @@ from fairy_core.media.scheduler import MediaScheduler
 from fairy_core.providers import CancellationToken
 
 
-class MediaToolExecutor:
+class MediaToolExecutor(DelegatingToolCancellation):
     def __init__(
         self,
         *,

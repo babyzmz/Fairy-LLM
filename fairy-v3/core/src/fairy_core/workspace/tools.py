@@ -18,7 +18,12 @@ from fairy_core.assistant.evidence import (
     EvidenceSourceKind,
     query_digest,
 )
-from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
+from fairy_core.assistant.tools import (
+    DelegatingToolCancellation,
+    ToolExecutor,
+    ToolResult,
+    UnavailableToolExecutor,
+)
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.contracts.models import ChangesetProposal, FileMutation
 from fairy_core.contracts.planning import ExecutionPlanCreateInput, PlannedFileInput
@@ -47,7 +52,7 @@ _MAX_SEARCH_BYTES = 32 * 1024 * 1024
 _ABSENT_FILE_HASH = "0" * 64
 
 
-class ProjectToolExecutor:
+class ProjectToolExecutor(DelegatingToolCancellation):
     def __init__(
         self,
         *,

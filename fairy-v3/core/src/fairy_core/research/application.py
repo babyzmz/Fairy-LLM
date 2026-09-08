@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fairy_core.assistant.tools import (
+    DelegatingToolCancellation,
     ToolExecutor,
     ToolResult,
     UnavailableToolExecutor,
@@ -258,7 +259,7 @@ class ResearchApplication:
         return tuple(fetched)
 
 
-class ResearchToolExecutor:
+class ResearchToolExecutor(DelegatingToolCancellation):
     def __init__(
         self,
         *,
