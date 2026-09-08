@@ -11,6 +11,25 @@ pub struct PetModelSelection {
     revision: u64,
 }
 
+impl PetModelSelection {
+    fn valid(&self) -> bool {
+        match self.mode.as_str() {
+            "auto" => self.model_id.is_none(),
+            "manual" => self
+                .model_id
+                .as_ref()
+                .is_some_and(|id| !id.trim().is_empty() && id.len() <= 255),
+            _ => false,
+        }
+    }
+}
+
+pub struct PreparedPetChat {
+    revision: u64,
+    model_selection: PetModelSelection,
+    pub params: Value,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PetChatBindingInput {
@@ -76,6 +95,53 @@ pub struct PetChatBroker {
 }
 
 impl PetChatBroker {
+    pub fn prepare_new_chat(
+        &self,
+        revision: u64,
+        request_id: &str,
+        preference: &Value,
+    ) -> Result<PreparedPetChat, String> {
+        if !valid_request_id(request_id) {
+            return Err("PET_CHAT_INPUT_INVALID".into());
+        }
+        let selection: PetModelSelection = serde_json::from_value(json!({
+            "mode": preference["mode"], "model_id": preference["model_id"], "revision": preference["revision"],
+        })).map_err(|_| "PET_CHAT_MODEL_BINDING_INVALID")?;
+        if !selection.valid() {
+            return Err("PET_CHAT_MODEL_BINDING_INVALID".into());
+        }
+        if self.context()?.revision != revision {
+            return Err("PET_CHAT_BINDING_CHANGED".into());
+        }
+        Ok(PreparedPetChat {
+            revision,
+            model_selection: selection,
+            params: json!({"text": "/new", "idempotency_key": format!("pet-new:{request_id}")}),
+        })
+    }
+
+    pub fn finish_new_chat(
+        &self,
+        ticket: &PreparedPetChat,
+        conversation: &Value,
+    ) -> Result<PetChatContext, String> {
+        let conversation_id = serde_json::from_value(conversation["id"].clone())
+            .map_err(|_| "PET_CHAT_RESPONSE_INVALID")?;
+        let current = self.context()?;
+        if current.conversation_id == Some(conversation_id) {
+            return Ok(current);
+        }
+        self.bind(
+            PetChatBindingInput {
+                expected_revision: ticket.revision,
+                conversation_id,
+                profile_id: None,
+                model_selection: Some(ticket.model_selection.clone()),
+            },
+            conversation,
+        )
+    }
+
     pub fn context(&self) -> Result<PetChatContext, String> {
         Ok(self
             .state
@@ -109,16 +175,10 @@ impl PetChatBroker {
                 .profile_id
                 .as_ref()
                 .is_some_and(|id| id.trim().is_empty() || id.len() > 255)
-            || input.model_selection.as_ref().is_some_and(|selection| {
-                match selection.mode.as_str() {
-                    "auto" => selection.model_id.is_some(),
-                    "manual" => !selection
-                        .model_id
-                        .as_ref()
-                        .is_some_and(|id| !id.trim().is_empty() && id.len() <= 255),
-                    _ => true,
-                }
-            })
+            || input
+                .model_selection
+                .as_ref()
+                .is_some_and(|selection| !selection.valid())
         {
             return Err("PET_CHAT_MODEL_BINDING_INVALID".into());
         }
@@ -158,14 +218,7 @@ impl PetChatBroker {
         text: &str,
     ) -> Result<PreparedPetSubmission, String> {
         let text = text.trim();
-        if text.is_empty()
-            || text.chars().count() > 4_000
-            || submission_id.is_empty()
-            || submission_id.len() > 128
-            || !submission_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"-_:".contains(&byte))
-        {
+        if text.is_empty() || text.chars().count() > 4_000 || !valid_request_id(submission_id) {
             return Err("PET_CHAT_INPUT_INVALID".into());
         }
         let mut state = self.state.lock().map_err(|_| "PET_CHAT_LOCK")?;
@@ -369,6 +422,14 @@ fn advance_projection(context: &mut PetChatContext) -> Result<(), String> {
         .checked_add(1)
         .ok_or("PET_CHAT_REVISION_EXHAUSTED")?;
     Ok(())
+}
+
+fn valid_request_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_:".contains(&byte))
 }
 
 fn scoped_turn(value: &Value, conversation_id: Option<Uuid>) -> Result<PetTurnProjection, String> {
@@ -599,6 +660,63 @@ mod tests {
         let failing = broker.prepare_snapshot().unwrap().unwrap();
         assert!(broker.reject_snapshot(&failing).unwrap());
         assert!(!broker.context().unwrap().connection_available);
+    }
+
+    #[test]
+    fn new_chat_uses_core_model_preference_and_cannot_overwrite_a_later_binding() {
+        let broker = PetChatBroker::default();
+        let preference = json!({"mode": "manual", "model_id": "configured-model", "revision": 7,
+            "allow_free_fallback": false, "zero_data_retention": true});
+        let ticket = broker.prepare_new_chat(0, "new-once", &preference).unwrap();
+        assert_eq!(
+            ticket.params,
+            json!({"text": "/new", "idempotency_key": "pet-new:new-once"})
+        );
+        let first = Uuid::new_v4();
+        let context = broker
+            .finish_new_chat(&ticket, &conversation(first))
+            .unwrap();
+        assert_eq!(
+            broker
+                .finish_new_chat(&ticket, &conversation(first))
+                .unwrap()
+                .revision,
+            context.revision
+        );
+        let message = broker
+            .prepare_submission(context.revision, "new-send", "Hello")
+            .unwrap();
+        assert_eq!(message.params["profile_id"], Value::Null);
+        assert_eq!(
+            message.params["model_selection"],
+            json!({
+                "mode": "manual", "model_id": "configured-model", "revision": 7,
+            })
+        );
+        broker.release_submission(&message);
+        assert!(broker.prepare_new_chat(0, "late", &preference).is_err());
+        let late = broker
+            .prepare_new_chat(context.revision, "second", &preference)
+            .unwrap();
+        let second = Uuid::new_v4();
+        broker
+            .bind(input(context.revision, second), &conversation(second))
+            .unwrap();
+        assert!(broker
+            .finish_new_chat(&late, &conversation(Uuid::new_v4()))
+            .is_err());
+        assert_eq!(broker.context().unwrap().conversation_id, Some(second));
+        let empty = PetChatBroker::default();
+        assert_eq!(
+            empty.prepare_submission(0, "bad-input", " ").unwrap_err(),
+            "PET_CHAT_INPUT_INVALID"
+        );
+        assert_eq!(
+            empty
+                .prepare_submission(0, "valid-input", "Hello")
+                .unwrap_err(),
+            "PET_CHAT_NOT_BOUND"
+        );
     }
 
     #[test]

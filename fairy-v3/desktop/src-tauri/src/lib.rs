@@ -1468,9 +1468,21 @@ async fn pet_chat_submit(
     text: String,
 ) -> Result<Value, String> {
     authorize_pet_input_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
-    let ticket = state
+    // Validate text and the binding before any new-chat side effect.
+    let ticket = match state
         .pet_chat
-        .prepare_submission(revision, &submission_id, &text)?;
+        .prepare_submission(revision, &submission_id, &text)
+    {
+        Ok(ticket) => ticket,
+        Err(error) if error == "PET_CHAT_NOT_BOUND" => {
+            let context = create_pet_chat(&app, &state, revision, &submission_id).await?;
+            state
+                .pet_chat
+                .prepare_submission(context.revision, &submission_id, &text)?
+        }
+        Err(error) => return Err(error),
+    };
+    let revision = ticket.revision;
     let response = call_core(
         &state,
         json!({
@@ -1490,6 +1502,59 @@ async fn pet_chat_submit(
     state.pet_chat.release_submission(&ticket);
     wake_pet_chat_events(&state);
     result
+}
+
+async fn create_pet_chat(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+    revision: u64,
+    request_id: &str,
+) -> Result<pet_chat_broker::PetChatContext, String> {
+    if state.pet_chat.context()?.revision != revision {
+        return Err("PET_CHAT_BINDING_CHANGED".into());
+    }
+    let preference = pet_chat_core_result(
+        call_core(
+            state,
+            json!({
+                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
+                "method": "models.selection.get", "params": {},
+            }),
+        )
+        .await,
+    )?;
+    let ticket = state
+        .pet_chat
+        .prepare_new_chat(revision, request_id, &preference)?;
+    ensure_pet_chat_events(app, state)?;
+    let result = pet_chat_core_result(
+        call_core(
+            state,
+            json!({
+                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
+                "method": "assistant.commands.dispatch", "params": ticket.params,
+            }),
+        )
+        .await,
+    )?;
+    let context = state
+        .pet_chat
+        .finish_new_chat(&ticket, &result["conversation"])?;
+    publish_pet_chat_context(app, state);
+    wake_pet_chat_events(state);
+    Ok(context)
+}
+
+#[tauri::command]
+async fn pet_chat_new(
+    app: tauri::AppHandle,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    revision: u64,
+    request_id: String,
+) -> Result<pet_chat_broker::PetChatContext, String> {
+    authorize_pet_input_window(window.label()).map_err(|_| "SCOPE_MISMATCH".to_owned())?;
+    create_pet_chat(&app, &state, revision, &request_id).await
 }
 
 #[tauri::command]
@@ -5907,6 +5972,7 @@ pub fn run() {
             pet_chat_bind,
             pet_chat_context_get,
             pet_chat_submit,
+            pet_chat_new,
             pet_chat_cancel,
             core_events_open,
             core_events_next,
