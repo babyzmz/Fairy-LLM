@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from fairy_core.assistant.interpretation import RequestAction
 from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.runtime.models import RuntimeExecutorHealth
 from fairy_core.sandbox.models import (
@@ -16,6 +17,7 @@ from fairy_core.sandbox.models import (
     SandboxResultStatus,
 )
 from fairy_core.transports.stdio import build_local_service
+from tests.assistant.intent_support import bind_test_intent
 from tests.assistant.support import ScriptedProvider
 
 
@@ -111,6 +113,9 @@ def test_assistant_dependency_install_uses_typed_template_and_persists_report(
                 "profile_id": "scripted",
                 "idempotency_key": "closure:dependency-turn",
             },
+        )
+        bind_test_intent(
+            service, turn, action=RequestAction.CHANGE, targets=("current workspace",),
         )
 
         completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
@@ -289,6 +294,9 @@ def test_scratch_workspace_can_run_core_owned_review_tools(tmp_path: Path) -> No
                 "profile_id": "scripted",
                 "idempotency_key": "closure:scratch-review-turn",
             },
+        )
+        bind_test_intent(
+            service, turn, action=RequestAction.RUN, targets=("current workspace",),
         )
 
         completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
