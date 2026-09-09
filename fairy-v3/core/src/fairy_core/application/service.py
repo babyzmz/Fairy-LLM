@@ -920,7 +920,9 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
                 task.id,
                 TaskStepKind.PREVIEW,
             )
-            return self._finish_successful_execution_steps(task.id, checkpoint=False)
+            return self._finish_successful_execution_steps(
+                task.id, checkpoint=task.project_id is None,
+            )
 
         prerequisite_issue = self._prepare_preview_prerequisites(
             task.id,
