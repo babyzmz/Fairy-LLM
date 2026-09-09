@@ -52,6 +52,7 @@ from fairy_core.storage.sqlite_migrations import (
     migrate_task_snapshot_binding,
     migrate_workspace_identity,
 )
+from fairy_core.storage.tool_objective_migration import migrate_tool_objectives
 from fairy_core.storage.tool_revision_migration import migrate_tool_revisions
 
 
@@ -88,6 +89,7 @@ def create_sqlite_core_engine(
         migrate_project_lifecycle(engine)
         migrate_generic_approval(engine)
         migrate_tool_revisions(engine)
+        migrate_tool_objectives(engine)
         migrate_checkpoint_evidence(engine)
         migrate_mcp_request_results(engine)
         command_metadata.create_all(engine)

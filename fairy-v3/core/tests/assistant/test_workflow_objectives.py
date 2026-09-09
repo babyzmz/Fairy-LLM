@@ -29,12 +29,14 @@ def _text(value):
 
 
 @pytest.mark.parametrize(
-    "premature_analysis,restart", [(False, False), (True, False), (False, True)]
+    "premature_analysis,restart,final_review",
+    [(False, False, False), (True, False, False), (False, True, False), (False, False, True)],
 )
 def test_review_then_change_uses_real_objective_boundaries_and_one_final_reply(
     tmp_path,
     premature_analysis,
     restart,
+    final_review,
 ):
     source = tmp_path / "source"
     source.mkdir()
@@ -53,6 +55,17 @@ def test_review_then_change_uses_real_objective_boundaries_and_one_final_reply(
                         "action": "change",
                         "depends_on": [0],
                     },
+                    *(
+                        [
+                            {
+                                "goal": "Read and verify the changed README.md",
+                                "action": "review",
+                                "depends_on": [1],
+                            }
+                        ]
+                        if final_review
+                        else []
+                    ),
                 ],
             ),
             *([_text("I have analyzed the file; proceed to edits.")] if premature_analysis else []),
@@ -80,6 +93,14 @@ def test_review_then_change_uses_real_objective_boundaries_and_one_final_reply(
                 },
             ),
             _text("README.md was updated."),
+            *(
+                [
+                    _call("project.read", {"path": "README.md"}),
+                    _text("Verified README.md contains updated."),
+                ]
+                if final_review
+                else []
+            ),
         ],
     )
     service = build_local_service(
@@ -173,21 +194,42 @@ def test_review_then_change_uses_real_objective_boundaries_and_one_final_reply(
                     == 1
                 )
         service.invoke("approvals.decide", {"approval_id": approvals[0]["id"], "approved": True})
+        if final_review:
+            deadline = time.monotonic() + 5
+            while len(provider.requests) < 7 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert "project.read" in {tool.name for tool in provider.requests[6].tools}
         assert wait_for_turn(service, turn["id"])["status"] == "completed"
         with service._unit_of_work_factory() as unit:
             snapshot = unit.workflows.get(UUID(turn["workflow_run_id"]))
             assert unit.assistant.get_turn(UUID(other["id"])).status == "created"
         completed = [node for node in snapshot.nodes if node.kind == "assistant.objective.complete"]
-        assert len(completed) == 2
+        assert len(completed) == 2 + int(final_review)
         assert all(node.status == "succeeded" for node in completed)
-        assert sorted(node.payload["objective_index"] for node in completed) == [0, 1]
+        assert sorted(node.payload["objective_index"] for node in completed) == list(
+            range(2 + int(final_review))
+        )
         messages = service.invoke("messages.list", {"conversation_id": conversation["id"]})["items"]
         assert [m["content"] for m in messages if m["role"] == "assistant"] == [
-            "README.md was updated."
+            "Verified README.md contains updated." if final_review else "README.md was updated."
         ]
         assert (source / "README.md").read_text(encoding="utf-8") == "base"
         assert managed.read_text(encoding="utf-8") == "updated"
-        assert len(provider.requests) == 6 + offset
+        assert len(provider.requests) == 6 + offset + 2 * int(final_review)
+        if final_review:
+            assert "project.read" in {tool.name for tool in provider.requests[6].tools}
+            with service._unit_of_work_factory() as unit:
+                reads = [
+                    item
+                    for item in unit.assistant.list_tool_invocations(UUID(turn["id"]))
+                    if item.tool_name == "project.read"
+                ]
+            assert len(reads) == 2
+            assert reads[0].argument_hash == reads[1].argument_hash
+            assert reads[0].command_run_id != reads[1].command_run_id
+            assert reads[0].evidence_receipts[0].content_hash != (
+                reads[1].evidence_receipts[0].content_hash
+            )
         assert analysis in "\n".join(m.content for m in provider.requests[-1].messages)
         # Corrupt progress must not silently fall back to the root write capability.
         first = next(node for node in completed if node.payload["objective_index"] == 0)

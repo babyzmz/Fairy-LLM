@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260909_0060"]
+    assert scripts.get_heads() == ["20260909_0061"]
+    assert scripts.get_revision("20260909_0061").down_revision == "20260909_0060"
     assert scripts.get_revision("20260909_0060").down_revision == "20260909_0059"
     assert scripts.get_revision("20260909_0059").down_revision == "20260909_0058"
     assert scripts.get_revision("20260909_0058").down_revision == "20260909_0057"
@@ -46,6 +47,29 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
     assert scripts.get_revision("20260711_0012").down_revision == "20260711_0011"
     assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
+
+
+def test_tool_objective_upgrade_and_lossless_downgrade_guard() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260909_0060:20260909_0061", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert (
+        "UNIQUE (TENANT_ID, TURN_ID, WORKFLOW_PLAN_REVISION, "
+        "WORKFLOW_OBJECTIVE_INDEX, ARGUMENT_HASH)"
+    ) in ddl
+    assert "N.TENANT_ID = I.TENANT_ID" in ddl
+    assert "JSON_TYPEOF(N.PAYLOAD -> 'OBJECTIVE_INDEX') = 'NUMBER'" in ddl
+    assert "JSON_ARRAY_ELEMENTS" in ddl and "ASSISTANT.STEP.MODEL" in ddl
+    assert "INVALID OBJECTIVE PROVENANCE" in ddl
+    assert "DISABLE ROW LEVEL SECURITY" not in ddl
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260909_0061:20260909_0060", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert ddl.index("RAISE EXCEPTION") < ddl.index("DROP COLUMN")
+    assert "WHERE WORKFLOW_OBJECTIVE_INDEX <> 0" in ddl
+    assert "DELETE FROM" not in ddl
 
 
 def test_tool_revision_upgrade_backfill_and_lossless_downgrade_guard() -> None:

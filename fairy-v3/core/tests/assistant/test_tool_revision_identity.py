@@ -89,6 +89,8 @@ def _legacy_schema(engine):
     with _sqlite_rebuild_transaction(engine) as connection:
         operations = Operations(MigrationContext.configure(connection))
         with operations.batch_alter_table(TABLE, recreate="always") as batch:
+            batch.drop_constraint("ck_core_assistant_tool_invocations_objective", type_="check")
+            batch.drop_column("workflow_objective_index")
             batch.drop_constraint("uq_core_assistant_tool_invocations_revision_provider_call",
                                   type_="unique")
             batch.create_unique_constraint("uq_core_assistant_tool_invocations_turn_provider_call",

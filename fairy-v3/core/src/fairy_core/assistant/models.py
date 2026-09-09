@@ -589,6 +589,7 @@ class ToolInvocation:
     arguments: dict[str, Any]
     workflow_run_id: UUID | None = None
     workflow_plan_revision: int = 1
+    workflow_objective_index: int = 0
     command_run_id: UUID | None = None
     status: ToolInvocationStatus = ToolInvocationStatus.CREATED
     public_summary: str | None = None
@@ -612,6 +613,7 @@ class ToolInvocation:
         arguments: dict[str, Any],
         workflow_run_id: UUID | None = None,
         workflow_plan_revision: int = 1,
+        workflow_objective_index: int = 0,
     ) -> ToolInvocation:
         if (
             isinstance(workflow_plan_revision, bool)
@@ -621,6 +623,12 @@ class ToolInvocation:
             or (workflow_run_id is not None and workflow_run_id != turn.workflow_run_id)
         ):
             raise ValueError("Tool Invocation requires a valid Turn Workflow revision")
+        if (
+            type(workflow_objective_index) is not int
+            or not 0 <= workflow_objective_index < 16
+            or (workflow_run_id is None and workflow_objective_index != 0)
+        ):
+            raise ValueError("Tool Invocation requires a valid Workflow objective")
         if isinstance(model_round, bool) or model_round < 1:
             raise ValueError("tool invocation model_round must be positive")
         if isinstance(sequence, bool) or sequence < 1:
@@ -666,6 +674,7 @@ class ToolInvocation:
             arguments=normalized_arguments,
             workflow_run_id=workflow_run_id,
             workflow_plan_revision=workflow_plan_revision,
+            workflow_objective_index=workflow_objective_index,
         )
 
     def queue(self, *, command_run_id: UUID) -> None:

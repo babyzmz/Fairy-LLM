@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fairy_core.assistant.candidates import arguments_for_definition
 from fairy_core.assistant.models import ToolInvocation
-from fairy_core.assistant.tool_revision import active_tool_revision
+from fairy_core.assistant.tool_revision import active_tool_objective, active_tool_revision
 from fairy_core.assistant.tools import DuplicateToolCandidateError, ToolCandidateError
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.assistant.workflow_tool_plan import (
@@ -31,8 +31,11 @@ def prepare_tool_checkpoint(boundary, application, payload):
         task = require_task(unit, turn.task_id)
         scope = application._scope_resolver(unit.state, task)
         run_id, revision = active_tool_revision(unit, turn)
+        objective = active_tool_objective(unit, turn)
         if (run_id, revision) != (boundary.node.run_id, boundary.node.plan_revision):
             raise ValueError("Tool checkpoint does not own the current Workflow revision")
+        if objective != boundary.node.payload.get("objective_index", 0):
+            raise ValueError("Tool checkpoint does not own the current objective")
         existing = unit.assistant.list_tool_invocations(turn.id)
         sequence = max((item.sequence for item in existing), default=0)
         invocations = tuple(
@@ -46,6 +49,7 @@ def prepare_tool_checkpoint(boundary, application, payload):
                 arguments=arguments,
                 workflow_run_id=run_id,
                 workflow_plan_revision=revision,
+                workflow_objective_index=objective,
             )
             for index, (candidate, arguments) in enumerate(parsed, 1)
         )
@@ -56,6 +60,7 @@ def prepare_tool_checkpoint(boundary, application, payload):
                 resources[invocation.id] = (f"browser-workspace:{scope.workspace_id}",)
             if any(
                 item.workflow_plan_revision == invocation.workflow_plan_revision
+                and item.workflow_objective_index == invocation.workflow_objective_index
                 and (item.argument_hash == invocation.argument_hash
                      or item.provider_call_id == invocation.provider_call_id)
                 for item in existing

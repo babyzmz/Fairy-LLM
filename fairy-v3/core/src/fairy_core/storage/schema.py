@@ -592,6 +592,7 @@ assistant_tool_invocations = Table(
     Column("arguments", JSON, nullable=False),
     Column("workflow_run_id", String(ID_LENGTH)),
     Column("workflow_plan_revision", BigInteger, nullable=False, server_default="1"),
+    Column("workflow_objective_index", BigInteger, nullable=False, server_default="0"),
     Column("command_run_id", String(ID_LENGTH)),
     Column("status", String(32), nullable=False),
     Column("public_summary", String),
@@ -612,6 +613,7 @@ assistant_tool_invocations = Table(
         "tenant_id",
         "turn_id",
         "workflow_plan_revision",
+        "workflow_objective_index",
         "argument_hash",
         name="uq_core_assistant_tool_invocations_revision_arguments",
     ),
@@ -619,10 +621,16 @@ assistant_tool_invocations = Table(
         "tenant_id",
         "turn_id",
         "workflow_plan_revision",
+        "workflow_objective_index",
         "provider_call_id",
         name="uq_core_assistant_tool_invocations_revision_provider_call",
     ),
     CheckConstraint("model_round > 0", name="ck_core_assistant_tool_invocations_model_round"),
+    CheckConstraint(
+        "workflow_objective_index >= 0 AND workflow_objective_index < 16 AND "
+        "(workflow_objective_index = 0 OR workflow_run_id IS NOT NULL)",
+        name="ck_core_assistant_tool_invocations_objective",
+    ),
     CheckConstraint("sequence > 0", name="ck_core_assistant_tool_invocations_sequence"),
     CheckConstraint(
         "workflow_plan_revision > 0 AND "

@@ -20,9 +20,18 @@ def active_tool_revision(unit, turn):
     return run.id, run.active_plan_revision
 
 
+def active_tool_objective(unit, turn):
+    if turn.execution_engine_version != 4:
+        return 0
+    intent = unit.assistant.get_execution_intent(turn.id)
+    return (intent.active_objective_index or 0) if intent is not None else 0
+
+
 def tool_command_key(invocation):
     prefix = f"assistant:{invocation.turn_id}:tool:"
     # First-revision keys stay compatible with pre-migration queued commands.
     if invocation.workflow_plan_revision > 1:
         prefix += f"revision:{invocation.workflow_plan_revision}:"
+    if invocation.workflow_objective_index:
+        prefix += f"objective:{invocation.workflow_objective_index}:"
     return prefix + invocation.argument_hash

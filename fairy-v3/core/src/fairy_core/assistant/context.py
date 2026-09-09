@@ -190,6 +190,18 @@ class AssistantContextBuilder:
                 for step in plan_steps
             )
             completion_handoff = _completion_handoff(plan_steps)
+            from fairy_core.assistant.workflow_objectives import READ_ACTIONS
+
+            reading_objective = execution_intent is not None and (
+                execution_intent.active_objective_index is not None
+                and execution_intent.objectives[
+                    execution_intent.active_objective_index
+                ].action in READ_ACTIONS
+            )
+            if reading_objective:
+                # A completed write phase does not complete a later verification phase.
+                # Its current intent still filters every effectful tool independently.
+                delivery_ready = completion_handoff = False
 
         attachments = self._image_attachments.for_turn(turn.id)
         if attachments and ProviderCapability.VISION not in provider_capabilities:
@@ -272,6 +284,7 @@ class AssistantContextBuilder:
             requires_workspace_changes=(
                 turn.routing_decision is not None
                 and turn.routing_decision.requires_workspace_changes
+                and not reading_objective
             ),
             completion_handoff=completion_handoff,
             delivery_ready=delivery_ready,

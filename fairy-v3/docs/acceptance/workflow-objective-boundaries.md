@@ -99,6 +99,46 @@ desktop acceptance. This document defines pending implementation, not completion
 
 ## Incremental implementation evidence
 
+### Next increment: tool identity across objectives
+
+- A three-phase read/change/read regression found that completed-file-plan context
+  hides tools needed by the last review. Restore read tools only through the current
+  objective policy; this must not reopen mutation permissions.
+- Add a trusted `workflow_objective_index` (0..15, default 0) to Tool Invocation.
+  Keep canonical argument hashes unchanged. Uniqueness for arguments and Provider
+  Call IDs includes Run plan revision and objective index; Command keys for index 0
+  stay compatible. Indexes beyond 0 need the bound Workflow and active objective.
+- SQLite incremental migration and PostgreSQL offline migration recover the index
+  from the Invocation's owned tool node. Reject invalid or ambiguous node provenance;
+  absence of the old objective protocol means index 0, not guessed new authority.
+  Reopen must be idempotent. Downgrade refuses nonzero objective history rather than
+  deleting calls or collapsing distinct commands.
+- Verify identical reads before/after a real approved file write have distinct
+  Commands and content receipts, while same-objective duplicates remain rejected.
+  Test two tenants, close/reopen, old schema and partial/invalid provenance. This
+  does not yet change file-plan generations or per-revision Media limits.
+
+Verification of this increment:
+
+- RED: last review offered only `direct_answer`; after visibility was corrected,
+  same-arguments duplicate handling still prevented a fresh read. Both now pass
+  with distinct Command IDs and content hashes before/after the actual file apply.
+- Tool identity/migration tests cover two tenants, range/binding constraints, old
+  schema, repeated reopen, wrong JSON types, conflicting nodes, partial schema and
+  foreign ownership. A separate RED exposed calls present only in a model
+  checkpoint; the migration now reads that frozen graph too and rejects conflicts
+  with a subsequently published tool node.
+- Broad gate: `pytest tests/assistant tests/workflow tests/media
+  tests/test_sqlite_core.py tests/execution/test_plan_generations.py
+  tests/execution/test_plan_revision_binding.py -q --tb=short`:
+  **541 passed in 482.01 seconds**. Ruff passed.
+- Cloud `tests/test_deployment_contract.py`: **44 passed in 3.62 seconds**, including
+  offline PostgreSQL 0061 upgrade/downgrade and refusal of lossy downgrade. Live
+  PostgreSQL remains unrun. The real desktop database was not migrated.
+- Existing migration fixture changes only reconstruct the correct historical schema
+  without the new objective field/constraint. Cloud head assertion advances to
+  0061; existing revision tests and uniqueness/approval assertions remain.
+
 - The initial real-service regression failed because `edit.propose_changeset` was
   offered during the analysis draft after `execution.plan`. Objective begin/complete
   nodes now delimit the actual model/tool/join/verify chain. Each phase intersects

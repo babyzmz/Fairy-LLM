@@ -44,7 +44,11 @@ from fairy_core.assistant.routing import RoutingDecision
 from fairy_core.assistant.routing_runtime import AssistantRoutingMixin
 from fairy_core.assistant.tool_approval_runtime import AssistantToolApprovalMixin
 from fairy_core.assistant.tool_context_runtime import AssistantToolContextMixin
-from fairy_core.assistant.tool_revision import active_tool_revision, tool_command_key
+from fairy_core.assistant.tool_revision import (
+    active_tool_objective,
+    active_tool_revision,
+    tool_command_key,
+)
 from fairy_core.assistant.tool_trace import ToolTraceCoordinator
 from fairy_core.assistant.tools import (
     DEFERRED_MEDIA_TOOLS,
@@ -908,6 +912,7 @@ class AssistantApplication(
                 arguments=arguments,
                 workflow_run_id=workflow_run_id,
                 workflow_plan_revision=workflow_revision,
+                workflow_objective_index=active_tool_objective(unit_of_work, turn),
             )
             if prepared_invocation_id is not None:
                 prepared = unit_of_work.assistant.get_tool_invocation(prepared_invocation_id)
@@ -918,12 +923,14 @@ class AssistantApplication(
                     or prepared.argument_hash != invocation.argument_hash
                     or prepared.workflow_run_id != invocation.workflow_run_id
                     or prepared.workflow_plan_revision != invocation.workflow_plan_revision
+                    or prepared.workflow_objective_index != invocation.workflow_objective_index
                 ):
                     raise ValueError("prepared Tool Invocation changed before dispatch")
                 invocation = prepared
             existing = unit_of_work.assistant.list_tool_invocations(turn_id)
             if any(item.argument_hash == invocation.argument_hash and item.id != invocation.id
                    and item.workflow_plan_revision == invocation.workflow_plan_revision
+                   and item.workflow_objective_index == invocation.workflow_objective_index
                    for item in existing):
                 duplicate = True
                 running = None
