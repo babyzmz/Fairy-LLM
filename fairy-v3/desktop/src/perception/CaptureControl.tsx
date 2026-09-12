@@ -8,7 +8,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { z } from "zod";
 
 const captureSurfaceSchema = z
@@ -87,9 +87,48 @@ export function CaptureControl({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const unavailable = disabled || !visionAvailable;
+  const generation = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => {
+    generation.current += 1;
+    setOpen(false);
+    setBusy(false);
+    setPreview(null);
+    setSurfaces([]);
+    setSelection("");
+    setKeep(false);
+    setError(null);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (unavailable) close();
+    return () => { generation.current += 1; };
+  }, [unavailable, client, close]);
+
+  useEffect(() => {
+    if (!open) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+      triggerRef.current?.focus();
+    };
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !containerRef.current?.contains(event.target)) close();
+    };
+    window.addEventListener("keydown", escape, true);
+    window.addEventListener("pointerdown", outside, true);
+    return () => {
+      window.removeEventListener("keydown", escape, true);
+      window.removeEventListener("pointerdown", outside, true);
+    };
+  }, [open, close]);
 
   const openPicker = async () => {
     if (unavailable || busy) return;
+    const request = ++generation.current;
     setOpen(true);
     setPreview(null);
     setKeep(false);
@@ -97,21 +136,24 @@ export function CaptureControl({
     setBusy(true);
     try {
       const items = await client.listSurfaces();
+      if (generation.current !== request) return;
       setSurfaces(items);
       setSelection(items.length > 0 ? surfaceKey(items[0]) : "");
       if (items.length === 0) setError("No capturable display or window is available");
     } catch (caught) {
+      if (generation.current !== request) return;
       setSurfaces([]);
       setSelection("");
       setError(errorMessage(caught, "Screen capture is unavailable"));
     } finally {
-      setBusy(false);
+      if (generation.current === request) setBusy(false);
     }
   };
 
   const capture = async () => {
     const surface = surfaces.find((item) => surfaceKey(item) === selection);
-    if (surface === undefined || busy) return;
+    if (surface === undefined || busy || unavailable) return;
+    const request = ++generation.current;
     setBusy(true);
     setError(null);
     try {
@@ -119,6 +161,7 @@ export function CaptureControl({
         kind: surface.kind,
         source_id: surface.source_id,
       });
+      if (generation.current !== request) return;
       if (
         result.kind !== surface.kind ||
         result.source_id !== surface.source_id ||
@@ -128,25 +171,18 @@ export function CaptureControl({
       }
       setPreview(result);
     } catch (caught) {
+      if (generation.current !== request) return;
       setPreview(null);
       setError(errorMessage(caught, "Could not capture the selected source"));
     } finally {
-      setBusy(false);
+      if (generation.current === request) setBusy(false);
     }
   };
 
-  const close = () => {
-    setOpen(false);
-    setPreview(null);
-    setSurfaces([]);
-    setSelection("");
-    setKeep(false);
-    setError(null);
-  };
-
   return (
-    <div className="capture-control">
+    <div className="capture-control" ref={containerRef}>
       <button
+        ref={triggerRef}
         className={`icon-button capture-button ${value ? "active" : ""}`}
         type="button"
         aria-label="Capture screen"
@@ -255,6 +291,7 @@ export function CaptureControl({
                   className="primary-command"
                   type="button"
                   aria-label="Attach capture"
+                  disabled={unavailable || busy}
                   onClick={() => {
                     onChange({
                       ...preview,

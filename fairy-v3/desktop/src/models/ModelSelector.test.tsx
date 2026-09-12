@@ -30,6 +30,15 @@ afterEach(() => {
 });
 
 describe("ModelSelector", () => {
+  it("reports a rejected model selection without exposing raw errors", async () => {
+    const user = userEvent.setup();
+    render(<ModelSelector catalog={catalogFixture()} selection={selection}
+      onSelect={async () => { throw new Error("private server detail"); }} onOpenSettings={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Model: Auto" }));
+    await user.click(screen.getByRole("menuitemradio", { name: /Kimi K2.7 Code/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not update the model selection. Please try again.");
+    expect(screen.queryByText("private server detail")).not.toBeInTheDocument();
+  });
   it("groups friendly model choices and preserves unavailable entries", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn(async () => undefined);

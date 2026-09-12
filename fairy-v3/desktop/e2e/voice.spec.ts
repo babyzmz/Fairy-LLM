@@ -23,7 +23,7 @@ test("records audio through Core and inserts the transcript into the composer", 
   const request = await voiceCall(page, "voice.transcribe");
   expect(request.params).toMatchObject({
     conversation_id: "0198f4de-0114-7000-8000-000000000010",
-    profile_id: "openrouter-deepseek-v4-pro",
+    profile_id: "local-whisper-small",
     media_type: "audio/webm",
   });
   expect(request.params.audio_base64).toBe("Zml4dHVyZS1yZWNvcmRpbmc=");

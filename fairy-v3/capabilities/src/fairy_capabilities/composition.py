@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.information import InformationCapabilityHealth
@@ -27,6 +28,7 @@ from fairy_capabilities.settings import (
     ProviderSettings,
 )
 from fairy_capabilities.voice import OpenAIAudioAdapter
+from fairy_capabilities.voice.local_whisper import LocalWhisperAdapter
 from fairy_capabilities.web.brave import BraveSearchAdapter
 from fairy_capabilities.web.fetch import SafeWebFetcher
 from fairy_capabilities.web.tools import WebToolExecutor
@@ -99,7 +101,10 @@ def build_provider_registry(
         )
         for profile in settings.profiles
     )
-    return ProviderRegistry(providers)
+    local_root = configured.get("FAIRY_LOCAL_STT_ROOT")
+    return ProviderRegistry(
+        (*providers, LocalWhisperAdapter(Path(local_root))) if local_root else providers
+    )
 
 
 def build_model_catalog_source(
@@ -168,7 +173,10 @@ def build_voice_registry(
                     secret=resolver.try_resolve(profile.credential_ref),
                 )
             )
-        return VoiceRegistry(providers)
+        local_root = configured.get("FAIRY_LOCAL_STT_ROOT")
+        return VoiceRegistry(
+            (*providers, LocalWhisperAdapter(Path(local_root))) if local_root else providers
+        )
     except BaseException:
         for provider in providers:
             provider.close()

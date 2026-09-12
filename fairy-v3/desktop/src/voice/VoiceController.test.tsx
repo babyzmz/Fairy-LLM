@@ -22,11 +22,71 @@ import {
   VoiceRecordControl,
   VoiceSpeakControl,
   useVoicePresence,
+  startBrowserRecording,
 } from "./VoiceController";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("VoiceController", () => {
+  it.each(["throws", "silent"])("releases tracks and settles a recorder that %s on stop", async (mode) => {
+    vi.useFakeTimers();
+    const stop = vi.fn();
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop }] }) } });
+    vi.stubGlobal("MediaRecorder", class extends EventTarget {
+      mimeType = "audio/webm";
+      state = "recording";
+      start() {}
+      stop() { if (mode === "throws") throw new Error("device disappeared"); }
+    });
+    const session = await startBrowserRecording();
+    const result = session.stop();
+    const assertion = expect(result).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(5_001);
+    expect(stop).toHaveBeenCalled();
+    await assertion;
+  });
+  it("releases microphone tracks if the recorder cannot start", async () => {
+    const stop = vi.fn();
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop }] }) } });
+    vi.stubGlobal("MediaRecorder", class { constructor() { throw new Error("device unavailable"); } });
+    await expect(startBrowserRecording()).rejects.toThrow("device unavailable");
+    expect(stop).toHaveBeenCalledOnce();
+  });
+  it("rejects a transcript with the wrong conversation binding", async () => {
+    const fixture = scopedRecording(voiceClient({ transcribe: async () => ({
+      conversation_id: "chat-b", profile_id: "voice", text: "wrong chat", language: null, segments: [],
+    }) }), environment({ startRecording: async () => recordingSession() }));
+    render(fixture.tree("chat-a"));
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop recording" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start recording" })).toBeEnabled());
+    expect(fixture.onTranscript).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent("Transcription response does not match this recording");
+  });
+  it("cancels the microphone when its retained workspace is hidden", async () => {
+    const session = recordingSession();
+    const client = voiceClient();
+    const env = environment({ startRecording: async () => session });
+    const tree = (visible: boolean) => <VoiceController client={client} conversationId="chat-a" profile={provider()} health={health()} environment={env} visible={visible}><VoiceRecordControl onTranscript={vi.fn()} /></VoiceController>;
+    const view = render(tree(true));
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    await screen.findByRole("button", { name: "Stop recording" });
+    view.rerender(tree(false));
+    expect(session.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("allows a pending microphone permission request to be cancelled", async () => {
+    const permission = deferred<RecordingSession>();
+    const session = recordingSession();
+    const fixture = scopedRecording(voiceClient(), environment({ startRecording: () => permission.promise }));
+    render(fixture.tree("chat-a"));
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel recording" }));
+    await act(async () => permission.resolve(session));
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(fixture.onTranscript).not.toHaveBeenCalled();
+  });
+
   it.each([["chat-a", "chat-b"], ["chat-b", "chat-a"]])(
     "cancels recording when switching from %s to %s without transcribing into the new chat",
     async (first, second) => {
@@ -154,7 +214,8 @@ describe("VoiceController", () => {
       environment(),
       provider(["text"]),
     );
-    expect(screen.getByText("Speech transcription unavailable")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Start recording" }).at(-1))
+      .toHaveAttribute("title", "Local speech transcription is not installed or ready");
     expect(screen.getAllByRole("button", { name: "Start recording" }).at(-1)).toBeDisabled();
     unmount();
   });

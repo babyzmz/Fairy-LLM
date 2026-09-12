@@ -104,11 +104,12 @@ function Workspace({
     }),
     [model, onOpenSettings],
   );
+  // Dictation is local-only and independent of the selected chat/vision model.
   const profile =
-    model.providers.find((provider) => provider.id === model.selectedProfileId) ?? null;
+    model.providers.find((provider) => provider.id === "local-whisper-small") ?? null;
   const health =
     model.providerHealth.find(
-      (item) => item.profile_id === model.selectedProfileId,
+      (item) => item.profile_id === profile?.id,
     ) ?? null;
   const conversationId =
     model.mode === "chat"
@@ -124,6 +125,7 @@ function Workspace({
         turn={model.mode === "chat" ? model.chatTurn : null}
         events={model.mode === "chat" ? model.chatEvents : []}
         petTaskId={model.petTaskId}
+        visible={workspaceVisible}
       >
         <WorkspacePresence
           model={shellModel}

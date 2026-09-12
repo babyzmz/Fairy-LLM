@@ -56,6 +56,7 @@ tools/python310/
 /.hf_home/
 /.matplotlib/
 /.vendor/
+/fairy-v3/.runtime/
 
 # Runtime state / generated outputs
 /data/

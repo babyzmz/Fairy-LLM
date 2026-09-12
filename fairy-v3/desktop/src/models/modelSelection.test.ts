@@ -43,6 +43,17 @@ const health: ProviderHealth = {
 const catalog = catalogFixture("configured");
 
 describe("model selection projection", () => {
+  it("does not misreport catalog loading as a missing API credential", () => {
+    const reason = selectionBlockReason({ catalog: null, selection: auto, providers: [profile], health: [health] });
+    expect(reason).toMatch(/loading/i);
+    expect(reason).not.toMatch(/Connect OpenRouter/);
+  });
+
+  it("blocks a stale or unknown manual model instead of treating it as media", () => {
+    expect(selectionBlockReason({ catalog, selection: { ...auto, mode: "manual", model_id: "missing/model" }, providers: [profile], health: [health] }))
+      .toMatch(/not.*catalog|not.*available/i);
+  });
+
   it("maps Auto and approved text models to fixed execution profiles", () => {
     expect(selectedProfileId(auto)).toBe("openrouter-deepseek-v4-pro");
     expect(selectedProfileId({ ...auto, mode: "manual", model_id: "z-ai/glm-5.2" }))

@@ -83,6 +83,7 @@ interface VoiceControllerProps {
   petTaskId?: string | null;
   environment?: VoiceEnvironment;
   children: ReactNode;
+  visible?: boolean;
 }
 
 type RecordingState = "idle" | "requesting" | "recording" | "transcribing";
@@ -96,6 +97,8 @@ interface VoiceContextValue {
   speakingTurnId: string | null;
   playbackState: PlaybackState;
   statusMessage: string | null;
+  unavailableReason: string | null;
+  cancelRecording(): void;
   startRecording(onTranscript: (text: string) => void): Promise<void>;
   stopRecording(): Promise<void>;
   speak(message: Message): Promise<void>;
@@ -116,6 +119,7 @@ export function VoiceController({
   petTaskId = null,
   environment: configuredEnvironment,
   children,
+  visible = true,
 }: VoiceControllerProps) {
   const environment = useMemo(
     () => configuredEnvironment ?? defaultVoiceEnvironment(),
@@ -151,12 +155,26 @@ export function VoiceController({
     (!profile.credential_required || profile.credential_configured) &&
     health?.status !== "unavailable";
   const sttAvailable =
+    visible &&
     !realtimeOwnsAudio &&
     environment.supported &&
     conversationId !== null &&
     providerAvailable &&
     profile.capabilities.includes("stt");
   const nativeTtsAvailable = environment.startNativePlayback !== undefined;
+  const unavailableReason = sttAvailable ? null
+    : !visible ? "Open the chat to record"
+    : realtimeOwnsAudio ? "Realtime Companion currently owns the microphone"
+    : !environment.supported ? "Microphone recording is unavailable on this device"
+    : conversationId === null ? "Open a conversation before recording"
+    : "Local speech transcription is not installed or ready";
+  const cancelRecording = useCallback(() => {
+    recordingGeneration.current += 1;
+    recordingRef.current?.session?.cancel();
+    recordingRef.current = null;
+    setRecordingState("idle");
+    setRecordingStatusMessage(null);
+  }, []);
   const ttsAvailable =
     !realtimeOwnsAudio && (nativeTtsAvailable ||
     (environment.supported && providerAvailable && profile?.capabilities.includes("tts") === true));
@@ -210,6 +228,14 @@ export function VoiceController({
   }, [stopSpeaking, voiceRepliesEnabled]);
 
   const recordingScope = JSON.stringify([conversationId, turn?.task_id ?? null, profile]);
+  useEffect(() => {
+    if (recordingState !== "recording") return;
+    const timeout = window.setTimeout(() => {
+      cancelRecording();
+      setRecordingStatusMessage("Recording limit reached (2 minutes). Please record a shorter message.");
+    }, 120_000);
+    return () => window.clearTimeout(timeout);
+  }, [recordingState, cancelRecording]);
   useLayoutEffect(() => {
     stopSpeaking();
     setRecordingState("idle");
@@ -291,7 +317,11 @@ export function VoiceController({
         audio_base64: audioBase64,
         language: null,
       });
-      if (isCurrent()) recording.onTranscript(result.text);
+      if (!isCurrent()) return;
+      if (result.conversation_id !== recording.conversationId || result.profile_id !== recording.profileId) {
+        throw new Error("Transcription response does not match this recording");
+      }
+      recording.onTranscript(result.text);
     } catch (error) {
       if (isCurrent()) setRecordingStatusMessage(errorMessage(error, "Transcription failed"));
     } finally {
@@ -580,12 +610,9 @@ export function VoiceController({
       speakingTurnId,
       playbackState,
       statusMessage:
-        recordingStatusMessage ??
-        (!environment.supported
-          ? "Voice device APIs unavailable"
-          : !sttAvailable
-            ? "Speech transcription unavailable"
-            : null),
+        recordingStatusMessage,
+      unavailableReason,
+      cancelRecording,
       startRecording,
       stopRecording,
       speak,
@@ -608,6 +635,8 @@ export function VoiceController({
       stopAmbient,
       sttAvailable,
       ttsAvailable,
+      unavailableReason,
+      cancelRecording,
     ],
   );
 
@@ -652,6 +681,11 @@ export function VoiceRecordControl({
   onTranscript(text: string): void;
 }) {
   const voice = useContext(VoiceContext);
+  const cancel = voice?.cancelRecording;
+  useEffect(() => {
+    if (disabled) cancel?.();
+    return () => cancel?.();
+  }, [disabled, cancel]);
   if (voice === null) {
     return (
       <button
@@ -677,13 +711,14 @@ export function VoiceRecordControl({
           recording
             ? "Stop recording"
             : waiting
-              ? "Transcribing recording"
+              ? "Cancel recording"
               : "Start recording"
         }
-        title={recording ? "Stop recording" : "Start recording"}
-        disabled={disabled || waiting || (!recording && !voice.sttAvailable)}
+        title={recording ? "Stop and transcribe locally" : waiting ? "Cancel receiving this transcript" : voice.unavailableReason ?? "Record and transcribe locally (no audio upload)"}
+        aria-description={voice.unavailableReason ?? undefined}
+        disabled={disabled || (!recording && !waiting && !voice.sttAvailable)}
         onClick={() =>
-          recording
+          waiting ? voice.cancelRecording() : recording
             ? void voice.stopRecording()
             : void voice.startRecording(onTranscript)
         }
@@ -854,44 +889,67 @@ function numericPayload(event: EventEnvelope, key: string): number {
   return typeof value === "number" && Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER;
 }
 
-async function startBrowserRecording(): Promise<RecordingSession> {
+export async function startBrowserRecording(): Promise<RecordingSession> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const recorder = new MediaRecorder(stream);
-  const chunks: BlobPart[] = [];
-  recorder.addEventListener("dataavailable", (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
-  });
-  recorder.start();
-  let stopped: Promise<Blob> | null = null;
   const stopTracks = () => stream.getTracks().forEach((track) => track.stop());
+  let recorder: MediaRecorder;
+  const chunks: BlobPart[] = [];
+  try {
+    recorder = new MediaRecorder(stream);
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    });
+    recorder.start();
+  } catch (error) {
+    stopTracks();
+    throw error;
+  }
+  let stopped: Promise<Blob> | null = null;
+  let cancelStop: (() => void) | null = null;
   return {
     mediaType: recorder.mimeType || "audio/webm",
     stop() {
       if (stopped !== null) return stopped;
       stopped = new Promise<Blob>((resolve, reject) => {
-        recorder.addEventListener(
-          "stop",
-          () => {
-            stopTracks();
-            resolve(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
-          },
-          { once: true },
-        );
-        recorder.addEventListener(
-          "error",
-          () => {
-            stopTracks();
-            reject(new Error("MediaRecorder failed"));
-          },
-          { once: true },
-        );
-        recorder.stop();
+        const cleanup = () => {
+          clearTimeout(timeout);
+          recorder.removeEventListener("stop", complete);
+          recorder.removeEventListener("error", fail);
+          cancelStop = null;
+          stopTracks();
+        };
+        const complete = () => {
+          cleanup();
+          resolve(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+        };
+        const fail = () => {
+          cleanup();
+          reject(new Error("Recording could not be completed. Try again."));
+        };
+        const timeout = setTimeout(fail, 5_000);
+        cancelStop = fail;
+        recorder.addEventListener("stop", complete, { once: true });
+        recorder.addEventListener("error", fail, { once: true });
+        try {
+          if (recorder.state === "inactive") fail();
+          else recorder.stop();
+        } catch {
+          fail();
+        } finally {
+          stopTracks();
+        }
       });
       return stopped;
     },
     cancel() {
-      if (recorder.state !== "inactive") recorder.stop();
-      stopTracks();
+      cancelStop?.();
+      try {
+        if (recorder.state !== "inactive") recorder.stop();
+      } catch {
+        // Cancellation still owns and releases the microphone after device loss.
+      } finally {
+        stopTracks();
+      }
     },
   };
 }

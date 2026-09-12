@@ -1164,10 +1164,44 @@
 }
 
 .composer-guidance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
   padding: 1px 3px;
   color: #d8b878;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.35;
+}
+
+.composer-settings-link {
+  padding: 2px 0;
+  border: 0;
+  color: var(--accent, #6dcfc0);
+  background: transparent;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.composer-settings-link:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 3px;
+}
+
+.model-selector-error {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 5;
+  width: min(280px, calc(100vw - 140px));
+  padding: 8px;
+  border: 1px solid #66553b;
+  border-radius: 4px;
+  color: #d8bd82;
+  background: #282117;
+  font-size: 11px;
 }
 
 .voice-button.active {

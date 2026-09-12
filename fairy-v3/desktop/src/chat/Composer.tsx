@@ -69,6 +69,7 @@ export function Composer({
   const [capture, setCapture] = useState<PendingImageAttachment | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [scheduleMenuOpen, setScheduleMenuOpen] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<"later" | "repeat" | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -95,6 +96,8 @@ export function Composer({
   const effectiveBusy = isSubmitting || (isBusy && !taskUpdateMode);
   const canSubmit =
     !disabled &&
+    (capture === null || visionAvailable) &&
+    scheduleMode === null &&
     !effectiveBusy &&
     (submissionBlockedReason === null || taskUpdateAvailable) &&
     (clarificationMode
@@ -155,6 +158,8 @@ export function Composer({
     setFiles([]);
     setCapture(null);
     setAttachmentError(null);
+    setActionError(null);
+    setScheduleMenuOpen(false);
     if (fileInputRef.current !== null) fileInputRef.current.value = "";
     inputRef.current?.focus();
     try {
@@ -164,6 +169,7 @@ export function Composer({
         submittedDraft.capture === null ? [] : [submittedDraft.capture],
       );
     } catch (error) {
+      setActionError("Could not send this message. Your draft has been kept; check the connection and try again.");
       if (draftRevisionRef.current === submittedDraft.revision) {
         setValue(submittedDraft.value);
         setFiles(submittedDraft.files);
@@ -178,6 +184,7 @@ export function Composer({
 
   const openScheduleEditor = (mode: "later" | "repeat") => {
     setScheduleMenuOpen(false);
+    if (disabled || effectiveBusy || restrictedInputMode || submissionBlockedReason !== null) return;
     if (value.trim().length === 0) {
       setAttachmentError("Enter an instruction before scheduling it");
       inputRef.current?.focus();
@@ -194,6 +201,9 @@ export function Composer({
   };
 
   const createSchedule = async (rule: ScheduleRuleDraft) => {
+    if (submittingRef.current || disabled || restrictedInputMode || submissionBlockedReason !== null) {
+      throw new Error(submissionBlockedReason ?? "Scheduling is not available right now");
+    }
     if (onSchedule === undefined) throw new Error("Scheduling is unavailable");
     const instruction = value.trim();
     if (!instruction) throw new Error("Enter an instruction before scheduling it");
@@ -201,6 +211,7 @@ export function Composer({
       throw new Error("Scheduled tasks cannot use temporary attachments or screenshots");
     }
     const revision = draftRevisionRef.current;
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       await onSchedule(instruction, rule);
@@ -211,6 +222,7 @@ export function Composer({
       setScheduleMode(null);
       inputRef.current?.focus();
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -248,6 +260,7 @@ export function Composer({
           {attachmentError}
         </div>
       ) : null}
+      {actionError ? <div className="composer-error" role="alert">{actionError}</div> : null}
       <div className="composer-input-surface">
         <label className="composer-field chat-composer-field">
           <span className="sr-only">{effectiveInputAriaLabel}</span>
@@ -271,19 +284,25 @@ export function Composer({
               setValue(event.target.value);
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
                 event.preventDefault();
                 void submit().catch(() => undefined);
               }
-              if (event.key === "Escape" && effectiveBusy) {
+              if (event.key === "Escape" && isBusy) {
                 event.preventDefault();
-                void onStop();
+                void onStop().catch(() => setActionError("Could not stop the task. Please try again."));
               }
             }}
           />
         </label>
         {submissionBlockedReason ? (
-          <div className="composer-guidance" role="status">{submissionBlockedReason}</div>
+          <div className="composer-guidance" role="status">
+            {submissionBlockedReason}
+            <button type="button" className="composer-settings-link" onClick={() => void onOpenModelSettings().catch(() => setActionError("Could not open model settings."))}>Model settings</button>
+          </div>
+        ) : null}
+        {capture !== null && !visionAvailable ? (
+          <div className="composer-guidance" role="status">Choose a model with vision or remove the screenshot before sending.</div>
         ) : null}
         <div className="composer-toolbar">
           <div className="composer-toolbar-start">
@@ -314,12 +333,17 @@ export function Composer({
               onChange={(event) => {
                 const selected = Array.from(event.currentTarget.files ?? []);
                 const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_BYTES);
-                if (oversized) {
+                const unsupported = selected.find((file) => !ACCEPTED_DOCUMENTS.split(",").some(extension => file.name.toLowerCase().endsWith(extension)));
+                if (files.length + selected.length > 10) {
+                  setAttachmentError("Attach at most 10 documents. Remove some files before adding this batch.");
+                } else if (unsupported) {
+                  setAttachmentError(`${unsupported.name} is not a supported document format`);
+                } else if (oversized) {
                   setAttachmentError(`${oversized.name} exceeds the 20 MiB document limit`);
                 } else {
                   setAttachmentError(null);
                   draftRevisionRef.current += 1;
-                  setFiles((current) => [...current, ...selected].slice(0, 10));
+                  setFiles((current) => [...current, ...selected]);
                 }
                 event.currentTarget.value = "";
               }}
@@ -346,7 +370,7 @@ export function Composer({
             <ModelSelector
               catalog={modelCatalog}
               selection={modelSelection}
-              disabled={modelSelectionDisabled || restrictedInputMode}
+              disabled={modelSelectionDisabled || restrictedInputMode || isSubmitting}
               onSelect={onSelectModel}
               onOpenSettings={onOpenModelSettings}
             />
@@ -375,7 +399,7 @@ export function Composer({
                   }
                   onClick={() => void (
                     workflowPaused ? onResumeWorkflow?.() : onPauseWorkflow?.()
-                  )}
+                  )?.catch(() => setActionError("Could not update the task state. Please try again."))}
                 >
                   {workflowPaused ? <Play size={15} /> : <Pause size={15} />}
                 </button>
@@ -385,7 +409,7 @@ export function Composer({
                   aria-label="Stop response"
                   title="Stop response"
                   disabled={isSubmitting}
-                  onClick={() => void onStop()}
+                  onClick={() => void onStop().catch(() => setActionError("Could not stop the task. Please try again."))}
                 >
                   <Square size={15} />
                 </button>
@@ -405,7 +429,7 @@ export function Composer({
                 type="button"
                 aria-label="Stop response"
                 title="Stop response"
-                onClick={() => void onStop()}
+                onClick={() => void onStop().catch(() => setActionError("Could not stop the task. Please try again."))}
               >
                 <Square size={15} />
               </button>
@@ -419,7 +443,7 @@ export function Composer({
                       aria-label="Schedule message"
                       aria-expanded={scheduleMenuOpen}
                       title="Schedule message"
-                      disabled={disabled || effectiveBusy}
+                      disabled={disabled || effectiveBusy || submissionBlockedReason !== null || scheduleMode !== null}
                       onClick={() => setScheduleMenuOpen((open) => !open)}
                     >
                       <CalendarClock size={16} />
@@ -427,7 +451,7 @@ export function Composer({
                     </button>
                     {scheduleMenuOpen ? (
                       <div className="composer-schedule-options" role="menu" aria-label="Execution time">
-                        <button type="button" role="menuitem" onClick={() => void submit().catch(() => undefined)}>
+                        <button type="button" role="menuitem" disabled={!canSubmit} onClick={() => void submit().catch(() => undefined)}>
                           <Send size={14} />
                           <span><strong>Run now</strong><small>Send this message immediately</small></span>
                         </button>

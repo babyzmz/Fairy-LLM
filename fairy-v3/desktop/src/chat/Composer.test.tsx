@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +9,59 @@ import { Composer } from "./Composer";
 afterEach(cleanup);
 
 describe("Composer", () => {
+  it("keeps an attached screenshot but blocks sending after selecting a text-only model", async () => {
+    const onSubmit = vi.fn(async () => undefined);
+    render(<Composer disabled={false} isBusy={false} visionAvailable={false}
+      modelCatalog={null} modelSelection={null} onSubmit={onSubmit}
+      onStop={vi.fn()} onSelectModel={vi.fn()} onOpenModelSettings={vi.fn()}
+      draft={{ id: "draft-a", value: "Read this", files: [], images: [{ kind: "display", source_id: "1", source_label: "Test display", media_type: "image/png", png_base64: "AA==", width: 1, height: 1, byte_length: 1, content_hash: "0".repeat(64), captured_at_ms: 0, persistence: "ephemeral" }] }} />);
+    await waitFor(() => expect(screen.getByLabelText("Message Fairy")).toHaveValue("Read this"));
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(screen.getByText(/choose a model with vision/i)).toBeVisible();
+  });
+  it("reports a rejected submission instead of silently restoring it", async () => {
+    const user = userEvent.setup();
+    renderComposer(async () => { throw new Error("Core unavailable"); });
+    await user.type(screen.getByLabelText("Message Fairy"), "Keep me");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not.*send|could not.*submit/i);
+    expect(screen.getByLabelText("Message Fairy")).toHaveValue("Keep me");
+  });
+
+  it("rejects an oversized attachment batch without silently dropping documents", async () => {
+    const user = userEvent.setup();
+    renderComposer(vi.fn(async () => undefined));
+    await user.upload(screen.getByLabelText("Attach documents", { selector: "input" }),
+      Array.from({ length: 11 }, (_, i) => new File(["x"], `doc${i}.txt`, { type: "text/plain" })));
+    expect(screen.getByRole("alert")).toHaveTextContent(/10 documents/i);
+    expect(screen.queryByLabelText("Pending attachments")).not.toBeInTheDocument();
+  });
+
+  it("does not turn Enter inside an open schedule editor into immediate sending", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(async () => undefined);
+    const view = renderComposer(onSubmit);
+    view.rerender(<Composer disabled={false} isBusy={false} visionAvailable={false}
+      modelCatalog={null} modelSelection={null} onSubmit={onSubmit}
+      onSchedule={async () => undefined} onStop={async () => undefined}
+      onSelectModel={async () => undefined} onOpenModelSettings={async () => undefined} />);
+    await user.type(screen.getByLabelText("Message Fairy"), "Tomorrow only");
+    await user.click(screen.getByRole("button", { name: "Schedule message" }));
+    await user.click(screen.getByRole("menuitem", { name: /Run later/ }));
+    fireEvent.submit(screen.getByLabelText("Message Fairy").closest("form")!);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Message Fairy")).toHaveValue("Tomorrow only");
+  });
+
+  it("keeps IME confirmation Enter from submitting", () => {
+    const onSubmit = vi.fn(async () => undefined);
+    renderComposer(onSubmit);
+    const input = screen.getByLabelText("Message Fairy");
+    fireEvent.change(input, { target: { value: "中文" } });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("clears a submitted draft before Core finishes accepting it", async () => {
     const user = userEvent.setup();
     const submission = deferred<void>();

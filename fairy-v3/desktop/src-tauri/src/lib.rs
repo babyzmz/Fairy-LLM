@@ -1,5 +1,7 @@
 use std::env;
 mod audio_focus;
+#[cfg(all(test, debug_assertions, target_os = "windows"))]
+mod composer_live_tests;
 mod model_resources;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -5659,6 +5661,12 @@ fn configured_core_launch(
     resource_dir: &Path,
 ) -> Result<CoreLaunchSpec, Box<dyn std::error::Error>> {
     let mut launch = core_launch_spec(data_dir)?;
+    let local_stt_root = if cfg!(debug_assertions) {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.runtime/stt")
+    } else {
+        resource_dir.join("runtime/stt")
+    };
+    launch.env.insert("FAIRY_LOCAL_STT_ROOT".to_owned(), local_stt_root.to_string_lossy().into_owned());
     launch.env.insert(
         "FAIRY_LOCAL_WORKER_PROGRAM".to_owned(),
         desktop_program.to_string_lossy().into_owned(),

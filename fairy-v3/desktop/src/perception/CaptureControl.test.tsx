@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -46,6 +46,31 @@ const client: CaptureClient = {
 afterEach(cleanup);
 
 describe("CaptureControl", () => {
+  it("drops a late preview when capture becomes unavailable", async () => {
+    const user = userEvent.setup();
+    let complete!: (value: Awaited<ReturnType<CaptureClient["capture"]>>) => void;
+    const pending: CaptureClient = { ...client, capture: () => new Promise(resolve => { complete = resolve; }) };
+    const onChange = vi.fn();
+    const tree = (disabled: boolean) => <CaptureControl client={pending} disabled={disabled} visionAvailable value={null} onChange={onChange} />;
+    const view = render(tree(false));
+    await user.click(screen.getByRole("button", { name: "Capture screen" }));
+    await user.selectOptions(screen.getByLabelText("Capture source"), "window:window-2");
+    await user.click(screen.getByRole("button", { name: "Capture selected source" }));
+    view.rerender(tree(true));
+    await act(async () => complete(await client.capture({ kind: "window", source_id: "window-2" })));
+    expect(screen.queryByRole("dialog", { name: "Screen capture" })).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("dismisses the capture picker with Escape and restores trigger focus", async () => {
+    const user = userEvent.setup();
+    render(<CaptureControl client={client} disabled={false} visionAvailable value={null} onChange={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Capture screen" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Screen capture" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Capture screen" })).toHaveFocus();
+  });
+
   it("previews a selected source and requires an explicit attach decision", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn<(value: PendingImageAttachment | null) => void>();

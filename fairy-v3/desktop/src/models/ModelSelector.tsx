@@ -51,6 +51,8 @@ export function ModelSelector({
 }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pendingRef = useRef(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const selected = selectedCatalogEntry(catalog, selection);
   const selectedKey = selection?.mode === "manual" && typeof selection.model_id === "string"
@@ -79,16 +81,19 @@ export function ModelSelector({
   }, [open]);
 
   const act = async (key: React.Key) => {
-    if (key === "settings") {
-      setOpen(false);
-      await onOpenSettings();
-      return;
-    }
+    if (pendingRef.current || disabled) return;
+    pendingRef.current = true;
     setPending(true);
+    setError(null);
     try {
-      await onSelect(key === "auto" ? "auto" : "manual", key === "auto" ? null : String(key));
+      if (key === "settings") await onOpenSettings();
+      else await onSelect(key === "auto" ? "auto" : "manual", key === "auto" ? null : String(key));
       setOpen(false);
+    } catch {
+      setError(key === "settings" ? "Could not open model settings. Please try again."
+        : "Could not update the model selection. Please try again.");
     } finally {
+      pendingRef.current = false;
       setPending(false);
     }
   };
@@ -119,7 +124,7 @@ export function ModelSelector({
             selectionMode="single"
             selectedKeys={new Set([selectedKey])}
             disabledKeys={disabledModelKeys(catalog?.items ?? [])}
-            onAction={(key) => void act(key).catch(() => undefined)}
+            onAction={(key) => void act(key)}
           >
             <MenuSection id="auto-section">
               <Header>Auto</Header>
@@ -154,6 +159,7 @@ export function ModelSelector({
           </Menu>
         </Popover>
       </MenuTrigger>
+      {error ? <span className="model-selector-error" role="alert">{error}</span> : null}
     </div>
   );
 }

@@ -1325,12 +1325,25 @@ async function installCoreFixture(page: Page) {
         "providers.list": {
           items: [
             {
+              id: "local-whisper-small",
+              display_name: "Local dictation · Whisper Small",
+              kind: "local_openai_compatible",
+              base_url: "http://127.0.0.1",
+              model_id: "local/whisper-small",
+              capabilities: ["text", "stt"],
+              credential_required: false,
+              credential_configured: true,
+              enabled: true,
+              timeout_seconds: 90,
+              fallback_profile_id: null,
+            },
+            {
               id: "openrouter-deepseek-v4-pro",
               display_name: "DeepSeek V4 Pro",
               kind: "openai_compatible",
               base_url: "https://openrouter.ai/api/v1",
               model_id: "deepseek/deepseek-v4-pro",
-              capabilities: ["text", "tools", "structured_output", "stt"],
+              capabilities: ["text", "tools", "structured_output"],
               credential_required: true,
               credential_configured: true,
               enabled: true,
@@ -1400,6 +1413,7 @@ async function installCoreFixture(page: Page) {
               diagnostics: [],
             },
             ...[
+              "local-whisper-small",
               "openrouter-glm-5-2",
               "openrouter-kimi-k2-7-code",
               "openrouter-nemotron-free",
@@ -1595,7 +1609,7 @@ async function installCoreFixture(page: Page) {
         "conversations.create": scratchConversation,
         "voice.transcribe": {
           conversation_id: id.scratchConversation,
-          profile_id: "openrouter-deepseek-v4-pro",
+          profile_id: "local-whisper-small",
           text: "Fixture voice transcript",
           language: "en",
           segments: [],

@@ -53,10 +53,12 @@ export function selectionBlockReason(input: {
   health: ProviderHealth[];
 }): string | null {
   const { catalog, selection, providers, health } = input;
+  if (catalog === null) return "Loading model configuration…";
   if (catalog?.account.credential_status !== "configured") {
     return "Connect OpenRouter in Model settings before sending.";
   }
   const entry = selectedCatalogEntry(catalog, selection);
+  if (entry === null) return "The selected model is not in the current catalog. Choose another model.";
   if (entry?.availability === "unavailable") {
     return entry.unavailable_reason ?? "The selected model is currently unavailable.";
   }
