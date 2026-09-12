@@ -11,7 +11,7 @@ export class PetChatBindingController {
   private pending: string | null | undefined;
   private busy = false;
   private closed = false;
-  constructor(private readonly transport: BindingTransport, private readonly onError: () => void) {}
+  constructor(private readonly transport: BindingTransport, private readonly onError: (code: string) => void) {}
   select(conversationId: string | null) {
     if (this.closed) return;
     this.pending = conversationId;
@@ -27,10 +27,11 @@ export class PetChatBindingController {
         this.pending = undefined;
         if (id !== null) context = await this.transport.bind(context.revision, id);
       }
-    } catch {
+    } catch (error) {
       // Do not fetch a newer host revision and overwrite another window's action.
       this.pending = undefined;
-      if (!this.closed) this.onError();
+      const code = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+      if (!this.closed) this.onError(/^[A-Z][A-Z0-9_]{0,127}$/.test(code) ? code : "PET_CHAT_BINDING_FAILED");
     } finally {
       this.busy = false;
       if (!this.closed && this.pending !== undefined) void this.drain();
@@ -38,7 +39,7 @@ export class PetChatBindingController {
   }
 }
 
-export function createPetChatBindingController(onError: () => void): PetChatBindingController | null {
+export function createPetChatBindingController(onError: (code: string) => void): PetChatBindingController | null {
   if (!isTauri()) return null;
   return new PetChatBindingController({
     get: () => invoke("pet_chat_context_get"),

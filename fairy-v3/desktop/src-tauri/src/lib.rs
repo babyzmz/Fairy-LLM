@@ -89,6 +89,7 @@ mod pet_chat_broker;
 mod pet_chat_events;
 pub mod presence_backdrop;
 pub mod presence_coordinator;
+mod pet_chat_transport;
 pub mod presence_interaction;
 pub mod presence_native_gpu;
 pub mod presence_renderer_supervisor;
@@ -1453,10 +1454,7 @@ async fn pet_chat_bind(
         let preference = pet_chat_core_result(
             call_core(
                 &state,
-                json!({
-                    "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
-                    "method": "models.selection.get", "params": {},
-                }),
+                pet_chat_transport::request("models.selection.get", json!({})),
             )
             .await,
         )?;
@@ -1467,10 +1465,10 @@ async fn pet_chat_bind(
     let conversation = pet_chat_core_result(
         call_core(
             &state,
-            json!({
-                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
-                "method": "conversations.get", "params": {"conversation_id": input.conversation_id}
-            }),
+            pet_chat_transport::request(
+                "conversations.get",
+                json!({"conversation_id": input.conversation_id}),
+            ),
         )
         .await,
     )?;
@@ -1534,10 +1532,7 @@ async fn submit_pet_chat(
     let revision = ticket.revision;
     let response = call_core(
         state,
-        json!({
-            "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
-            "method": "assistant.messages.submit", "params": ticket.params
-        }),
+        pet_chat_transport::request("assistant.messages.submit", ticket.params.clone()),
     )
     .await;
     let result = pet_chat_core_result(response).and_then(|turn| {
@@ -1568,10 +1563,7 @@ async fn pet_chat_submission_cancel(
     let result = pet_chat_core_result(
         call_core(
             &state,
-            json!({
-                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
-                "method": "assistant.messages.cancel", "params": params,
-            }),
+            pet_chat_transport::request("assistant.messages.cancel", params),
         )
         .await,
     )?;
@@ -1598,10 +1590,7 @@ async fn create_pet_chat(
     let preference = pet_chat_core_result(
         call_core(
             state,
-            json!({
-                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
-                "method": "models.selection.get", "params": {},
-            }),
+            pet_chat_transport::request("models.selection.get", json!({})),
         )
         .await,
     )?;
@@ -1612,10 +1601,7 @@ async fn create_pet_chat(
     let result = pet_chat_core_result(
         call_core(
             state,
-            json!({
-                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
-                "method": "assistant.commands.dispatch", "params": ticket.params,
-            }),
+            pet_chat_transport::request("assistant.commands.dispatch", ticket.params.clone()),
         )
         .await,
     )?;
@@ -1651,10 +1637,7 @@ async fn pet_chat_cancel(
     let turn = pet_chat_core_result(
         call_core(
             &state,
-            json!({
-                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
-                "method": "assistant.turns.cancel", "params": params
-            }),
+            pet_chat_transport::request("assistant.turns.cancel", params),
         )
         .await,
     )?;
@@ -1682,10 +1665,7 @@ async fn pet_chat_command(
     let result = pet_chat_core_result(
         call_core(
             &state,
-            json!({
-                "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
-                "method": "assistant.commands.dispatch", "params": params,
-            }),
+            pet_chat_transport::request("assistant.commands.dispatch", params),
         )
         .await,
     )?;
@@ -1699,10 +1679,7 @@ async fn pet_chat_command(
         let preference = pet_chat_core_result(
             call_core(
                 &state,
-                json!({
-                    "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(),
-                    "method": "models.selection.get", "params": {},
-                }),
+                pet_chat_transport::request("models.selection.get", json!({})),
             )
             .await,
         )?;

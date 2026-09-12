@@ -73,8 +73,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const [actionErrorCode, setActionErrorCode] = useState<string | null>(null);
   const petChatBinding = useRef<PetChatBindingController | null>(null);
   useEffect(() => {
-    const controller = createPetChatBindingController(() => {
-      setActionError("Pet chat binding could not be updated. Select the chat again to reconnect it.");
+    const controller = createPetChatBindingController((code) => {
+      setActionError(`Pet chat binding could not be updated (${code}). Select the chat again to reconnect it.`);
       setActionErrorCode("PET_CHAT_BINDING_CHANGED");
     });
     petChatBinding.current = controller;

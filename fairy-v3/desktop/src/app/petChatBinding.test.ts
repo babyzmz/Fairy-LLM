@@ -22,8 +22,19 @@ it("does not retry a competing host revision and model refresh retains the host 
   const errors = vi.fn(); const controller = new PetChatBindingController({ get, bind }, errors);
   controller.select(null);
   await vi.waitFor(() => expect(errors).toHaveBeenCalledOnce());
+  expect(errors).toHaveBeenCalledWith("PET_CHAT_BINDING_CHANGED");
   expect(bind).toHaveBeenCalledWith(7, "pet-owned");
   expect(get).toHaveBeenCalledOnce(); expect(bind).toHaveBeenCalledOnce();
+});
+
+it("reports only bounded public codes, never native error details", async () => {
+  const errors = vi.fn();
+  const controller = new PetChatBindingController({
+    get: async () => { throw new Error("private credential/path must not reach the UI"); },
+    bind: vi.fn(),
+  }, errors);
+  controller.select("first");
+  await vi.waitFor(() => expect(errors).toHaveBeenCalledWith("PET_CHAT_BINDING_FAILED"));
 });
 it("does not dispatch a delayed read after its main WebView unmounts", async () => {
   let resolve!: (value: { revision: number; conversation_id: string }) => void;
