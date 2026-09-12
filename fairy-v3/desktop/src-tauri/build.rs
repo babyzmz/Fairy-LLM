@@ -134,6 +134,7 @@ fn verify_production_omni_stage(root: &Path) {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=icons/icon.ico");
     if cfg!(target_os = "windows") {
         let common_controls_manifest = PathBuf::from(
             std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest directory"),

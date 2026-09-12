@@ -23,6 +23,7 @@ import {
 } from "react-aria-components";
 
 import type { Conversation, Project } from "../core/client";
+import fairyBrandIcon from "../fairyEye/brand.svg";
 import { ActionDialog } from "../ui/ActionDialog";
 import type { WorkspaceModel } from "./workspaceModel";
 import "./history-sidebar.css";
@@ -94,7 +95,7 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
   return (
     <aside className="history-sidebar" aria-label="History navigation">
       <div className="history-brand">
-        <span className="history-mark" aria-hidden="true" />
+        <img className="history-mark" src={fairyBrandIcon} alt="" width={20} height={20} draggable={false} />
         <strong>Fairy</strong>
       </div>
       <label className="history-search">
