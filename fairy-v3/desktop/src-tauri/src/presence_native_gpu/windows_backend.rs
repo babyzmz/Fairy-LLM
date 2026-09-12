@@ -1,4 +1,7 @@
 use std::cmp::Ordering;
+#[path = "input_surface.rs"]
+mod input_surface;
+use input_surface::InputCompositionSurface;
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering as AtomicOrdering};
@@ -1048,6 +1051,7 @@ unsafe extern "system" fn native_surface_window_proc(
 
 struct InputHostBackdropComposition {
     _target: DesktopWindowTarget,
+    surface: InputCompositionSurface,
     root: ContainerVisual,
     backdrop: SpriteVisual,
     _backdrop_brush: CompositionBackdropBrush,
@@ -1080,9 +1084,10 @@ impl InputHostBackdropComposition {
         }
         .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_WINDOW_ATTRIBUTE", error))?;
 
-        // The input target is below the WebView child. The DOM paints only text, icons, and the
-        // foreground rim, so neither glyphs nor controls enter the backdrop sample.
-        let target = unsafe { desktop_interop.CreateDesktopWindowTarget(input_hwnd, false) }
+        // WebView2 can already own the parent's below-child target. Compose into
+        // our own disabled child at the bottom instead of stealing that target.
+        let surface = InputCompositionSurface::new(input_hwnd, surface_scale)?;
+        let target = unsafe { desktop_interop.CreateDesktopWindowTarget(surface.0, false) }
             .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_TARGET", error))?;
         let root = compositor
             .CreateContainerVisual()
@@ -1145,6 +1150,7 @@ impl InputHostBackdropComposition {
 
         let mut input = Self {
             _target: target,
+            surface,
             root,
             backdrop,
             _backdrop_brush: backdrop_brush,
@@ -1164,6 +1170,7 @@ impl InputHostBackdropComposition {
         surface_scale: f32,
         presentation: NativeGpuPresentation,
     ) -> Result<(), String> {
+        self.surface.resize(surface_scale)?;
         let width =
             (presentation.capsule_half_width * 2.0 + 16.0).clamp(220.0, 360.0) * surface_scale;
         let height = presentation.input_surface_height.clamp(64.0, 104.0) * surface_scale;
@@ -3450,6 +3457,10 @@ fn format_monitor_handle(handle: HMONITOR) -> String {
 }
 
 #[cfg(test)]
+#[path = "input_composition_tests.rs"]
+mod input_composition_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -3936,7 +3947,7 @@ mod tests {
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         for required in [
             "struct InputHostBackdropComposition",
-            "CreateDesktopWindowTarget(input_hwnd, false)",
+            "CreateDesktopWindowTarget(surface.0, false)",
             "CreateRoundedRectangleGeometry()",
             "INPUT_DDA_SWAPCHAIN_SURFACE",
             "present_input_surface",
