@@ -72,6 +72,22 @@ interface FixtureCall {
   params: Record<string, unknown>;
 }
 
+test("host realtime focus cancels ordinary recording and releases controls after stop", async ({ page }) => {
+  await page.getByRole("button", { name: "Start recording" }).click();
+  await expect(page.getByRole("button", { name: "Stop recording" })).toBeVisible();
+  const focus = (active: boolean) => page.evaluate((value) => {
+    (window as unknown as { __FAIRY_FIXTURE_SET_AUDIO_FOCUS__(active: boolean): void })
+      .__FAIRY_FIXTURE_SET_AUDIO_FOCUS__(value);
+  }, active);
+  await focus(true);
+  await expect(page.getByRole("button", { name: "Stop recording" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Start recording" })).toBeDisabled();
+  expect(await voiceCalls(page, "voice.transcribe")).toHaveLength(0);
+  await focus(false);
+  await expect(page.getByRole("button", { name: "Start recording" })).toBeEnabled();
+  await expect(page.getByLabel("Message Fairy")).toHaveValue("");
+});
+
 async function voiceCall(page: Page, method: string): Promise<FixtureCall> {
   await expect.poll(async () => (await voiceCalls(page, method)).length).toBeGreaterThan(0);
   const result = (await voiceCalls(page, method))[0];

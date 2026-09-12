@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
 import type { EventEnvelope, Message, Task } from "../core/client";
-import { runResilientEventDelivery } from "../core/eventStream";
+import { useWorkspaceEvents } from "./useWorkspaceEvents";
 import {
   selectedProfileId as profileIdForSelection,
   selectionBlockReason,
@@ -18,11 +18,9 @@ import { useTaskMediaJobs } from "../media/useTaskMediaJobs";
 import type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 export type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 import {
-  readEventCheckpoint,
   usePersistedBoolean,
   usePersistedEnum,
   usePersistedSelection,
-  writeEventCheckpoint,
 } from "./workspacePreferences";
 import { createWorkspaceFileActions } from "./workspaceFileActions";
 import { previewStartIdempotencyKey } from "./workspacePreviewActions";
@@ -38,7 +36,6 @@ import {
   sortHistoryItems,
 } from "./workspaceHistoryActions";
 import {
-  appendEvent,
   capabilityQueryKey,
   coreErrorCode,
   errorMessage,
@@ -67,8 +64,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     "fairy.workspace.chat-conversation",
   );
   const [taskSelection, setTaskSelection] = usePersistedSelection("fairy.workspace.task");
-  const [allEvents, setAllEvents] = useState<EventEnvelope[]>([]);
-  const eventCheckpoint = useRef(readEventCheckpoint());
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionErrorCode, setActionErrorCode] = useState<string | null>(null);
   const petChatBinding = useRef<PetChatBindingController | null>(null);
@@ -80,8 +75,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     petChatBinding.current = controller;
     return () => { controller?.close(); petChatBinding.current = null; };
   }, []);
-  const [eventStreamError, setEventStreamError] = useState<string | null>(null);
-  const [eventStreamErrorCode, setEventStreamErrorCode] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
   const [chatTaskId, setChatTaskId] = useState<string | null>(null);
   const chatTaskIdRef = useRef<string | null>(null);
@@ -355,6 +348,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     invalidateAssistantScope,
   } = useWorkspaceInvalidation();
 
+  const { allEvents, eventStreamError, eventStreamErrorCode } = useWorkspaceEvents(
+    client, healthQuery.isSuccess, queueEventInvalidation,
+  );
+
   const invalidateExecution = useCallback(
     () =>
       invalidateDomains(
@@ -428,45 +425,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     selectedTaskId: mode === "project" ? (selectedTask?.id ?? null) : null,
   });
 
-  useEffect(() => {
-    if (!healthQuery.isSuccess) return;
-    const controller = new AbortController();
-    setEventStreamError(null);
-    setEventStreamErrorCode(null);
-    void runResilientEventDelivery(
-      {
-        sourceId: client.events.sourceId(),
-        state: client.events.state,
-        list: client.events.list,
-        subscribe: client.events.subscribe,
-      },
-      {
-        checkpoint: eventCheckpoint.current,
-        signal: controller.signal,
-        onCheckpoint(checkpoint) {
-          eventCheckpoint.current = checkpoint;
-          writeEventCheckpoint(checkpoint);
-        },
-        onEvent(event) {
-          if (event.visibility !== "internal") {
-            setAllEvents((current) => appendEvent(current, event));
-          }
-          queueEventInvalidation(event);
-        },
-        onError(error) {
-          if (controller.signal.aborted) return;
-          setEventStreamError(errorMessage(error));
-          setEventStreamErrorCode(coreErrorCode(error));
-        },
-        onRecovered() {
-          if (controller.signal.aborted) return;
-          setEventStreamError(null);
-          setEventStreamErrorCode(null);
-        },
-      },
-    );
-    return () => controller.abort();
-  }, [client, healthQuery.isSuccess, queueEventInvalidation]);
 
   const runAction = useCallback(
     async <T>(operation: () => Promise<T>): Promise<T> => {

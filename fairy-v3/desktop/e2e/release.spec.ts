@@ -107,4 +107,8 @@ test("permission changes persist through Core without client sandbox authority",
     expected_revision: 0,
   });
   expect(update?.params).not.toHaveProperty("sandbox_healthy");
+  const dispatched = await page.evaluate(() =>
+    (window as unknown as { __FAIRY_FIXTURE_CALLS__: Array<{ method: string; params: Record<string, unknown> }> })
+      .__FAIRY_FIXTURE_CALLS__.find((call) => call.method === "assistant.commands.dispatch"));
+  expect(dispatched?.params.text).toBe("/permission autonomous");
 });

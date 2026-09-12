@@ -630,6 +630,32 @@ async function installCoreFixture(page: Page) {
         created_at: timestamp,
       };
       const events = [event];
+      type EventReply = { kind: "batch"; batch: { source: string; ledger_id: string; items: typeof events } }
+        | { kind: "idle" | "closed" };
+      type EventReader = { cursor: number; resolve?: (reply: EventReply) => void; timer?: number };
+      const eventReaders = new Map<string, EventReader>();
+      const readEvents = (reader: EventReader): EventReply | undefined => {
+        const items = events.filter((item) => item.cursor > reader.cursor).slice(0, 64);
+        if (!items.length) return undefined;
+        reader.cursor = items.at(-1)!.cursor;
+        return { kind: "batch", batch: {
+          source: "local:stdio", ledger_id: "0198f4de-0114-7000-8000-000000000045", items,
+        } };
+      };
+      const settleReader = (reader: EventReader, reply: EventReply) => {
+        window.clearTimeout(reader.timer);
+        const resolve = reader.resolve;
+        reader.resolve = undefined;
+        reader.timer = undefined;
+        resolve?.(reply);
+      };
+      const notifyEventReaders = () => {
+        for (const reader of eventReaders.values()) {
+          if (!reader.resolve) continue;
+          const reply = readEvents(reader);
+          if (reply) settleReader(reader, reply);
+        }
+      };
       const scenarios = new URLSearchParams(window.location.search);
       if (scenarios.has("executionRecovery")) {
         events.push(
@@ -758,6 +784,7 @@ async function installCoreFixture(page: Page) {
           },
           created_at: new Date().toISOString(),
         });
+        notifyEventReaders();
         return startedAt;
       };
 
@@ -1916,6 +1943,16 @@ async function installCoreFixture(page: Page) {
       let callbackId = 0;
       const callbacks = new Map<number, (payload: unknown) => void>();
       const eventListeners = new Map<string, number[]>();
+      let audioFocus = { sequence: 0, realtime_active: companionActive !== null };
+      let petBinding = { revision: 0, conversation_id: null as string | null };
+      Object.assign(window, {
+        __FAIRY_FIXTURE_SET_AUDIO_FOCUS__(active: boolean) {
+          audioFocus = { sequence: audioFocus.sequence + 1, realtime_active: active };
+          for (const handler of eventListeners.get("fairy-audio-focus") ?? []) {
+            callbacks.get(handler)?.({ event: "fairy-audio-focus", id: handler, payload: audioFocus });
+          }
+        },
+      });
       tauriWindow.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
         unregisterListener(_event, eventId) {
           callbacks.delete(eventId);
@@ -1931,6 +1968,40 @@ async function installCoreFixture(page: Page) {
           callbacks.delete(id);
         },
         async invoke(command, args) {
+          if (command === "audio_focus_status") return audioFocus;
+          // Model the negotiated native push contract, including per-reader
+          // replay and cancellation. Polling fallback is tested in transport tests.
+          if (command === "core_events_open") {
+            const key = String(args.subscriptionId);
+            if (eventReaders.has(key) || eventReaders.size >= 8) throw new Error("RPC_EVENT_CAPACITY");
+            eventReaders.set(key, { cursor: Number(args.cursor) });
+            return { supported: true };
+          }
+          if (command === "core_events_next") {
+            const reader = eventReaders.get(String(args.subscriptionId));
+            if (!reader) return { kind: "closed" };
+            if (reader.resolve) throw new Error("RPC_EVENT_CONCURRENT_READ");
+            const reply = readEvents(reader);
+            if (reply) return reply;
+            return new Promise<EventReply>((resolve) => {
+              reader.resolve = resolve;
+              reader.timer = window.setTimeout(() => settleReader(reader, { kind: "idle" }), 30_000);
+            });
+          }
+          if (command === "core_events_close") {
+            const key = String(args.subscriptionId);
+            const reader = eventReaders.get(key);
+            if (reader) settleReader(reader, { kind: "closed" });
+            eventReaders.delete(key);
+            return null;
+          }
+          if (command === "pet_chat_context_get") return petBinding;
+          if (command === "pet_chat_bind") {
+            const input = args.input as { expected_revision: number; conversation_id: string };
+            if (input.expected_revision !== petBinding.revision) throw new Error("PET_CHAT_BINDING_CHANGED");
+            petBinding = { revision: petBinding.revision + 1, conversation_id: input.conversation_id };
+            return petBinding;
+          }
           if (command === "plugin:event|listen") {
             const event = String(args.event);
             const handler = Number(args.handler);
@@ -2260,6 +2331,18 @@ async function installCoreFixture(page: Page) {
             method: request.method,
             params: request.params,
           });
+          if (request.method === "assistant.commands.dispatch") {
+            const parts = String(request.params.text).trim().split(/\s+/u);
+            if (parts[0] !== "/permission" || parts.length !== 2 ||
+                !["observe", "standard", "autonomous"].includes(parts[1])) {
+              throw new Error("Unsupported fixture domain command");
+            }
+            return {
+              jsonrpc: "2.0", id: request.id,
+              result: { command: "permission", conversation: null, turn: null,
+                ui_action: { kind: "request_permission", profile: parts[1] }, notice: null },
+            };
+          }
           if (request.method === "realtime.sessions.list") {
             return {
               jsonrpc: "2.0",
