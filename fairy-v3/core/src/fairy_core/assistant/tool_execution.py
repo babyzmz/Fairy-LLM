@@ -265,6 +265,8 @@ class AssistantToolExecutionMixin:
 
 
 def _tool_error_code(error: Exception) -> str:
+    if isinstance(error, ProviderUnavailableError):
+        return error.public_code
     explicit = getattr(error, "error_code", getattr(error, "code", None))
     if isinstance(explicit, str):
         normalized = explicit.strip().upper()

@@ -704,6 +704,11 @@ def _public_failure_detail(error_code: str) -> str:
         ),
         "PROVIDER_CONTENT_REJECTED": "The selected model could not process this request.",
         "PROVIDER_NETWORK_ERROR": "The model connection was interrupted.",
+        "PROVIDER_DATA_POLICY_UNAVAILABLE": (
+            "No endpoint for this model is available under the current data privacy policy. "
+            "Choose another model that supports this policy. "
+            "Fairy has not changed your privacy settings."
+        ),
         "EVIDENCE_CITATION_REQUIRED": "Fairy could not finish without cited current evidence.",
         "EVIDENCE_CITATION_INVALID": "Fairy rejected an invalid evidence citation.",
         "EVIDENCE_SCOPE_MISMATCH": "Fairy rejected evidence from a different Task Scope.",

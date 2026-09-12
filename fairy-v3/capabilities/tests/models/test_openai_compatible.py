@@ -21,11 +21,66 @@ from fairy_core.providers import (
     ProviderProfile,
     ProviderProtocolError,
     ProviderRateLimitError,
+    ProviderRegistry,
     ProviderTimeoutError,
+    ProviderUnavailableError,
     SecretValue,
 )
 
 from fairy_capabilities.models.openai_compatible import OpenAICompatibleProvider
+
+
+def test_data_policy_endpoint_failure_is_actionable_sanitized_and_not_retried():
+    calls = []
+
+    def rejected(request):
+        calls.append(request)
+        return httpx.Response(
+            404,
+            json={
+                "error": {
+                    "code": 404,
+                    "message": (
+                        "No endpoints found matching your data policy. private-account-detail"
+                    ),
+                }
+            },
+        )
+
+    provider = OpenAICompatibleProvider(
+        profile=_profile(),
+        secret=SecretValue.from_text("fixture-secret"),
+        client=httpx.Client(transport=httpx.MockTransport(rejected)),
+    )
+    with pytest.raises(ProviderUnavailableError) as captured:
+        tuple(ProviderRegistry((provider,)).stream(_request(), CancellationToken()))
+    assert getattr(captured.value, "public_code", None) == "PROVIDER_DATA_POLICY_UNAVAILABLE"
+    assert len(calls) == 1
+    assert "private-account-detail" not in str(captured.value)
+    assert "fixture-secret" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    "status,message",
+    [
+        (404, "No endpoints support these parameters"),
+        (404, "Unknown model"),
+        (400, "No endpoints found matching your data policy"),
+    ],
+)
+def test_other_rejections_are_not_misdiagnosed_as_data_policy(status, message):
+    provider = OpenAICompatibleProvider(
+        profile=_profile(),
+        secret=SecretValue.from_text("fixture-secret"),
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(status, json={"error": {"message": message}})
+            )
+        ),
+    )
+    with pytest.raises(ProviderUnavailableError) as captured:
+        tuple(provider.stream(_request(), CancellationToken()))
+    assert captured.value.public_code == "PROVIDER_UNAVAILABLE"
 
 
 def _profile(

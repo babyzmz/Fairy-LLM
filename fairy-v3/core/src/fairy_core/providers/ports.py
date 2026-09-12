@@ -17,7 +17,11 @@ class ProviderError(RuntimeError):
 
 
 class ProviderUnavailableError(ProviderError):
-    pass
+    public_code = "PROVIDER_UNAVAILABLE"
+
+
+class ProviderDataPolicyError(ProviderUnavailableError):
+    public_code = "PROVIDER_DATA_POLICY_UNAVAILABLE"
 
 
 class ProviderAuthenticationError(ProviderError):

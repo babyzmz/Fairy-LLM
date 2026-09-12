@@ -772,11 +772,11 @@ class AssistantApplication(
                 current_run,
                 error_code="PROVIDER_NETWORK_ERROR",
             )
-        except ProviderUnavailableError:
+        except ProviderUnavailableError as error:
             return self._fail_turn(
                 turn_id,
                 current_run,
-                error_code="PROVIDER_UNAVAILABLE",
+                error_code=error.public_code,
             )
         except EvidenceClassificationFailedError:
             return self._fail_turn(

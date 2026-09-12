@@ -788,7 +788,7 @@ class AssistantRoutingMixin(EvidenceRoutingRuntimeMixin, RoutingBudgetRuntimeMix
         if isinstance(error, ProviderNetworkError):
             return "PROVIDER_NETWORK_ERROR"
         if isinstance(error, ProviderUnavailableError):
-            return "PROVIDER_UNAVAILABLE"
+            return error.public_code
         return "PROVIDER_ERROR"
 
     @staticmethod

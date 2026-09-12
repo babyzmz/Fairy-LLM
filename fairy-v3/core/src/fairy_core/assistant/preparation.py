@@ -50,8 +50,8 @@ class AssistantPreparationMixin:
             return self._fail_turn(turn_id, None, error_code="PROVIDER_CONTENT_REJECTED")
         except ProviderNetworkError:
             return self._fail_turn(turn_id, None, error_code="PROVIDER_NETWORK_ERROR")
-        except ProviderUnavailableError:
-            return self._fail_turn(turn_id, None, error_code="PROVIDER_UNAVAILABLE")
+        except ProviderUnavailableError as error:
+            return self._fail_turn(turn_id, None, error_code=error.public_code)
         except EvidenceClassificationFailedError:
             return self._fail_turn(turn_id, None, error_code="EVIDENCE_CLASSIFICATION_FAILED")
         except ProviderError:

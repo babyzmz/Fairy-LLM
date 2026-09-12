@@ -6687,6 +6687,33 @@ mod native_window_group_tests {
     use windows_sys::Win32::Graphics::Gdi::{
         CreateRectRgn, DeleteObject, GetWindowRgn, PtInRegion,
     };
+#[cfg(all(test, debug_assertions, target_os = "windows"))]
+mod live_provider_probe_tests {
+    #[test]
+    #[ignore = "explicit live provider probe using the existing DPAPI credential bridge"]
+    fn configured_provider_stream_probe() {
+        let data_dir = std::path::PathBuf::from(
+            std::env::var_os("FAIRY_PROVIDER_PROBE_DIR").expect("explicit probe data directory"),
+        );
+        assert!(data_dir.is_absolute());
+        let model = std::env::var("FAIRY_PROVIDER_PROBE_MODEL").expect("explicit probe model");
+        let executable = std::env::current_exe().unwrap();
+        let launch = super::configured_core_launch(&data_dir, &executable, &data_dir).unwrap();
+        let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/provider_stream_probe.py");
+        let status = std::process::Command::new(launch.program)
+            .arg(script)
+            .env_clear()
+            .envs(launch.env)
+            .env("FAIRY_PROVIDER_PROBE_MODEL", model)
+            .env("FAIRY_PROVIDER_PROBE_MODE", std::env::var("FAIRY_PROVIDER_PROBE_MODE").unwrap_or_else(|_| "manual".to_owned()))
+            .current_dir(launch.current_dir.unwrap())
+            .status()
+            .expect("probe process launch");
+        assert!(status.success(), "provider diagnostic process failed");
+    }
+}
+
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, GetWindow, GetWindowLongPtrW, GetWindowTextLengthW,
         SetWindowPos, GWL_EXSTYLE, GW_HWNDPREV, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,

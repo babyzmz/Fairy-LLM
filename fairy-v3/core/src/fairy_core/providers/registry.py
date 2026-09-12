@@ -20,6 +20,7 @@ from fairy_core.providers.ports import (
     ProviderCancelledError,
     ProviderContentRejectedError,
     ProviderContextLengthError,
+    ProviderDataPolicyError,
     ProviderError,
     ProviderNetworkError,
     ProviderProtocolError,
@@ -191,7 +192,11 @@ class ProviderRegistry:
                         usage_cost=usage_cost,
                     ),
                 )
-                if (substantive_emitted and attempt_validator is None) or not _retryable(category):
+                if (
+                    isinstance(error, ProviderDataPolicyError)
+                    or (substantive_emitted and attempt_validator is None)
+                    or not _retryable(category)
+                ):
                     raise
         assert last_error is not None
         raise last_error

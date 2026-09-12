@@ -3,7 +3,11 @@ from uuid import UUID
 import pytest
 
 from fairy_core.providers import ProviderRegistry
-from fairy_core.providers.ports import ProviderProtocolError, ProviderUnavailableError
+from fairy_core.providers.ports import (
+    ProviderDataPolicyError,
+    ProviderProtocolError,
+    ProviderUnavailableError,
+)
 from fairy_core.transports.stdio import build_local_service
 from tests.assistant.support import wait_for_turn
 from tests.assistant.test_application import _scratch_task
@@ -16,7 +20,9 @@ from tests.assistant.test_model_routing import (
 
 
 @pytest.mark.parametrize("mode", ["auto", "manual"])
-@pytest.mark.parametrize("error_type", [ProviderProtocolError, ProviderUnavailableError])
+@pytest.mark.parametrize(
+    "error_type", [ProviderProtocolError, ProviderUnavailableError, ProviderDataPolicyError]
+)
 def test_preparation_failure_publishes_one_scoped_terminal_event(
     tmp_path,
     monkeypatch,
@@ -54,6 +60,9 @@ def test_preparation_failure_publishes_one_scoped_terminal_event(
         other = _auto_turn(service, other_task, "other-chat")
         service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
         wait_for_turn(service, turn["id"], status="failed")
+        if error_type is ProviderDataPolicyError:
+            failed = service.invoke("assistant.turns.get", {"turn_id": turn["id"]})
+            assert failed["error_code"] == "PROVIDER_DATA_POLICY_UNAVAILABLE"
         service._assistant_application._fail_turn(
             UUID(turn["id"]),
             None,

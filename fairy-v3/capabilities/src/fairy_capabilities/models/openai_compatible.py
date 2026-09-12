@@ -29,6 +29,7 @@ from fairy_core.providers import (
     ProviderUnavailableError,
     SecretValue,
 )
+from fairy_core.providers.ports import ProviderDataPolicyError
 
 
 class OpenAICompatibleProvider:
@@ -516,6 +517,10 @@ def _response_error(response: httpx.Response) -> Exception:
         return ProviderContentRejectedError("provider rejected the requested content")
     if response.status_code >= 500:
         return ProviderNetworkError("provider upstream is unavailable")
+    if response.status_code == 404 and _data_policy_endpoint_failure(response):
+        return ProviderDataPolicyError(
+            "No model endpoint is available under the current data privacy policy."
+        )
     return ProviderUnavailableError(
         f"provider request failed ({_status_error_code(response.status_code)})"
     )
@@ -544,3 +549,18 @@ def _safe_error_code(response: httpx.Response) -> str:
     raw = payload.get("error") if isinstance(payload, dict) else None
     code = raw.get("code") if isinstance(raw, dict) else None
     return str(code).strip().lower() if code is not None else ""
+
+
+def _data_policy_endpoint_failure(response: httpx.Response) -> bool:
+    # Inspect only to select a fixed public category. Never forward upstream prose.
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    error = payload.get("error") if isinstance(payload, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    return (
+        isinstance(message, str)
+        and "no endpoints" in message.casefold()
+        and "data policy" in message.casefold()
+    )
