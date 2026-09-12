@@ -467,7 +467,7 @@ export function projectMessageLineItems(
             "assistant",
             RESPONSE_EXCERPT_LENGTH,
           )
-          : "Fairy is responding…",
+          : "No reply recorded",
       streaming: durableResponse.length === 0 && activeResponse.length > 0,
     };
   });

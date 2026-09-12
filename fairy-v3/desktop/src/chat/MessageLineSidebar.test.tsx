@@ -20,6 +20,12 @@ afterEach(() => {
 });
 
 describe("MessageLineSidebar", () => {
+  it("does not claim an unanswered historical exchange is still responding", () => {
+    const items = projectMessageLineItems([message(1, "user", "Failed request", TURN_ID)], "", null);
+    expect(items[0].response).toBe("No reply recorded");
+    expect(items[0].streaming).toBe(false);
+  });
+
   it("groups one durable user request and assistant response by Turn", () => {
     const items = projectMessageLineItems(
       [
@@ -180,7 +186,7 @@ describe("MessageLineSidebar", () => {
       "",
       null,
     );
-    expect(noResponse[0]?.response).toBe("Fairy is responding…");
+    expect(noResponse[0]?.response).toBe("No reply recorded");
   });
 
   it("exposes the active location and navigates with its stable key", () => {

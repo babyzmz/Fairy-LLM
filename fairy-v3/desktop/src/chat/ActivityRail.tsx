@@ -81,7 +81,13 @@ export function ActivityRail({
     [baseProjection, resolvedTurnId, voiceState],
   );
   const tone = workChainTone(projection.current);
-  const workflow = turn?.workflow_summary ?? null;
+  const persistedWorkflow = turn?.workflow_summary ?? null;
+  const terminalStatus = !turn?.cancellation_pending &&
+    (turn?.status === "failed" || turn?.status === "completed" || turn?.status === "cancelled")
+    ? turn.status : null;
+  const workflow = persistedWorkflow !== null && terminalStatus !== null
+    ? { ...persistedWorkflow, status: terminalStatus, pause_requested: false, current_phase: null }
+    : persistedWorkflow;
   const activeBranches = projection.steps.filter((step) =>
     ["running", "waiting"].includes(step.status),
   ).length;

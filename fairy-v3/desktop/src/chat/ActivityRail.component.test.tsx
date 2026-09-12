@@ -9,6 +9,14 @@ import { MessageList } from "./MessageList";
 afterEach(cleanup);
 
 describe("ActivityRail", () => {
+  it("does not show running controls after the Turn failed ahead of its workflow summary", () => {
+    const turn = workflowTurn("running", "failed");
+    render(<ActivityRail turn={turn} onPause={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Pause task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel task" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Running")).not.toBeInTheDocument();
+  });
+
   it("shows friendly public steps and gates diagnostics behind Developer Mode", () => {
     const trace = makeTrace([
       makeStep({
@@ -234,12 +242,12 @@ function makeStep(overrides: Partial<TraceStep>): TraceStep {
   };
 }
 
-function workflowTurn(status: "running" | "paused") {
+function workflowTurn(status: "running" | "paused", turnStatus = "running") {
   return {
     id: TURN_ID,
     conversation_id: CONVERSATION_ID,
     task_id: TASK_ID,
-    status: "running",
+    status: turnStatus,
     workflow_summary: {
       run_id: "019f5ad1-7df8-7000-8000-000000000120",
       status,

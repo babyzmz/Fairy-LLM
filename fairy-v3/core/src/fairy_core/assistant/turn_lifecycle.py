@@ -400,11 +400,12 @@ class AssistantTurnLifecycleMixin:
         error_code: str,
     ) -> AssistantTurn:
         turn = require_turn(unit_of_work, turn_id)
-        if turn.status not in {
+        transitioned = turn.status not in {
             AssistantTurnStatus.COMPLETED,
             AssistantTurnStatus.CANCELLED,
             AssistantTurnStatus.FAILED,
-        }:
+        }
+        if transitioned:
             expected_status = turn.status
             expected_revision = turn.cancellation_revision
             turn.fail(error_code=error_code)
@@ -421,18 +422,21 @@ class AssistantTurnLifecycleMixin:
             public_detail=_public_failure_detail(error_code),
         )
         self._trace.complete_trace_in_unit(unit_of_work, turn_id=turn.id)
+        event_emitted = False
         if run is not None:
             persisted_run = unit_of_work.commands.get_run(run.id)
             if persisted_run is not None and persisted_run.status is CommandStatus.RUNNING:
-                unit_of_work.commands.append_event(
-                    run_id=run.id,
-                    event_type="assistant.turn.failed",
-                    visibility=EventVisibility.USER,
-                    message="Assistant turn failed",
-                    payload={"turn_id": str(turn.id), "error_code": error_code},
-                    lease_owner=run.lease_owner,
-                    lease_fence=run.lease_fence,
-                )
+                if transitioned:
+                    unit_of_work.commands.append_event(
+                        run_id=run.id,
+                        event_type="assistant.turn.failed",
+                        visibility=EventVisibility.USER,
+                        message="Assistant turn failed",
+                        payload={"turn_id": str(turn.id), "error_code": error_code},
+                        lease_owner=run.lease_owner,
+                        lease_fence=run.lease_fence,
+                    )
+                    event_emitted = True
                 self._command_bus(unit_of_work.commands).fail(
                     run.id,
                     error_code=error_code,
@@ -440,6 +444,20 @@ class AssistantTurnLifecycleMixin:
                     lease_fence=run.lease_fence,
                 )
         task = require_task(unit_of_work, turn.task_id)
+        if transitioned and not event_emitted:
+            # Preparation can fail after its model Command has already settled.
+            # Publish the Turn transition in the same transaction, independently
+            # of that Command lease; repeated settlement emits nothing.
+            unit_of_work.commands.append_domain_event(
+                event_type="assistant.turn.failed",
+                visibility=EventVisibility.USER,
+                message="Assistant turn failed",
+                payload={"turn_id": str(turn.id), "error_code": error_code},
+                actor="core:assistant",
+                conversation_id=turn.conversation_id,
+                task_id=turn.task_id,
+                project_id=task.project_id,
+            )
         if task.status in _ACTIVE_TASK_STATUSES:
             task.transition_to(TaskStatus.FAILED)
             unit_of_work.state.save_task(task)

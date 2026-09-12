@@ -151,3 +151,28 @@ be marked passed until a real model reaches ready and is exercised.
 - Remaining: successful provider/tool journey, actual audio/microphone/screen
   session, model idle-unload timing, complete pet hit-testing/drag/DPI/glass, and
   any real WSL/Cloud services. This acceptance is **not a release pass**.
+
+## Authorized repair pass
+
+User requested implementation of these repairs. Preserve the observations above.
+For terminal events: test real preparation failure through engine 4 in Auto and
+Manual, a second untouched chat, exactly one public scoped event, and duplicate
+settlement. For Companion: test the command-specific main/pet-input allowlist and
+denial of render/unknown clients; confirm the real native settings entry opens.
+For Voice/Provider: identify the exact sanitized failure before changing behavior;
+do not replace credentials, downgrade policy, or reinstall working GPU runtimes.
+Each bounded repair ships with its regression and evidence in a local commit.
+
+### Repair 1: terminal recovery
+
+- Reproduced all four Auto/Manual preparation failures (protocol/unavailable):
+  durable Turn failure had zero terminal events before the fix. Centralized the
+  event at the transactional Turn transition, independent of a live Command lease;
+  removed the second Workflow failure publisher. Repeated settlement stays silent.
+- Added failing UI regressions for stale running Workflow summaries and unanswered
+  historical exchanges. Terminal Turn state now wins in Composer/Activity Rail;
+  an empty historical reply says `No reply recorded`, not `Fairy is responding…`.
+- Verified: targeted Core 19 passed; complete Assistant suite 452 passed (424.74 s);
+  TypeScript passed; three affected Vitest files 41 passed; targeted Ruff passed.
+- Real native post-fix acceptance remains pending; these are deterministic tests,
+  not proof that a configured external provider now returns a usable response.

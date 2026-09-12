@@ -51,6 +51,22 @@ describe("assistantDeltaText", () => {
 });
 
 describe("useAssistantTurn", () => {
+  it("settles a failed preparation event even while its workflow summary is running", async () => {
+    let current = assistantTurn({ status: "running", workflow_summary: workflowSummary({ status: "running" }) });
+    const client = assistantClient({ getTurn: async () => current });
+    const { result, rerender } = renderHook(({ events }: { events: EventEnvelope[] }) =>
+      useAssistantTurn({ client, conversationId, persistedTurnId: turnId,
+        profileId: "openrouter-free", operationMode: "answer", events }),
+      { initialProps: { events: [] as EventEnvelope[] } });
+    await waitFor(() => expect(result.current.isBusy).toBe(true));
+    current = { ...current, status: "failed", error_code: "PROVIDER_ERROR" };
+    rerender({ events: [{ ...deltaEvent("preparation-failed", 50, turnId, 1, 0, ""),
+      event_type: "assistant.turn.failed", payload: { turn_id: turnId, error_code: "PROVIDER_ERROR" } }] });
+    await waitFor(() => expect(result.current.turn?.status).toBe("failed"));
+    expect(result.current.isBusy).toBe(false);
+    expect(result.current.streamedText).toBe("");
+  });
+
   it("does not apply a late cancellation acknowledgement to another conversation", async () => {
     const otherConversation = "00000000-0000-4000-8000-000000000011";
     const otherId = "00000000-0000-4000-8000-000000000031";

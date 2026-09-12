@@ -663,6 +663,7 @@ const STATUS_EVENT_TYPES = new Set([
 
 function isActive(turn: AssistantTurn): boolean {
   if (turn.cancellation_pending) return true;
+  if (isTerminal(turn)) return false;
   if (turn.workflow_summary !== null && turn.workflow_summary !== undefined) {
     return ["queued", "running"].includes(turn.workflow_summary.status);
   }
