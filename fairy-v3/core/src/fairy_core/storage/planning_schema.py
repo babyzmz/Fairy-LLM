@@ -35,6 +35,7 @@ def build_planning_schema(
         Column("generation", BigInteger, nullable=False, server_default="1"),
         Column("workflow_run_id", String(36)),
         Column("workflow_plan_revision", BigInteger),
+        Column("workflow_objective_index", BigInteger, nullable=False, server_default="0"),
         Column("status", String(32), nullable=False),
         Column("max_model_calls", BigInteger, nullable=False),
         Column("max_tool_calls", BigInteger, nullable=False),
@@ -57,9 +58,15 @@ def build_planning_schema(
             "tenant_id",
             "workflow_run_id",
             "workflow_plan_revision",
+            "workflow_objective_index",
             name="uq_core_execution_plans_workflow_revision",
         ),
         CheckConstraint("generation > 0", name="ck_core_execution_plans_generation"),
+        CheckConstraint(
+            "workflow_objective_index >= 0 AND workflow_objective_index < 16 AND "
+            "(workflow_objective_index = 0 OR workflow_run_id IS NOT NULL)",
+            name="ck_core_execution_plans_objective",
+        ),
         CheckConstraint(
             "(workflow_run_id IS NULL AND workflow_plan_revision IS NULL) OR "
             "(workflow_run_id IS NOT NULL AND workflow_plan_revision IS NOT NULL "

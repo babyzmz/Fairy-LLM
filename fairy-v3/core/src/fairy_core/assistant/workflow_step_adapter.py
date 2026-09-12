@@ -455,6 +455,10 @@ class AssistantStepWorkflowAdapter:
             self._application._reject_model_round_for_retry(
                 command,
                 error_code=checkpoint["error_code"],
+                public_summary=(
+                    "Finalizing durable result" if checkpoint.get("verification_issues")
+                    else "Tool request could not be validated"
+                ),
                 public_detail="Fairy is preparing the next governed model round.",
             )
         elif command.status is not CommandStatus.FAILED:

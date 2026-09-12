@@ -268,8 +268,10 @@ def test_rejected_tool_becomes_bounded_result_and_duplicate_decision_is_idempote
         service.close()
 
 
+@pytest.mark.parametrize("engine_version", [3, 4])
 def test_approval_queued_before_prior_background_runner_exits_resumes_once(
     tmp_path: Path,
+    engine_version: int,
 ) -> None:
     provider = _approval_provider()
     executor = RecordingToolExecutor(summary="Notification sent once")
@@ -277,6 +279,7 @@ def test_approval_queued_before_prior_background_runner_exits_resumes_once(
         tmp_path,
         provider_registry=ProviderRegistry((provider,)),
         tool_executor=executor,
+        assistant_workflow_engine_version=engine_version,
     )
     execution_finish_reached = Event()
     release_execution_finish = Event()
@@ -284,7 +287,10 @@ def test_approval_queued_before_prior_background_runner_exits_resumes_once(
     original_finish = scheduler._finish_active  # type: ignore[attr-defined]
 
     def delayed_first_finish(active) -> None:
-        if active.kind == ASSISTANT_MODEL_ROUND_NODE_KIND:
+        expected_kind = (
+            "assistant.step.tool" if engine_version == 4 else ASSISTANT_MODEL_ROUND_NODE_KIND
+        )
+        if active.kind == expected_kind:
             execution_finish_reached.set()
             assert release_execution_finish.wait(timeout=5)
         original_finish(active)

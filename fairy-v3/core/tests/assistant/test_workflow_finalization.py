@@ -45,7 +45,12 @@ def _finish(service, turn, command, claim):
 
 def test_final_business_commit_is_replayable_without_a_second_message(tmp_path):
     provider = ScriptedProvider([])
-    service = build_local_service(tmp_path, provider_registry=ProviderRegistry((provider,)))
+    # This fixture walks the fixed legacy graph; v4 real-node finalization and
+    # lost-receipt recovery are covered by test_step_workflow.
+    service = build_local_service(
+        tmp_path, provider_registry=ProviderRegistry((provider,)),
+        assistant_workflow_engine_version=3,
+    )
     service._workflow_scheduler.close()
     try:
         turn, command, claim = _prepare_final(service, "final-checkpoint")
@@ -97,6 +102,7 @@ def test_final_business_commit_is_replayable_without_a_second_message(tmp_path):
 def test_invalid_finalization_claim_cannot_commit_a_reply(tmp_path, invalid):
     service = build_local_service(
         tmp_path, provider_registry=ProviderRegistry((ScriptedProvider([]),)),
+        assistant_workflow_engine_version=3,
     )
     service._workflow_scheduler.close()
     try:

@@ -15,7 +15,6 @@ from fairy_core.assistant.routing import (
     auto_routing_decision,
     parse_router_output,
 )
-from fairy_core.assistant.workflow_plan import ASSISTANT_CONTINUATION_NODE_KINDS
 from fairy_core.model_catalog.models import (
     MODEL_ALLOWLIST,
     ModelAvailability,
@@ -837,10 +836,15 @@ def test_auto_router_is_durable_and_never_projects_router_text(tmp_path: Path) -
         assert response["caused_by_step_id"] == primary["id"]
         assert all(step["status"] == "succeeded" for step in trace["steps"])
         assert workflow is not None
-        assert tuple(node.kind for node in workflow.nodes) == ASSISTANT_CONTINUATION_NODE_KINDS
+        assert tuple(node.kind for node in workflow.nodes) == (
+            "assistant.request.interpret", "assistant.step.route", "assistant.step.model",
+            "assistant.step.verify", "assistant.step.finalize",
+        )
         assert all(node.status.value == "succeeded" for node in workflow.nodes)
         assert all(node.result is not None for node in workflow.nodes)
-        assert workflow.nodes[-1].result["message_id"] == messages[-1]["id"]
+        assert workflow.nodes[-1].result == {
+            "turn_id": turn["id"], "status": "completed",
+        }
     finally:
         service.close()
 

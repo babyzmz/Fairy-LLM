@@ -71,7 +71,8 @@ def test_revised_domain_plan_keeps_completed_facts_and_cannot_start_obsolete_wor
             )
             unit.commit()
         budget = service._assistant_application._configure_workflow_budget(
-            UUID(turn["id"]), SimpleNamespace(complexity=RoutingComplexity.HIGH),
+            UUID(turn["id"]),
+            SimpleNamespace(complexity=RoutingComplexity.HIGH),
         )
         assert budget.max_model_rounds == 24
         with pytest.raises(InvalidTransitionError):
@@ -90,6 +91,11 @@ def test_revised_domain_plan_keeps_completed_facts_and_cannot_start_obsolete_wor
             assert old.status == "cancelled"
             assert old.max_model_calls == 12
             assert new.status == "active"
+            assert (new.max_model_calls, new.max_tool_calls, new.max_duration_seconds) == (
+                24,
+                96,
+                7200,
+            )
             steps = unit.state.task_steps_for_plan(old.id)
             assert (
                 next(step for step in steps if step.kind is TaskStepKind.IMPLEMENT).status

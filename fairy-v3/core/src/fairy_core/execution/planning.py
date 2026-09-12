@@ -5,7 +5,12 @@ from uuid import UUID
 
 from fairy_core.contracts.planning import ExecutionPlanCreateInput
 from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
-from fairy_core.execution.plan_revisions import active_file_plan_binding
+from fairy_core.execution.plan_revisions import (
+    active_file_objective,
+    active_file_plan_binding,
+    consumed_file_plan,
+    settle_consumed_file_plan,
+)
 from fairy_core.execution.plans import (
     ExecutionPlan,
     ExecutionPlanStatus,
@@ -14,6 +19,7 @@ from fairy_core.execution.plans import (
     TaskStepStatus,
 )
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
+from fairy_core.workflow.models import WorkflowBudget
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,29 +51,48 @@ class ExecutionPlanningApplication:
                 raise KeyError(f"Task not found: {request.task_id}")
             existing = unit_of_work.state.execution_plan_for_task(task.id)
             binding = active_file_plan_binding(unit_of_work, task)
-            new_revision = existing is not None and binding[0] is not None and (
-                existing.workflow_run_id, existing.workflow_plan_revision
-            ) != binding
+            objective = active_file_objective(unit_of_work, task) if binding[0] else 0
+            new_objective = (
+                existing is not None
+                and binding[0] is not None
+                and (existing.workflow_run_id, existing.workflow_plan_revision) == binding
+                and consumed_file_plan(unit_of_work, task, existing)
+            )
+            if new_objective:
+                settle_consumed_file_plan(unit_of_work, task, existing)
+            new_revision = (
+                existing is not None
+                and binding[0] is not None
+                and (existing.workflow_run_id, existing.workflow_plan_revision) != binding
+            )
             if new_revision and existing.status in {
-                ExecutionPlanStatus.ACTIVE, ExecutionPlanStatus.PAUSED,
+                ExecutionPlanStatus.ACTIVE,
+                ExecutionPlanStatus.PAUSED,
             }:
                 raise InvalidTransitionError(
                     "Previous file plan must be settled before replacement"
                 )
-            if existing is not None and not new_revision:
+            if existing is not None and not new_revision and not new_objective:
                 if dict(existing.manifest) != manifest:
                     raise IdempotencyConflictError("Task already has a different Execution Plan")
                 return ExecutionPlanContext(
                     plan=existing,
                     steps=tuple(unit_of_work.state.task_steps_for_plan(existing.id)),
                 )
+            run = unit_of_work.workflows.get_run(binding[0]) if binding[0] else None
+            budget = run.budget if run is not None else WorkflowBudget.normal()
             plan, steps = ExecutionPlan.create(
                 task=task,
                 manifest=manifest,
                 initial_model_calls=initial_model_calls,
                 initial_tool_calls=initial_tool_calls,
                 generation=existing.generation + 1 if existing is not None else 1,
-                workflow_run_id=binding[0], workflow_plan_revision=binding[1],
+                workflow_run_id=binding[0],
+                workflow_plan_revision=binding[1],
+                workflow_objective_index=objective,
+                max_model_calls=budget.max_model_rounds,
+                max_tool_calls=budget.max_tool_invocations,
+                max_duration_seconds=budget.max_duration_seconds,
             )
             unit_of_work.state.save_execution_plan(plan, steps)
             unit_of_work.commit()

@@ -92,6 +92,9 @@ def test_recovered_model_round_reclaims_command_and_resets_partial_projection(
     first_service = build_local_service(
         tmp_path,
         provider_registry=ProviderRegistry((_completion_provider(),)),
+        # This fixture inserts a model command before claiming the old wrapper
+        # node. V4 actual-node crash/commit boundaries are covered separately.
+        assistant_workflow_engine_version=3,
     )
     task = _scratch_task(first_service, "Replace interrupted model text")
     turn = _turn(first_service, task, "turn:durable-worker:model-reclaim")

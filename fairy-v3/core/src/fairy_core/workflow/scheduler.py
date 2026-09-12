@@ -194,6 +194,16 @@ class WorkflowScheduler:
             self._coordinator.start()
         self._wake.set()
 
+    def diagnostics(self):
+        with self._lock:
+            return {
+                "active_nodes": len(self._active),
+                "worker_limit": self._max_workers,
+                "active_runs": len({item.claim.run_id for item in self._active.values()}),
+                "started": self._started,
+                "closing": self._closed,
+            }
+
     def close(self) -> None:
         with self._lock:
             if self._closed:
@@ -227,7 +237,8 @@ class WorkflowScheduler:
                 with self._unit_of_work_factory() as unit_of_work:
                     if unit_of_work.workflows.abandon(item.claim):
                         self._adapters.settle_failed_run(
-                            unit_of_work, unit_of_work.workflows.get_run(item.claim.run_id),
+                            unit_of_work,
+                            unit_of_work.workflows.get_run(item.claim.run_id),
                         )
                         unit_of_work.commit()
             except Exception:
@@ -381,7 +392,8 @@ class WorkflowScheduler:
                     node = item.node
                     if renewed and node is None:
                         node = unit_of_work.workflows.get_node(
-                            item.claim.run_id, item.claim.node_id,
+                            item.claim.run_id,
+                            item.claim.node_id,
                         )
                 if renewed and node is not None:
                     heartbeat = getattr(self._adapters.require(node.kind), "heartbeat", None)
@@ -598,7 +610,8 @@ class WorkflowScheduler:
                 if run is None or run.status is not WorkflowRunStatus.PAUSED:
                     return
                 node = active.node or unit.workflows.get_node(
-                    active.claim.run_id, active.claim.node_id,
+                    active.claim.run_id,
+                    active.claim.node_id,
                 )
             if node is None:
                 return
@@ -607,7 +620,8 @@ class WorkflowScheduler:
                 replan(node)
         except Exception:
             logger.exception(
-                "Workflow Run %s could not apply its boundary update", active.claim.run_id,
+                "Workflow Run %s could not apply its boundary update",
+                active.claim.run_id,
             )
 
     def _resume_after_boundary_if_ready(self, run_id: UUID) -> None:
@@ -646,16 +660,21 @@ class WorkflowScheduler:
                 self._resume_after_boundary.discard(run_id)
 
     def _abandon(
-        self, claim: WorkflowAttemptClaim, *, disable_reconciliation: bool = False,
+        self,
+        claim: WorkflowAttemptClaim,
+        *,
+        disable_reconciliation: bool = False,
     ) -> bool:
         try:
             with self._unit_of_work_factory() as unit_of_work:
                 abandoned = unit_of_work.workflows.abandon(
-                    claim, disable_reconciliation=disable_reconciliation,
+                    claim,
+                    disable_reconciliation=disable_reconciliation,
                 )
                 if abandoned:
                     self._adapters.settle_failed_run(
-                        unit_of_work, unit_of_work.workflows.get_run(claim.run_id),
+                        unit_of_work,
+                        unit_of_work.workflows.get_run(claim.run_id),
                     )
                     unit_of_work.commit()
                 return abandoned

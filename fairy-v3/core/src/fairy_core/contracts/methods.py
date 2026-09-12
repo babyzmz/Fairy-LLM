@@ -245,10 +245,6 @@ from fairy_core.contracts.models import (
     VersionListInput,
     VersionModel,
     VersionPageModel,
-    VoiceAudioModel,
-    VoiceSynthesizeInput,
-    VoiceTranscribeInput,
-    VoiceTranscriptModel,
 )
 from fairy_core.contracts.obsidian import (
     ObsidianConnectorHealthModel,
@@ -288,11 +284,7 @@ from fairy_core.contracts.presentation import (
 from fairy_core.contracts.realtime_methods import REALTIME_METHODS
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.contracts.turn_trace import TurnTraceModel
-from fairy_core.contracts.voice_sessions import (
-    VoiceSessionIdInput,
-    VoiceSessionModel,
-    VoiceSessionStartInput,
-)
+from fairy_core.contracts.voice_methods import VOICE_METHODS
 from fairy_core.contracts.workspaces import (
     FileReadSessionModel,
     WorkspaceExportInput,
@@ -312,19 +304,27 @@ from fairy_core.system_actions.models import SystemActionExecution, SystemAction
 CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
     {
         "assistant.messages.cancel": CoreMethod(
-            "assistant.messages.cancel", AssistantMessageCancelInput,
-            AssistantMessageCancellationResult, CoreMethodTransport.LOCAL_ONLY,
+            "assistant.messages.cancel",
+            AssistantMessageCancelInput,
+            AssistantMessageCancellationResult,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "assistant.conversations.presentation.get": CoreMethod(
-            "assistant.conversations.presentation.get", ConversationIdInput,
-            AssistantConversationPresentation, CoreMethodTransport.LOCAL_ONLY,
+            "assistant.conversations.presentation.get",
+            ConversationIdInput,
+            AssistantConversationPresentation,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "assistant.commands.dispatch": CoreMethod(
-            "assistant.commands.dispatch", AssistantCommandInput, AssistantCommandResult,
+            "assistant.commands.dispatch",
+            AssistantCommandInput,
+            AssistantCommandResult,
             CoreMethodTransport.LOCAL_ONLY,
         ),
         "assistant.messages.submit": CoreMethod(
-            "assistant.messages.submit", AssistantMessageSubmitInput, AssistantTurnModel,
+            "assistant.messages.submit",
+            AssistantMessageSubmitInput,
+            AssistantTurnModel,
             CoreMethodTransport.LOCAL_ONLY,
         ),
         "ambient.dialogue.evaluate": CoreMethod(
@@ -1192,30 +1192,6 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             WorkspaceIdInput,
             WorkspaceModel,
         ),
-        "voice.synthesize": CoreMethod(
-            "voice.synthesize",
-            VoiceSynthesizeInput,
-            VoiceAudioModel,
-        ),
-        "voice.sessions.cancel": CoreMethod(
-            "voice.sessions.cancel",
-            VoiceSessionIdInput,
-            VoiceSessionModel,
-        ),
-        "voice.sessions.get": CoreMethod(
-            "voice.sessions.get",
-            VoiceSessionIdInput,
-            VoiceSessionModel,
-        ),
-        "voice.sessions.start": CoreMethod(
-            "voice.sessions.start",
-            VoiceSessionStartInput,
-            VoiceSessionModel,
-        ),
-        "voice.transcribe": CoreMethod(
-            "voice.transcribe",
-            VoiceTranscribeInput,
-            VoiceTranscriptModel,
-        ),
+        **VOICE_METHODS,
     }
 )

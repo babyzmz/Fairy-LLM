@@ -25,6 +25,7 @@ def _prepare(service, key, *, notification=False):
         turn=started, model_round=1, sequence=1, provider_call_id="call-search",
         tool_name="system.notify" if notification else "web.search",
         scope_digest=started.scope_digest,
+        workflow_run_id=started.workflow_run_id if started.execution_engine_version == 4 else None,
         arguments=({"title": "Fairy", "body": "first", "level": "info"}
                    if notification else {"query": "Python release"}),
     )
@@ -105,6 +106,7 @@ def test_approval_resume_targets_one_prepared_invocation_without_running_its_sib
         second = ToolInvocation.create(
             turn=turn, model_round=1, sequence=2, provider_call_id="call-second",
             tool_name="system.notify", scope_digest=turn.scope_digest,
+            workflow_run_id=turn.workflow_run_id if turn.execution_engine_version == 4 else None,
             arguments={"title": "Fairy", "body": "second", "level": "info"},
         )
         with service._unit_of_work_factory() as unit:

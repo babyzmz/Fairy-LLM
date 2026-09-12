@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from uuid import UUID
 
@@ -21,11 +22,23 @@ def prepare_tool_checkpoint(boundary, application, payload):
     definitions = payload["offered_definitions"]
     candidates = payload["candidates"]
     parsed = []
+    rejected = {}
     for candidate in candidates:
         definition = definitions.get(candidate.name)
         if definition is None:
             raise ToolCandidateError("The model requested a tool that was not offered")
-        parsed.append((candidate, arguments_for_definition(candidate, definition)))
+        try:
+            arguments = arguments_for_definition(candidate, definition)
+        except ToolCandidateError:
+            # Reject this call without dropping valid siblings. Never persist
+            # reserved credentials or transport fields from a rejected payload.
+            arguments = {"rejected_arguments_sha256": hashlib.sha256(
+                "".join(candidate.argument_fragments).encode("utf-8")
+            ).hexdigest()}
+            rejected[candidate.call_id] = (
+                "Tool candidate was rejected: invalid arguments or Core-reserved fields."
+            )
+        parsed.append((candidate, arguments))
     with boundary.factory() as unit:
         turn = require_turn(unit, payload["turn_id"])
         task = require_task(unit, turn.task_id)
@@ -55,6 +68,11 @@ def prepare_tool_checkpoint(boundary, application, payload):
         )
         resources = {}
         for invocation in invocations:
+            if invocation.provider_call_id in rejected:
+                invocation.reject(
+                    error_code="PROVIDER_PROTOCOL_ERROR",
+                    model_content=rejected[invocation.provider_call_id],
+                )
             if invocation.tool_name.startswith("browser."):
                 # Browser operations share mutable sessions, even snapshot reads.
                 resources[invocation.id] = (f"browser-workspace:{scope.workspace_id}",)
@@ -80,10 +98,16 @@ def prepare_tool_checkpoint(boundary, application, payload):
             "verification_issues": list(boundary.node.payload.get("verification_issues", ())),
             "invalid_tool_retry_used": boundary.invalid_tool_retry_used,
         }
+        public_intents = {
+            str(invocation.id): candidate.public_intent()
+            for invocation, (candidate, _) in zip(invocations, parsed, strict=True)
+        }
         nodes = tuple(
             replace(node, payload={**node.payload, **continuation_state})
             if node.kind == ASSISTANT_STEP_JOIN_KIND
-            else node
+            else replace(node, payload={
+                **node.payload, "public_intent": public_intents[node.payload["invocation_id"]],
+            })
             for node in nodes
         )
         checkpoint = {

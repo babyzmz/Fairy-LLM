@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from fairy_core.assistant.evidence import evidence_context
 from fairy_core.assistant.models import ToolInvocation, ToolInvocationStatus
 from fairy_core.assistant.tools import tool_message_content
 from fairy_core.providers import ModelMessage, ModelRole, ModelToolCall
@@ -69,6 +70,10 @@ def durable_tool_context(
             content = invocation.model_content or (
                 f"Tool execution failed ({invocation.error_code or 'TOOL_REJECTED'})."
             )
+            # Every new model node and restart reconstructs this projection.
+            # Receipt identities are Core-owned facts, not optional model text.
+            if invocation.evidence_receipts:
+                content = evidence_context(invocation.evidence_receipts) + "\n" + content
             messages.append(
                 ModelMessage.create(
                     role=ModelRole.TOOL,

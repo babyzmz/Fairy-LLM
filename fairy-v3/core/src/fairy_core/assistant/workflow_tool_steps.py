@@ -200,7 +200,9 @@ def _execute_invocation_attempt(adapter, node, claim, cancellation, turn):
             candidate = ToolCandidate(
                 call_id=invocation.provider_call_id,
                 name=invocation.tool_name,
-                argument_fragments=[json.dumps(invocation.arguments)],
+                argument_fragments=[json.dumps({
+                    **invocation.arguments, "public_intent": node.payload.get("public_intent"),
+                })],
             )
             _, message, error, images = app._execute_candidate(
                 turn_id=turn.id,

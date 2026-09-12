@@ -704,11 +704,15 @@ class ProjectToolExecutor(DelegatingToolCancellation):
                     "files": [file.model_dump(mode="json") for file in files],
                     "reason": reason,
                     "scope_digest": scope.scope_digest,
-                    **({"command_id": str(command_run.id)} if (
-                        command_run is not None
-                        and plan.workflow_plan_revision is not None
-                        and plan.workflow_plan_revision > 1
-                    ) else {}),
+                    **(
+                        {"command_id": str(command_run.id)}
+                        if (
+                            command_run is not None
+                            and plan.workflow_plan_revision is not None
+                            and (plan.workflow_plan_revision > 1 or plan.generation > 1)
+                        )
+                        else {}
+                    ),
                 },
                 ensure_ascii=True,
                 allow_nan=False,

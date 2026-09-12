@@ -4,6 +4,83 @@ from fairy_core.assistant.evidence import EvidenceRequirementKind
 from fairy_core.storage.schema import workflow_nodes
 
 
+def objective_operation_receipts(unit, turn, intent, invocations):
+    """Only this revision/objective's successful, governed operations are facts."""
+    if intent is None or intent.active_objective_index is None or turn.workflow_run_id is None:
+        return ()
+    run = unit.workflows.get_run(turn.workflow_run_id)
+    if (
+        run is None
+        or run.engine_version != 4
+        or run.task_id != turn.task_id
+        or run.conversation_id != turn.conversation_id
+    ):
+        return ()
+    return tuple(
+        invocation
+        for invocation in invocations
+        if invocation.workflow_run_id == run.id
+        and invocation.workflow_plan_revision == run.active_plan_revision
+        and invocation.workflow_objective_index == intent.active_objective_index
+        and invocation.turn_id == turn.id
+        and invocation.task_id == turn.task_id
+        and invocation.scope_digest == intent.scope_digest
+        and invocation.status == "completed"
+        and invocation.error_code is None
+        and invocation.command_run_id is not None
+        and (command := unit.commands.get_run(invocation.command_run_id)) is not None
+        and command.status == "succeeded"
+        and command.command_name == invocation.tool_name
+        and command.task_id == turn.task_id
+        and command.conversation_id == turn.conversation_id
+        and command.scope_digest == intent.scope_digest
+    )
+
+
+def operation_objective_issue(unit, turn, intent, invocations):
+    if intent is None or intent.active_objective_index is None:
+        return None
+    action = intent.objectives[intent.active_objective_index].action.value
+    required = {
+        "run": {"run.sandboxed", "review.test", "review.typecheck", "review.lint", "review.build"},
+        "generate": {"media.images.generate", "media.audio.generate", "media.videos.start"},
+        "manage": {
+            "memory.suggest",
+            "system.notify",
+            "system.copy_text",
+            "system.reveal_path",
+            "system.open_settings",
+            "system.open_url",
+        },
+    }.get(action)
+    receipts = objective_operation_receipts(unit, turn, intent, invocations)
+    explicit_mcp = {name for name in intent.target_descriptions if name.startswith("mcp.")}
+    if action in {"create", "change", "run", "manage"} and explicit_mcp:
+        required = (required or set()) | explicit_mcp
+    if action == "browse":
+        # Reading/snapshotting is sufficient; do not force a click or a form side effect.
+        if any(
+            item.tool_name.startswith("browser.")
+            and item.tool_name
+            not in {
+                "browser.status",
+                "browser.close",
+                "browser.tabs.list",
+            }
+            for item in receipts
+        ):
+            return None
+        required = {"browser.snapshot", "browser.navigate"}
+    if required is not None and not any(item.tool_name in required for item in receipts):
+        return (
+            f"Objective execution is unverified ({action}): no successful governed operation "
+            "is recorded for this objective and revision. Perform the authorized operation "
+            "using its tool, or surface the actual blocker; never claim completion from a "
+            "draft, an earlier objective, a failed call or an unapproved proposal."
+        )
+    return None
+
+
 def read_objective_issue(unit, turn, intent, plan, invocations):
     needs_files = turn.routing_decision is not None and (
         turn.routing_decision.requires_workspace_changes

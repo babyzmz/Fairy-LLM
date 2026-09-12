@@ -39,10 +39,13 @@ def test_stale_cancel_cannot_signal_or_stop_the_current_workflow(tmp_path: Path)
         assert provider.started.wait(3)
         before = service.invoke("assistant.turns.get", {"turn_id": turn["id"]})
         with pytest.raises(InvalidTransitionError, match="revision"):
-            service.invoke("assistant.turns.cancel", {
-                "turn_id": turn["id"],
-                "expected_cancellation_revision": before["cancellation_revision"] + 1,
-            })
+            service.invoke(
+                "assistant.turns.cancel",
+                {
+                    "turn_id": turn["id"],
+                    "expected_cancellation_revision": before["cancellation_revision"] + 1,
+                },
+            )
         after = service.invoke("assistant.turns.get", {"turn_id": turn["id"]})
         assert after["cancellation_revision"] == before["cancellation_revision"]
         assert after["status"] == "running"
@@ -62,11 +65,18 @@ def test_late_preparation_node_preserves_cancellation_instead_of_failing_workflo
         turn = _turn(service, task, "late-preparation-cancel")
         with service._unit_of_work_factory() as unit:
             snapshot = unit.workflows.get(UUID(turn["workflow_run_id"]))
-            node = next(item for item in snapshot.nodes
-                        if item.kind == ASSISTANT_REQUEST_INTERPRET_NODE_KIND)
-        service.invoke("assistant.turns.cancel", {
-            "turn_id": turn["id"], "expected_cancellation_revision": 0,
-        })
+            node = next(
+                item
+                for item in snapshot.nodes
+                if item.kind == ASSISTANT_REQUEST_INTERPRET_NODE_KIND
+            )
+        service.invoke(
+            "assistant.turns.cancel",
+            {
+                "turn_id": turn["id"],
+                "expected_cancellation_revision": 0,
+            },
+        )
         with pytest.raises(WorkflowCancelled):
             service._workflow_adapters.require(node.kind).execute(node, CancellationToken())
         assert provider.requests == []
@@ -425,7 +435,13 @@ def test_clarification_waits_and_resumes_the_same_turn_idempotently(
         execution_nodes_started = sum(
             node.attempt_count
             for node in workflow.nodes
-            if node.kind in {"assistant.model.round", "assistant.tool.invoke"}
+            if node.kind
+            in {
+                "assistant.model.round",
+                "assistant.tool.invoke",
+                "assistant.step.model",
+                "assistant.step.tool",
+            }
         )
         record_property(
             "execution_nodes_started_before_clarification",

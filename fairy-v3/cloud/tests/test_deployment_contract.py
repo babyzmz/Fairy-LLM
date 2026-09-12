@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260909_0061"]
+    assert scripts.get_heads() == ["20260912_0062"]
+    assert scripts.get_revision("20260912_0062").down_revision == "20260909_0061"
     assert scripts.get_revision("20260909_0061").down_revision == "20260909_0060"
     assert scripts.get_revision("20260909_0060").down_revision == "20260909_0059"
     assert scripts.get_revision("20260909_0059").down_revision == "20260909_0058"
@@ -47,6 +48,25 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
     assert scripts.get_revision("20260711_0012").down_revision == "20260711_0011"
     assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
+
+
+def test_file_objective_upgrade_and_lossless_downgrade_guard() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.upgrade(config, "20260909_0061:20260912_0062", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert (
+        "UNIQUE (TENANT_ID, WORKFLOW_RUN_ID, WORKFLOW_PLAN_REVISION, WORKFLOW_OBJECTIVE_INDEX)"
+        in ddl
+    )
+    assert "CHECK (WORKFLOW_OBJECTIVE_INDEX >= 0" in ddl
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260912_0062:20260909_0061", sql=True)
+    ddl = " ".join(output.getvalue().upper().split())
+    assert ddl.index("SET LOCAL ROW_SECURITY = OFF") < ddl.index("SELECT 1")
+    assert ddl.index("RAISE EXCEPTION") < ddl.index("DROP COLUMN")
+    assert "DELETE FROM" not in ddl
 
 
 def test_tool_objective_upgrade_and_lossless_downgrade_guard() -> None:

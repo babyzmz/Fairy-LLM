@@ -9,9 +9,11 @@ from uuid import UUID
 
 import pytest
 
+from fairy_core.assistant.interpretation import RequestAction
 from fairy_core.domain.execution import Artifact, ArtifactType, ArtifactVisibility
 from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.transports.stdio import build_local_service
+from tests.assistant.intent_support import bind_test_intent
 from tests.assistant.support import ScriptedProvider, wait_for_turn
 from tests.runtime_support import FakeRuntimeExecutor
 
@@ -75,7 +77,7 @@ def _provider(tool_name: str, arguments: str, final_text: str) -> ScriptedProvid
 
 
 def _project_turn(
-    service, source: Path, *, key: str
+    service, source: Path, *, key: str, action: RequestAction | None = None
 ) -> tuple[dict[str, object], dict[str, object]]:
     project = service.invoke(
         "projects.import",
@@ -89,7 +91,11 @@ def _project_turn(
         "tasks.create",
         {
             "conversation_id": conversation["id"],
-            "user_request": "Use a governed project tool",
+            "user_request": (
+                "Update README.md using an approved changeset"
+                if action is RequestAction.CHANGE
+                else "Use a governed project tool"
+            ),
             "operation_mode": "continue_current_chat_draft",
             "execution_target": "local",
             "idempotency_key": f"task:{key}",
@@ -103,6 +109,8 @@ def _project_turn(
             "idempotency_key": f"turn:{key}",
         },
     )
+    if action is not None:
+        bind_test_intent(service, turn, action=action, targets=("README.md",))
     return context, turn
 
 
@@ -129,6 +137,7 @@ def _scratch_turn(service, *, key: str) -> tuple[dict[str, object], dict[str, ob
             "idempotency_key": f"turn:{key}",
         },
     )
+    bind_test_intent(service, turn, action=RequestAction.CREATE, targets=("current workspace",))
     return context, turn
 
 
@@ -303,7 +312,7 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
         provider_registry=ProviderRegistry((provider,)),
     )
     try:
-        context, turn = _project_turn(service, source, key="changeset")
+        context, turn = _project_turn(service, source, key="changeset", action=RequestAction.CHANGE)
         waiting = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
         approvals = service.invoke(
             "approvals.list",
@@ -730,7 +739,10 @@ def test_final_response_retries_when_plan_has_no_changeset(tmp_path: Path) -> No
             message.role.value == "system"
             and "has no durable pending or applied Changeset" in message.content
             for message in provider.requests[2].messages
-        )
+        ), [
+            message.content for message in provider.requests[2].messages
+            if message.role.value == "system"
+        ]
         assert [item["content"] for item in messages if item["role"] == "assistant"] == [
             "The durable webpage file is now ready."
         ]
@@ -744,7 +756,7 @@ def test_final_response_retries_when_plan_has_no_changeset(tmp_path: Path) -> No
             and step["status"] == "failed"
             and step["public_summary"] == "Finalizing durable result"
             for step in trace["steps"]
-        )
+        ), [(step["kind"], step["status"], step["public_summary"]) for step in trace["steps"]]
         root = Path(context["target_version"]["project_root"])
         assert (root / "index.html").read_text(encoding="utf-8") == ("<h1>Recovered</h1>")
     finally:

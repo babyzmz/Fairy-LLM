@@ -166,7 +166,13 @@ def test_legacy_plan_upgrade_keeps_steps_and_foreign_keys_after_reopen(tmp_path)
             batch.drop_constraint("fk_core_execution_plans_workflow_revision", type_="foreignkey")
             batch.drop_constraint("ck_core_execution_plans_generation", type_="check")
             batch.drop_constraint("ck_core_execution_plans_workflow_binding", type_="check")
-            for name in ("generation", "workflow_run_id", "workflow_plan_revision"):
+            batch.drop_constraint("ck_core_execution_plans_objective", type_="check")
+            for name in (
+                "generation",
+                "workflow_run_id",
+                "workflow_plan_revision",
+                "workflow_objective_index",
+            ):
                 batch.drop_column(name)
             batch.create_unique_constraint("uq_core_execution_plans_task", ["tenant_id", "task_id"])
     engine.dispose()

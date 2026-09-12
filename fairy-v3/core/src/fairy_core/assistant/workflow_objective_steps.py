@@ -15,6 +15,7 @@ from fairy_core.assistant.workflow_step_nodes import (
     step_node,
 )
 from fairy_core.commanding import CommandStatus
+from fairy_core.execution.plans import TaskStepKind, TaskStepStatus
 from fairy_core.workflow.errors import WorkflowFenceError
 from fairy_core.workflow.scheduler import WorkflowNodeResult
 
@@ -80,6 +81,34 @@ def execute_objective_step(adapter, node, turn):
         ):
             raise WorkflowFenceError("Objective completion requires its verified model draft")
     draft = adapter._draft(node)
+    file_plan_id = None
+    with adapter._factory() as unit:
+        from fairy_core.assistant.workflow_objective_evidence import objective_operation_receipts
+
+        operation_ids = [
+            str(item.command_run_id)
+            for item in objective_operation_receipts(
+                unit,
+                turn,
+                intent.model_copy(update={"active_objective_index": index}),
+                unit.assistant.list_tool_invocations(turn.id),
+            )
+        ]
+        plan = unit.state.execution_plan_for_task(turn.task_id)
+        if plan is not None and (
+            plan.workflow_run_id == node.run_id
+            and plan.workflow_plan_revision == node.plan_revision
+            and intent.objectives[index].action.value in {"change", "create"}
+        ):
+            implementations = [
+                step
+                for step in unit.state.task_steps_for_plan(plan.id)
+                if step.kind is TaskStepKind.IMPLEMENT
+            ]
+            if implementations and all(
+                step.status is TaskStepStatus.COMPLETED for step in implementations
+            ):
+                file_plan_id = str(plan.id)
     final = index == len(intent.objectives) - 1
     if final:
         child = step_node(node, STEP_FINALIZE, model_node_id=node.payload["model_node_id"])
@@ -120,6 +149,8 @@ def execute_objective_step(adapter, node, turn):
             "public_summary": draft["content"][:2_000],
             "verify_node_id": str(verify.id),
             "evidence_receipt_ids": draft["cited_evidence_receipt_ids"],
+            "file_plan_id": file_plan_id,
+            "operation_command_ids": operation_ids,
         },
         next_nodes=(child,),
         public_summary=f"Objective {index + 1} verified",

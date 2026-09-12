@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import datetime
 from uuid import UUID
 
+from fairy_core.assistant.engine_version import DEFAULT_ASSISTANT_ENGINE_VERSION
 from fairy_core.assistant.interpretation import (
     AssistantRequestInterpretationRevision,
     InterpretationConfidence,
@@ -34,7 +35,6 @@ from fairy_core.assistant.workflow_changeset_supersession import (
     unstarted_changeset_approval,
 )
 from fairy_core.assistant.workflow_plan import (
-    ASSISTANT_WORKFLOW_ENGINE_VERSION,
     apply_pending_assistant_steering,
     assistant_step_workflow_plan,
     assistant_workflow_plan,
@@ -75,7 +75,7 @@ class AssistantLedgerApplication:
         registry: ToolRegistry | None = None,
         execution_policy: ExecutionPolicyResolver | None = None,
         execution_target: ExecutionTarget = ExecutionTarget.LOCAL,
-        workflow_engine_version: int = ASSISTANT_WORKFLOW_ENGINE_VERSION,
+        workflow_engine_version: int = DEFAULT_ASSISTANT_ENGINE_VERSION,
     ) -> None:
         if workflow_engine_version not in {3, 4}:
             raise ValueError("Unsupported new Assistant workflow engine version")
@@ -391,7 +391,8 @@ class AssistantLedgerApplication:
                 if run is None or run.status is not CommandStatus.RUNNING:
                     continue
                 if (
-                    run.task_id != turn.task_id or run.conversation_id != turn.conversation_id
+                    run.task_id != turn.task_id
+                    or run.conversation_id != turn.conversation_id
                     or run.scope_digest != turn.scope_digest
                 ):
                     return False
@@ -512,7 +513,8 @@ class AssistantLedgerApplication:
             engine_version=self._workflow_engine_version,
         )
         planner = (
-            assistant_step_workflow_plan if self._workflow_engine_version == 4
+            assistant_step_workflow_plan
+            if self._workflow_engine_version == 4
             else assistant_workflow_plan
         )
         nodes, edges = planner(
@@ -612,22 +614,28 @@ class AssistantLedgerApplication:
                 for attempt in attempts:
                     attempt.fail(
                         error_category=ProviderErrorCategory.UNKNOWN,
-                        usage=dict(attempt.usage), usage_cost=attempt.usage_cost,
+                        usage=dict(attempt.usage),
+                        usage_cost=attempt.usage_cost,
                     )
                     unit.assistant.update_provider_attempt(attempt)
                 for turn_id in turn_ids:
                     turn = require_turn(unit, turn_id)
                     pending = turn.cancellation_pending
                     unit.commands.append_domain_event(
-                        event_type=("assistant.turn.recovery_required" if pending
-                                    else "assistant.turn.cancelled"),
+                        event_type=(
+                            "assistant.turn.recovery_required"
+                            if pending
+                            else "assistant.turn.cancelled"
+                        ),
                         visibility=EventVisibility.USER,
                         message=(
                             "Cancelled task still has an operation with an unknown outcome"
-                            if pending else "Cancelled model stream ended with the previous Core"
+                            if pending
+                            else "Cancelled model stream ended with the previous Core"
                         ),
                         payload={"turn_id": str(turn_id), "error_code": "CORE_STREAM_INTERRUPTED"},
-                        actor="core:recovery", conversation_id=turn.conversation_id,
+                        actor="core:recovery",
+                        conversation_id=turn.conversation_id,
                         task_id=turn.task_id,
                     )
                 unit.commit()
@@ -695,7 +703,8 @@ class AssistantLedgerApplication:
             budget_approval = unstarted_budget_approval(unit_of_work, snapshot, turn)
             changeset_approval = unstarted_changeset_approval(unit_of_work, snapshot, turn)
             if (
-                replay is None and snapshot.run.status is WorkflowRunStatus.WAITING_FOR_APPROVAL
+                replay is None
+                and snapshot.run.status is WorkflowRunStatus.WAITING_FOR_APPROVAL
                 and budget_approval is None
                 and changeset_approval is None
                 and not can_supersede_tool_approval(unit_of_work, snapshot, turn)

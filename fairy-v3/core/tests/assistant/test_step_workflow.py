@@ -115,7 +115,11 @@ def test_step_engine_commits_real_model_and_final_nodes_without_repeating_work(
 
 
 def test_opt_in_does_not_rebind_an_existing_legacy_turn_after_restart(tmp_path):
-    old = build_local_service(tmp_path, provider_registry=ProviderRegistry((_provider(),)))
+    old = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((_provider(),)),
+        assistant_workflow_engine_version=3,
+    )
     try:
         task = _scratch_task(old, "Hello old engine")
         original = _turn(old, task, "legacy-remains-bound")
@@ -126,7 +130,6 @@ def test_opt_in_does_not_rebind_an_existing_legacy_turn_after_restart(tmp_path):
     new = build_local_service(
         tmp_path,
         provider_registry=ProviderRegistry((provider,)),
-        assistant_workflow_engine_version=4,
     )
     try:
         new.invoke("assistant.turns.start", {"turn_id": original["id"]})

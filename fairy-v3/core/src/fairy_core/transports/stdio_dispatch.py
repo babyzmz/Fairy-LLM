@@ -3,17 +3,24 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Event, Lock
+from time import monotonic_ns
 from typing import TextIO
 
 from fairy_core.contracts.domain_commands import is_control_stop_command
+from fairy_core.diagnostics import RuntimeCounters, local_runtime_snapshot
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.transports.stdio_events import EventCursorResyncRequired, StdioEventWatches
 
 # Names are audited, not inferred from '.get' or '.cancel' suffixes. Assistant
 # cancellation commits a request; slow runtime stop signals use its bounded owner lane.
-CONTROL_METHODS = frozenset({
-    "health", "assistant.turns.pause", "assistant.turns.cancel", "assistant.messages.cancel",
-})
+CONTROL_METHODS = frozenset(
+    {
+        "health",
+        "assistant.turns.pause",
+        "assistant.turns.cancel",
+        "assistant.messages.cancel",
+    }
+)
 READ_METHODS = frozenset(
     {
         "assistant.turns.get",
@@ -23,6 +30,7 @@ READ_METHODS = frozenset(
         "messages.list",
         "events.list",
         "events.subscribe",
+        "transport.diagnostics",
     }
 )
 LANE_WORKERS = {"control": 1, "read": 2, "serial": 1}
@@ -42,6 +50,7 @@ class StdioRequestDispatcher:
         self._pools: dict[str, ThreadPoolExecutor] = {}
         self._events: StdioEventWatches | None = None
         self._slots = {lane: BoundedSemaphore(LANE_CAPACITY) for lane in LANE_WORKERS}
+        self._counters = RuntimeCounters()
 
     def write(self, response: dict) -> None:
         payload = json.dumps(response, ensure_ascii=True, separators=(",", ":")) + "\n"
@@ -57,6 +66,9 @@ class StdioRequestDispatcher:
         if self._broken.is_set():
             raise BrokenPipeError("Core response stream is closed")
         method = str(request.get("method") or "")
+        if method == "transport.diagnostics" and not self._pools:
+            self._reject(request.get("id"), "RPC_NOT_NEGOTIATED")
+            return
         if method == "transport.negotiate":
             params = request.get("params", {})
             if (
@@ -125,7 +137,8 @@ class StdioRequestDispatcher:
             return
         lane = (
             "control"
-            if method in CONTROL_METHODS or (
+            if method in CONTROL_METHODS
+            or (
                 method == "assistant.commands.dispatch"
                 and is_control_stop_command(request.get("params"))
             )
@@ -138,18 +151,37 @@ class StdioRequestDispatcher:
                 self._ids.remove(identity)
             self._reject(key, "RPC_CAPACITY_EXCEEDED")
             return
-        self._pools[lane].submit(self._execute, request, identity, lane)
+        self._pools[lane].submit(self._execute, request, identity, lane, monotonic_ns())
 
-    def _execute(self, request: dict, identity: tuple[type, str | int], lane: str) -> None:
+    def _execute(
+        self, request: dict, identity: tuple[type, str | int], lane: str, queued_at: int
+    ) -> None:
+        started = monotonic_ns()
+        self._counters.observe(f"rpc.{lane}.queue", started - queued_at)
         try:
             if not self._broken.is_set():
-                self.write(self._dispatcher.dispatch(request))
+                if request.get("method") == "transport.diagnostics":
+                    # Transport-local, bounded read lane; never block the stdin/control reader.
+                    self.write(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": request["id"],
+                            "result": {
+                                **local_runtime_snapshot(self._dispatcher._service),
+                                "rpc": self._counters.snapshot(),
+                            },
+                        }
+                    )
+                else:
+                    self.write(self._dispatcher.dispatch(request))
         finally:
+            self._counters.observe(f"rpc.{lane}.execute", monotonic_ns() - started)
             with self._ids_lock:
                 self._ids.remove(identity)
             self._slots[lane].release()
 
     def _reject(self, key, code: str) -> None:
+        self._counters.observe("rpc.rejected")
         self.write(
             {
                 "jsonrpc": "2.0",

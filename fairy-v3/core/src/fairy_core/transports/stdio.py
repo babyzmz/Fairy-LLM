@@ -12,6 +12,7 @@ from typing import TextIO
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
+from fairy_core.assistant.engine_version import DEFAULT_ASSISTANT_ENGINE_VERSION
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.browser import BrowserService
 from fairy_core.commanding.policy import PolicyEngine
@@ -74,7 +75,7 @@ def build_local_service(
     model_catalog_source: ModelCatalogSource | None = None,
     media_provider: MediaProvider | None = None,
     media_staging_store: MediaStagingStore | None = None,
-    assistant_workflow_engine_version: int = 3,
+    assistant_workflow_engine_version: int = DEFAULT_ASSISTANT_ENGINE_VERSION,
 ) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
     resources = ExitStack()

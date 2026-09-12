@@ -13,6 +13,9 @@ def create_sqlite_engine(path: Path) -> Engine:
         f"sqlite+pysqlite:///{path}",
         connect_args={"check_same_thread": False, "timeout": 5},
     )
+    from fairy_core.diagnostics import attach_sql_counters
+
+    attach_sql_counters(engine)
 
     @event.listens_for(engine, "connect")
     def configure_connection(

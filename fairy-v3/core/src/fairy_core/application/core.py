@@ -15,6 +15,7 @@ from fairy_core.application.contexts import (
     TaskIntent,
 )
 from fairy_core.application.core_context import CoreContextMixin
+from fairy_core.application.core_scratch_checkpoint import CoreScratchCheckpointMixin
 from fairy_core.application.core_support import (
     CoreSupportMixin,
     approve_changeset_by_policy,
@@ -75,7 +76,7 @@ from fairy_core.workspace.mutations import (
 from fairy_core.workspace.ports import WorkspaceProvisioner
 
 
-class CoreApplication(CoreContextMixin, CoreSupportMixin):
+class CoreApplication(CoreContextMixin, CoreSupportMixin, CoreScratchCheckpointMixin):
     def __init__(
         self,
         *,
@@ -783,7 +784,8 @@ class CoreApplication(CoreContextMixin, CoreSupportMixin):
             if changeset.status is ChangesetStatus.REJECTED:
                 command = unit_of_work.commands.get_run(approval.command_run_id)
                 if (
-                    command is not None and command.command_name == "edit.apply_changeset"
+                    command is not None
+                    and command.command_name == "edit.apply_changeset"
                     and command.task_id == approval.task_id == changeset.task_id
                     and command.conversation_id == changeset.conversation_id
                     and command.status is CommandStatus.CANCELLED
@@ -874,57 +876,6 @@ class CoreApplication(CoreContextMixin, CoreSupportMixin):
 
     def get_approval(self, approval_id: UUID) -> Approval:
         return self._approvals.get(approval_id)
-
-    def checkpoint_scratch_task(self, task_id: UUID) -> None:
-        """Commit a validated scratch candidate without promoting it to the active Version."""
-        with self._transaction() as (unit_of_work, commands):
-            task = self._require_task(unit_of_work.state, task_id)
-            if task.project_id is not None:
-                raise ValueError("only scratch tasks use automatic candidate checkpoints")
-            if task.workspace_id is None or task.target_version_id is None:
-                raise ValueError("scratch Task has no writable Workspace Version")
-            context = self._context_for(unit_of_work.state, task)
-            running = start_recoverable_core_command(
-                unit_of_work,
-                commands,
-                execution_policy=self._execution_policy,
-                tool_name="workspace.checkpoint",
-                scope=context.scope,
-                payload={
-                    "workspace_id": str(task.workspace_id),
-                    "version_id": str(task.target_version_id),
-                },
-                idempotency_key=f"task:{task.id}:scratch-checkpoint",
-            )
-            unit_of_work.commit()
-        if running.status is CommandStatus.SUCCEEDED:
-            return
-
-        try:
-            commit = self._workspaces.checkpoint(
-                project_id=task.workspace_id,
-                version_id=task.target_version_id,
-                message=f"Fairy scratch Task {task.id}",
-            )
-        except Exception as error:
-            with self._transaction() as (unit_of_work, commands):
-                commands.fail(
-                    running.id,
-                    error_code=str(getattr(error, "error_code", "WORKER_INTERRUPTED")),
-                    lease_owner=running.lease_owner,
-                    lease_fence=running.lease_fence,
-                )
-                unit_of_work.commit()
-            raise
-
-        with self._transaction() as (unit_of_work, commands):
-            commands.complete(
-                running.id,
-                output={"commit": commit},
-                lease_owner=running.lease_owner,
-                lease_fence=running.lease_fence,
-            )
-            unit_of_work.commit()
 
     def record_approval_decision(
         self,

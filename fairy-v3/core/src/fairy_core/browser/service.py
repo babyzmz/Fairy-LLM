@@ -81,6 +81,20 @@ class BrowserService:
     def configure_activity_probe(self, probe: ActivityProbe, *, maintenance: bool = True) -> None:
         self._resources.configure_activity(probe, maintenance=maintenance)
 
+    def diagnostics(self):
+        with self._lock:
+            resident = [
+                item
+                for item in self._sessions.values()
+                if item.status in {BrowserSessionStatus.STARTING, BrowserSessionStatus.ACTIVE}
+            ]
+            return {
+                "resident_sessions": len(resident),
+                "resident_tabs": sum(len(item.tabs) for item in resident),
+                "session_limit": 4,
+                "tab_limit": 12,
+            }
+
     def reap_idle_resources(self) -> None:
         self._resources.reap_idle()
 

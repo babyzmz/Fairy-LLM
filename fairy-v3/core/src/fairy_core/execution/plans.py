@@ -132,6 +132,7 @@ class ExecutionPlan:
     generation: int = 1
     workflow_run_id: UUID | None = None
     workflow_plan_revision: int | None = None
+    workflow_objective_index: int = 0
     status: ExecutionPlanStatus = ExecutionPlanStatus.ACTIVE
     max_model_calls: int = 12
     max_tool_calls: int = 32
@@ -155,6 +156,10 @@ class ExecutionPlan:
         generation: int = 1,
         workflow_run_id: UUID | None = None,
         workflow_plan_revision: int | None = None,
+        workflow_objective_index: int = 0,
+        max_model_calls: int = 12,
+        max_tool_calls: int = 32,
+        max_duration_seconds: int = 1_800,
     ) -> tuple[ExecutionPlan, tuple[TaskStep, ...]]:
         if task.workspace_id is None or task.target_version_id is None:
             raise ValueError("Execution Plan requires a Task Workspace Version")
@@ -167,6 +172,21 @@ class ExecutionPlan:
                 "Execution Plan requires a complete positive Workflow revision binding"
             )
         normalized = _normalize_manifest(manifest)
+        if any(
+            type(value) is not int or value < 1
+            for value in (
+                max_model_calls,
+                max_tool_calls,
+                max_duration_seconds,
+            )
+        ):
+            raise ValueError("Execution Plan budgets must be positive integers")
+        if (
+            type(workflow_objective_index) is not int
+            or not 0 <= workflow_objective_index < 16
+            or (workflow_objective_index and workflow_run_id is None)
+        ):
+            raise ValueError("Execution Plan objective requires a valid Workflow binding")
         plan = cls(
             id=new_id(),
             task_id=task.id,
@@ -176,6 +196,10 @@ class ExecutionPlan:
             generation=generation,
             workflow_run_id=workflow_run_id,
             workflow_plan_revision=workflow_plan_revision,
+            workflow_objective_index=workflow_objective_index,
+            max_model_calls=max_model_calls,
+            max_tool_calls=max_tool_calls,
+            max_duration_seconds=max_duration_seconds,
             model_calls_used=initial_model_calls,
             tool_calls_used=initial_tool_calls,
         )

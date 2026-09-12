@@ -13,7 +13,6 @@ from sqlalchemy.engine import Connection
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.storage.schema import (
     workflow_attempts,
-    workflow_edges,
     workflow_instructions,
     workflow_nodes,
     workflow_plan_revisions,
@@ -54,6 +53,7 @@ from fairy_core.workflow.repository_records import (
     string_list,
     validate_plan,
 )
+from fairy_core.workflow.settlement_repository import WorkflowSettlementRepositoryMixin
 from fairy_core.workflow.time_queries import run_deadline_epoch
 from fairy_core.workflow.wake_repository import WorkflowWakeRepositoryMixin
 
@@ -73,6 +73,7 @@ _NODE_TERMINAL = {
 
 class SqlAlchemyWorkflowRepository(
     WorkflowApprovalRepositoryMixin,
+    WorkflowSettlementRepositoryMixin,
     WorkflowBudgetRepositoryMixin,
     WorkflowDeadlineRepositoryMixin,
     WorkflowWakeRepositoryMixin,
@@ -145,13 +146,17 @@ class SqlAlchemyWorkflowRepository(
         return run_from_row(row)
 
     def get_node(self, run_id: UUID, node_id: UUID) -> WorkflowNode | None:
-        row = self._connection.execute(
-            select(workflow_nodes).where(
-                workflow_nodes.c.tenant_id == self._tenant_id,
-                workflow_nodes.c.run_id == str(run_id),
-                workflow_nodes.c.id == str(node_id),
+        row = (
+            self._connection.execute(
+                select(workflow_nodes).where(
+                    workflow_nodes.c.tenant_id == self._tenant_id,
+                    workflow_nodes.c.run_id == str(run_id),
+                    workflow_nodes.c.id == str(node_id),
+                )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         return node_from_row(row) if row is not None else None
 
     def get_by_owner(
@@ -321,7 +326,9 @@ class SqlAlchemyWorkflowRepository(
         selected_child = False
         selected_blocking_parent = False
         for row in ready_candidates(
-            self._connection, tenant_id=self._tenant_id, now=now,
+            self._connection,
+            tenant_id=self._tenant_id,
+            now=now,
             reconciliation_phases=reconciliation_phases,
         ):
             run_id = str(row["run_id"])
@@ -331,16 +338,17 @@ class SqlAlchemyWorkflowRepository(
             keys = frozenset(string_list(row["resource_keys"]))
             is_child = row["parent_run_id"] is not None
             is_blocking_parent = not is_child and str(row["kind"]) in blocking_parent_kinds
-            needs_child_slot = (
-                reserve_child_slot or selected_blocking_parent or is_blocking_parent
-            )
+            needs_child_slot = reserve_child_slot or selected_blocking_parent or is_blocking_parent
             if (
-                not is_child and not selected_child and needs_child_slot
+                not is_child
+                and not selected_child
+                and needs_child_slot
                 and len(selected) >= limit - 1
             ):
                 continue
             if (
-                len(active) >= budget_limit or conflicts(policy, keys, active)
+                len(active) >= budget_limit
+                or conflicts(policy, keys, active)
                 or bool(keys & active_resource_keys)
             ):
                 continue
@@ -422,7 +430,10 @@ class SqlAlchemyWorkflowRepository(
         return tuple(claims)
 
     def renew(
-        self, claim: WorkflowAttemptClaim, *, lease_until: datetime,
+        self,
+        claim: WorkflowAttemptClaim,
+        *,
+        lease_until: datetime,
         on_failed: Callable[[WorkflowRun], None] | None = None,
     ) -> bool:
         now = datetime.now(UTC)
@@ -433,30 +444,42 @@ class SqlAlchemyWorkflowRepository(
             update(workflow_attempts)
             .where(
                 *self._claim_predicates(claim, require_live=True),
-                workflow_attempts.c.run_id.in_(select(workflow_runs.c.id).where(
-                    workflow_runs.c.tenant_id == self._tenant_id,
-                    workflow_runs.c.id == str(claim.run_id),
-                    workflow_runs.c.status.not_in(tuple(status.value for status in _RUN_TERMINAL)),
-                    run_deadline_epoch(self._connection) > now.timestamp(),
-                )),
+                workflow_attempts.c.run_id.in_(
+                    select(workflow_runs.c.id).where(
+                        workflow_runs.c.tenant_id == self._tenant_id,
+                        workflow_runs.c.id == str(claim.run_id),
+                        workflow_runs.c.status.not_in(
+                            tuple(status.value for status in _RUN_TERMINAL)
+                        ),
+                        run_deadline_epoch(self._connection) > now.timestamp(),
+                    )
+                ),
             )
             .values(lease_until=lease_until)
         ).rowcount
         return changed == 1
 
     def record_checkpoint(
-        self, claim: WorkflowAttemptClaim, *, result: Mapping[str, Any],
+        self,
+        claim: WorkflowAttemptClaim,
+        *,
+        result: Mapping[str, Any],
         max_bytes: int = 2 * 1024 * 1024,
     ) -> bool:
-        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not (
-            1 <= max_bytes <= 8 * 1024 * 1024
+        if (
+            isinstance(max_bytes, bool)
+            or not isinstance(max_bytes, int)
+            or not (1 <= max_bytes <= 8 * 1024 * 1024)
         ):
             raise ValueError("Workflow checkpoint byte budget must be bounded by 8 MiB")
         self._locked_run(claim.run_id)
         now = datetime.now(UTC)
         node = self._require_claim(claim, now=now)
         encoded = json.dumps(
-            dict(result), ensure_ascii=False, allow_nan=False, separators=(",", ":"),
+            dict(result),
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
         )
         if len(encoded.encode("utf-8")) > max_bytes:
             raise ValueError("Workflow checkpoint exceeds its byte budget")
@@ -473,11 +496,13 @@ class SqlAlchemyWorkflowRepository(
         if updated.rowcount != 1:
             raise WorkflowFenceError("Workflow checkpoint lost its attempt fence")
         self._connection.execute(
-            update(workflow_nodes).where(
+            update(workflow_nodes)
+            .where(
                 workflow_nodes.c.tenant_id == self._tenant_id,
                 workflow_nodes.c.id == str(claim.node_id),
                 workflow_nodes.c.status == WorkflowNodeStatus.RUNNING.value,
-            ).values(result=normalized, updated_at=now)
+            )
+            .values(result=normalized, updated_at=now)
         )
         return True
 
@@ -495,7 +520,11 @@ class SqlAlchemyWorkflowRepository(
         now = datetime.now(UTC)
         self._require_claim(claim, now=now)
         continuation, continuation_edges = prepare_continuation(
-            self._connection, self._tenant_id, claim, next_nodes, next_edges,
+            self._connection,
+            self._tenant_id,
+            claim,
+            next_nodes,
+            next_edges,
         )
         updated = self._connection.execute(
             update(workflow_attempts)
@@ -629,14 +658,22 @@ class SqlAlchemyWorkflowRepository(
             now=now,
         )
         self._fail_remaining_run(
-            claim.run_id, failed_node_id=claim.node_id, error_code=error_code, now=now,
+            claim.run_id,
+            failed_node_id=claim.node_id,
+            error_code=error_code,
+            now=now,
         )
         snapshot = self.get(claim.run_id)
         assert snapshot is not None
         return snapshot
 
     def _fail_remaining_run(
-        self, run_id: UUID, *, failed_node_id: UUID, error_code: str, now: datetime,
+        self,
+        run_id: UUID,
+        *,
+        failed_node_id: UUID,
+        error_code: str,
+        now: datetime,
     ) -> None:
         self._connection.execute(
             update(workflow_nodes)
@@ -685,7 +722,10 @@ class SqlAlchemyWorkflowRepository(
         )
 
     def abandon(
-        self, claim: WorkflowAttemptClaim, *, disable_reconciliation: bool = False,
+        self,
+        claim: WorkflowAttemptClaim,
+        *,
+        disable_reconciliation: bool = False,
     ) -> bool:
         now = datetime.now(UTC)
         predicates = self._claim_predicates(claim, require_live=False)
@@ -737,8 +777,9 @@ class SqlAlchemyWorkflowRepository(
         if disable_reconciliation and isinstance(checkpoint, dict):
             # Retain immutable receipt identity, but remove dispatch eligibility
             # when the Adapter reports that no pending outcome can be reconciled.
-            checkpoint = {key: value for key, value in checkpoint.items()
-                          if key != "reconciliation_phase"}
+            checkpoint = {
+                key: value for key, value in checkpoint.items() if key != "reconciliation_phase"
+            }
         self._connection.execute(
             update(workflow_nodes)
             .where(
@@ -756,8 +797,10 @@ class SqlAlchemyWorkflowRepository(
         )
         if next_status is WorkflowNodeStatus.FAILED:
             self._fail_remaining_run(
-                claim.run_id, failed_node_id=claim.node_id,
-                error_code="WORKER_INTERRUPTED", now=now,
+                claim.run_id,
+                failed_node_id=claim.node_id,
+                error_code="WORKER_INTERRUPTED",
+                now=now,
             )
         elif bool(run["pause_requested"]):
             self._settle_pause(claim.run_id, now=now)
@@ -778,11 +821,15 @@ class SqlAlchemyWorkflowRepository(
         run = run_from_row(self._locked_run(run_id))
         if run.status in _RUN_TERMINAL:
             return load_snapshot(self._connection, self._tenant_id, run)
-        active = select(workflow_attempts.c.node_id).where(
-            workflow_attempts.c.tenant_id == self._tenant_id,
-            workflow_attempts.c.run_id == str(run_id),
-            workflow_attempts.c.status == WorkflowAttemptStatus.RUNNING.value,
-        ).exists()
+        active = (
+            select(workflow_attempts.c.node_id)
+            .where(
+                workflow_attempts.c.tenant_id == self._tenant_id,
+                workflow_attempts.c.run_id == str(run_id),
+                workflow_attempts.c.status == WorkflowAttemptStatus.RUNNING.value,
+            )
+            .exists()
+        )
         self._connection.execute(
             update(workflow_runs)
             .where(
@@ -996,7 +1043,10 @@ class SqlAlchemyWorkflowRepository(
         )
 
     def _reclaim_expired(
-        self, now: datetime, *, on_failed: Callable[[WorkflowRun], None] | None = None,
+        self,
+        now: datetime,
+        *,
+        on_failed: Callable[[WorkflowRun], None] | None = None,
     ) -> None:
         expired = (
             self._connection.execute(
@@ -1075,8 +1125,10 @@ class SqlAlchemyWorkflowRepository(
             if next_status is WorkflowNodeStatus.FAILED:
                 run_id = UUID(str(attempt["run_id"]))
                 self._fail_remaining_run(
-                    run_id, failed_node_id=UUID(str(attempt["node_id"])),
-                    error_code="WORKER_LEASE_EXPIRED", now=now,
+                    run_id,
+                    failed_node_id=UUID(str(attempt["node_id"])),
+                    error_code="WORKER_LEASE_EXPIRED",
+                    now=now,
                 )
                 if on_failed is not None:
                     on_failed(self.get_run(run_id))
@@ -1095,135 +1147,10 @@ class SqlAlchemyWorkflowRepository(
                     .values(status=WorkflowRunStatus.QUEUED.value, updated_at=now)
                 )
 
-    def _promote_dependents(self, run_id: UUID, revision: int, *, now: datetime) -> None:
-        parent = workflow_nodes.alias("dependency_parent")
-        scope = (
-            workflow_edges.c.tenant_id == self._tenant_id,
-            workflow_edges.c.run_id == str(run_id),
-            workflow_edges.c.plan_revision == revision,
-            workflow_edges.c.to_node_id == workflow_nodes.c.id,
-        )
-        has_parent = (
-            select(workflow_edges.c.from_node_id).where(*scope).correlate(workflow_nodes).exists()
-        )
-        unfinished_parent = (
-            select(workflow_edges.c.from_node_id)
-            .join(parent, and_(
-                parent.c.tenant_id == workflow_edges.c.tenant_id,
-                parent.c.id == workflow_edges.c.from_node_id,
-            ))
-            .where(*scope, parent.c.status != WorkflowNodeStatus.SUCCEEDED.value)
-            .correlate(workflow_nodes)
-            .exists()
-        )
-        self._connection.execute(
-            update(workflow_nodes).where(
-                workflow_nodes.c.tenant_id == self._tenant_id,
-                workflow_nodes.c.run_id == str(run_id),
-                workflow_nodes.c.plan_revision == revision,
-                workflow_nodes.c.status == WorkflowNodeStatus.PENDING.value,
-                has_parent, ~unfinished_parent,
-            ).values(status=WorkflowNodeStatus.READY.value, updated_at=now)
-        )
 
-    def _settle_run(self, run_id: UUID, *, now: datetime) -> None:
-        run = run_from_row(self._locked_run(run_id))
-        active_nodes = (
-            self._connection.execute(
-                select(workflow_nodes.c.status).where(
-                    workflow_nodes.c.tenant_id == self._tenant_id,
-                    workflow_nodes.c.run_id == str(run_id),
-                    workflow_nodes.c.plan_revision == run.active_plan_revision,
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if run.pause_requested and not self._has_running_attempt(run_id):
-            status = WorkflowRunStatus.PAUSED
-            completed_at = None
-        elif active_nodes and all(
-            WorkflowNodeStatus(value) in _NODE_TERMINAL for value in active_nodes
-        ):
-            if any(value == WorkflowNodeStatus.FAILED.value for value in active_nodes):
-                status = WorkflowRunStatus.FAILED
-            elif any(value == WorkflowNodeStatus.CANCELLED.value for value in active_nodes):
-                status = WorkflowRunStatus.CANCELLED
-            else:
-                status = WorkflowRunStatus.COMPLETED
-            completed_at = now
-        elif any(value == WorkflowNodeStatus.RUNNING.value for value in active_nodes):
-            status = WorkflowRunStatus.RUNNING
-            completed_at = None
-        elif any(value == WorkflowNodeStatus.WAITING_FOR_APPROVAL.value for value in active_nodes):
-            status = WorkflowRunStatus.WAITING_FOR_APPROVAL
-            completed_at = None
-        elif any(value == WorkflowNodeStatus.WAITING_FOR_INPUT.value for value in active_nodes):
-            status = WorkflowRunStatus.WAITING_FOR_INPUT
-            completed_at = None
-        else:
-            status = WorkflowRunStatus.QUEUED
-            completed_at = None
-        self._connection.execute(
-            update(workflow_runs)
-            .where(
-                workflow_runs.c.tenant_id == self._tenant_id,
-                workflow_runs.c.id == str(run_id),
-            )
-            .values(status=status.value, updated_at=now, completed_at=completed_at)
-        )
-
-    def _settle_pause(self, run_id: UUID, *, now: datetime) -> None:
-        if not self._has_running_attempt(run_id):
-            self._connection.execute(
-                update(workflow_runs)
-                .where(
-                    workflow_runs.c.tenant_id == self._tenant_id,
-                    workflow_runs.c.id == str(run_id),
-                    workflow_runs.c.pause_requested.is_(True),
-                    workflow_runs.c.status.not_in(tuple(status.value for status in _RUN_TERMINAL)),
-                )
-                .values(status=WorkflowRunStatus.PAUSED.value, updated_at=now)
-            )
-
-    def _has_running_attempt(self, run_id: UUID) -> bool:
-        return (
-            self._connection.execute(
-                select(workflow_attempts.c.node_id)
-                .where(
-                    workflow_attempts.c.tenant_id == self._tenant_id,
-                    workflow_attempts.c.run_id == str(run_id),
-                    workflow_attempts.c.status == WorkflowAttemptStatus.RUNNING.value,
-                )
-                .limit(1)
-            ).first()
-            is not None
-        )
-
-    def _cancel_running_attempts(
-        self,
-        run_id: UUID,
-        *,
-        now: datetime,
-        except_node_id: UUID | None = None,
-    ) -> None:
-        statement = update(workflow_attempts).where(
-            workflow_attempts.c.tenant_id == self._tenant_id,
-            workflow_attempts.c.run_id == str(run_id),
-            workflow_attempts.c.status == WorkflowAttemptStatus.RUNNING.value,
-        )
-        if except_node_id is not None:
-            statement = statement.where(workflow_attempts.c.node_id != str(except_node_id))
-        self._connection.execute(
-            statement.values(
-                status=WorkflowAttemptStatus.CANCELLED.value,
-                lease_owner=None,
-                lease_until=None,
-                error_code="WORKFLOW_CANCELLED",
-                finished_at=now,
-            )
-        )
-
-
-__all__ = ["SqlAlchemyWorkflowRepository", "WorkflowBudgetExceeded", "WorkflowFenceError",
-           "WorkflowRevisionError"]
+__all__ = [
+    "SqlAlchemyWorkflowRepository",
+    "WorkflowBudgetExceeded",
+    "WorkflowFenceError",
+    "WorkflowRevisionError",
+]

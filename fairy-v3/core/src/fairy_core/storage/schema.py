@@ -12,7 +12,6 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     String,
     Table,
-    Text,
     UniqueConstraint,
 )
 
@@ -22,6 +21,7 @@ from fairy_core.storage.assistant_interpretation_schema import (
     build_assistant_interpretation_table,
 )
 from fairy_core.storage.assistant_schedule_schema import build_assistant_schedule_schema
+from fairy_core.storage.document_chunk_schema import build_document_chunks_table
 from fairy_core.storage.execution_settings_schema import build_execution_settings_tables
 from fairy_core.storage.history_schema import (
     build_history_indexes,
@@ -173,30 +173,38 @@ versions = Table(
 )
 
 assistant_message_submissions = Table(
-    "core_assistant_message_submissions", state_metadata,
+    "core_assistant_message_submissions",
+    state_metadata,
     _tenant_id(),
     Column("key_digest", String(64), primary_key=True),
     Column("request_digest", String(64), nullable=False),
     Column("conversation_id", String(ID_LENGTH), nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
-    CheckConstraint("length(key_digest) = 64 AND length(request_digest) = 64",
-                    name="ck_core_message_submission_hashes"),
+    CheckConstraint(
+        "length(key_digest) = 64 AND length(request_digest) = 64",
+        name="ck_core_message_submission_hashes",
+    ),
     ForeignKeyConstraint(
         ["tenant_id", "conversation_id"],
         [conversations.c.tenant_id, conversations.c.id],
-        name="fk_core_message_submission_conversation", ondelete="CASCADE",
+        name="fk_core_message_submission_conversation",
+        ondelete="CASCADE",
     ),
 )
 
 assistant_message_cancellations = Table(
-    "core_assistant_message_cancellations", state_metadata,
-    _tenant_id(), Column("key_digest", String(64), primary_key=True),
+    "core_assistant_message_cancellations",
+    state_metadata,
+    _tenant_id(),
+    Column("key_digest", String(64), primary_key=True),
     Column("conversation_id", String(ID_LENGTH)),
     Column("created_at", UTCDateTime(), nullable=False),
     CheckConstraint("length(key_digest) = 64", name="ck_core_message_cancellation_hash"),
     ForeignKeyConstraint(
-        ["tenant_id", "conversation_id"], [conversations.c.tenant_id, conversations.c.id],
-        name="fk_core_message_cancellation_conversation", ondelete="CASCADE",
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_message_cancellation_conversation",
+        ondelete="CASCADE",
     ),
 )
 
@@ -639,8 +647,11 @@ assistant_tool_invocations = Table(
     ),
     ForeignKeyConstraint(
         ["tenant_id", "workflow_run_id", "workflow_plan_revision"],
-        ["core_workflow_plan_revisions.tenant_id", "core_workflow_plan_revisions.run_id",
-         "core_workflow_plan_revisions.revision"],
+        [
+            "core_workflow_plan_revisions.tenant_id",
+            "core_workflow_plan_revisions.run_id",
+            "core_workflow_plan_revisions.revision",
+        ],
         name="fk_core_assistant_tool_invocations_workflow_revision",
     ),
     CheckConstraint(
@@ -1128,59 +1139,12 @@ document_revisions = Table(
     ),
 )
 
-document_chunks = Table(
-    "core_document_chunks",
-    state_metadata,
-    _tenant_id(),
-    _id(),
-    Column("fts_rowid", BigInteger, nullable=False),
-    Column("document_id", String(ID_LENGTH), nullable=False),
-    Column("revision", Integer, nullable=False),
-    Column("revision_hash", String(64), nullable=False),
-    Column("ordinal", Integer, nullable=False),
-    Column("section_ordinal", Integer, nullable=False),
-    Column("locator", JSON, nullable=False),
-    Column("normalized_text", Text, nullable=False),
-    Column("content_hash", String(64), nullable=False),
-    Column("token_count", Integer, nullable=False),
-    Column("updated_at", UTCDateTime(), nullable=False),
-    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_document_chunks"),
-    UniqueConstraint(
-        "tenant_id",
-        "document_id",
-        "revision",
-        "ordinal",
-        name="uq_core_document_chunks_revision_ordinal",
-    ),
-    CheckConstraint("fts_rowid > 0", name="ck_core_document_chunks_fts_rowid"),
-    CheckConstraint("revision > 0", name="ck_core_document_chunks_revision"),
-    CheckConstraint("ordinal >= 0", name="ck_core_document_chunks_ordinal"),
-    CheckConstraint(
-        "section_ordinal >= 0",
-        name="ck_core_document_chunks_section_ordinal",
-    ),
-    CheckConstraint(
-        "token_count BETWEEN 1 AND 20000",
-        name="ck_core_document_chunks_token_count",
-    ),
-    CheckConstraint(
-        "length(revision_hash) = 64 AND revision_hash = lower(revision_hash)",
-        name="ck_core_document_chunks_revision_hash",
-    ),
-    CheckConstraint(
-        "length(content_hash) = 64 AND content_hash = lower(content_hash)",
-        name="ck_core_document_chunks_content_hash",
-    ),
-    ForeignKeyConstraint(
-        ["tenant_id", "document_id", "revision"],
-        [
-            document_revisions.c.tenant_id,
-            document_revisions.c.document_id,
-            document_revisions.c.revision,
-        ],
-        name="fk_core_document_chunks_revision",
-        ondelete="CASCADE",
-    ),
+document_chunks = build_document_chunks_table(
+    metadata=state_metadata,
+    tenant_id_column=_tenant_id,
+    id_column=_id,
+    document_revisions=document_revisions,
+    id_length=ID_LENGTH,
 )
 
 research_evidence = build_research_evidence_table(

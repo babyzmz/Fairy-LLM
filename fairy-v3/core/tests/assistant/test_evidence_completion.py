@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from fairy_core.assistant.durable_context import durable_tool_context
 from fairy_core.assistant.evidence import (
     EvidenceDraft,
     EvidenceRequirementKind,
@@ -82,6 +84,14 @@ def test_completion_requires_same_turn_unexpired_receipts_for_every_requirement(
         artifact_ids=(),
         evidence_receipts=(receipt,),
     )
+
+    # A new model node/restart must recover the sealed receipt even when the
+    # original body is too large for the bounded provider projection.
+    projected = durable_tool_context((replace(invocation, model_content="x" * 20_000),))
+    assert projected[-1].tool_call_id == invocation.provider_call_id
+    assert f'"receipt_id":"{receipt.id}"' in projected[-1].content
+    assert "context projection truncated" in projected[-1].content
+    assert sum(len(item.content) for item in projected) <= 40_000
 
     assert _evidence_completion_issue(turn, (invocation,), None).startswith(
         "EVIDENCE_CITATION_REQUIRED"
