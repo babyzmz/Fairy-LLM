@@ -72,7 +72,8 @@ export function mountFairyEye(host: HTMLElement, initial: EyeOptions = {}): EyeC
     root.dataset.reducedMotion=String(reduce());
     root.style.setProperty('--fairy-eye-opacity',String(finiteClamp(options.opacity ?? 1,.1,1,1)));
     root.style.setProperty('--fairy-eye-effect-scale',String(finiteClamp(options.effectScale ?? 1,.25,1,1)));
-    const value=reduce() ? eyeMotionAt(0) : motion;
+    const resting=state==='sleeping';
+    const value=reduce() || resting ? eyeMotionAt(0) : motion;
     sclera.style.transform=`scale(${value.sclera})`;
     transformScale(three,value.layerThree); transformScale(two,value.layerTwo); transformScale(one,value.layerOne);
     corners.style.transform=`rotate(${value.lashAngle}deg)`;
@@ -85,9 +86,11 @@ export function mountFairyEye(host: HTMLElement, initial: EyeOptions = {}): EyeC
       clip=id('comforting-eye-clip'); comforting.style.transform=`translateY(${value.comfortingY}px)`;
     }
     eye.style.clipPath=clip;
-    eye.style.transform=state==='sleeping' ? 'translateY(42px) scale(.90,.35)' : 'scale(.90)';
-    const target=options.gaze ?? (options.trackPointer ? pointer : {x:0,y:0});
-    const blend=reduce() ? 1 : .22;
+    // Quiet is a scheduling state, not a lowered/flattened eye pose. Center it
+    // before pausing so an old pointer offset cannot remain in the frozen frame.
+    eye.style.transform='scale(.90)';
+    const target=resting ? {x:0,y:0} : options.gaze ?? (options.trackPointer ? pointer : {x:0,y:0});
+    const blend=reduce() || resting ? 1 : .22;
     gaze.x+=(finiteClamp(target.x,-1,1,0)*6-gaze.x)*blend;
     gaze.y+=(finiteClamp(target.y,-1,1,0)*5-gaze.y)*blend;
     eyeball.style.transform=`translate(${gaze.x.toFixed(3)}px,${gaze.y.toFixed(3)}px)`;
