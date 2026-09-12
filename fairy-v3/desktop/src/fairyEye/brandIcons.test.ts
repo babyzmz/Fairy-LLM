@@ -37,6 +37,11 @@ describe("Fairy brand assets", () => {
       // Sclera spans y=32..47 on the 160px source; .3 is already the blue iris.
       const white = (Math.floor(size * .24) * size + Math.floor(size / 2)) * 4;
       expect(png.data[white]).toBeGreaterThan(180);
+      if (size <= 48) {
+        // Optical small icons fill their canvas, not a halo-padded 160px crop.
+        const nearTop = (1 * size + Math.floor(size / 2)) * 4;
+        expect(png.data[nearTop + 3]).toBeGreaterThan(240);
+      }
     }
   });
 });

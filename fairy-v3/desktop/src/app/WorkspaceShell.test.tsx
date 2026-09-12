@@ -12,6 +12,13 @@ afterEach(() => {
 });
 
 describe("WorkspaceShell", () => {
+  it("keeps the Fairy brand visibly sized independently of titlebar icons", () => {
+    render(<WorkspaceShell model={workspaceModel()} />);
+    const icon = screen.getByLabelText("History navigation").querySelector("img.history-mark");
+    expect(icon).toHaveAttribute("width", "32");
+    expect(icon).toHaveAttribute("height", "32");
+  });
+
   it("pauses retained Browser snapshots when the inspector or workspace is hidden", () => {
     const model = workspaceModel();
     model.mode = "chat";

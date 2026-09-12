@@ -2,6 +2,8 @@ use std::env;
 mod audio_focus;
 #[cfg(all(test, debug_assertions, target_os = "windows"))]
 mod composer_live_tests;
+#[cfg(target_os = "windows")]
+mod brand_icons;
 mod model_resources;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -6092,6 +6094,11 @@ pub fn run() {
             request_presence_initialization(webview.app_handle().clone());
         })
         .setup(|app| {
+            #[cfg(target_os = "windows")]
+            if let Err(error) = brand_icons::install(app.handle()) {
+                // Cosmetic failure must not prevent Core/application startup.
+                eprintln!("native window icons unavailable: {error}");
+            }
             let data_dir = configured_desktop_data_dir(app.handle())?;
             std::fs::create_dir_all(&data_dir)?;
             let desktop_program = std::env::current_exe()?;
@@ -6680,13 +6687,6 @@ mod main_window_settings_tests {
     }
 }
 
-#[cfg(all(test, target_os = "windows"))]
-mod native_window_group_tests {
-    use super::*;
-    use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::Graphics::Gdi::{
-        CreateRectRgn, DeleteObject, GetWindowRgn, PtInRegion,
-    };
 #[cfg(all(test, debug_assertions, target_os = "windows"))]
 mod live_provider_probe_tests {
     #[test]
@@ -6714,6 +6714,13 @@ mod live_provider_probe_tests {
     }
 }
 
+#[cfg(all(test, target_os = "windows"))]
+mod native_window_group_tests {
+    use super::*;
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateRectRgn, DeleteObject, GetWindowRgn, PtInRegion,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, GetWindow, GetWindowLongPtrW, GetWindowTextLengthW,
         SetWindowPos, GWL_EXSTYLE, GW_HWNDPREV, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,

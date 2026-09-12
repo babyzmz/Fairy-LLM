@@ -27,13 +27,24 @@ try {
       .replace('class="dsh-fairy-eye-flicker"', 'class="dsh-fairy-eye-flicker" display="none"')
       .replace('class="dsh-fairy-glitch-blocks"', 'class="dsh-fairy-glitch-blocks" display="none"')
     + "\n";
-  const source = join(temporary, "brand.svg");
-  await writeFile(source, svg);
-  const result = spawnSync(process.execPath, [
-    join(root, "node_modules/@tauri-apps/cli/tauri.js"), "icon", source,
-    "--output", temporary, ...sizes.flatMap(size => ["--png", String(size)]),
-  ], { cwd: root, encoding: "utf8", windowsHide: true });
-  if (result.error || result.status !== 0) throw new Error("Tauri icon rasterization failed", { cause: result.error });
+  // At titlebar sizes the halo consumes pixels and scanlines muddy the eye.
+  // Keep the same anatomy, but use an optical crop and clean solid contours.
+  let smallSvg = svg.replace('viewBox="0 0 160 160"', 'viewBox="10 10 140 140"');
+  for (const layer of ["outer-halo", "sclera-halo", "highlight-halo", "scanlines"]) {
+    smallSvg = smallSvg.replace(`class="dsh-fairy-${layer}"`, `class="dsh-fairy-${layer}" display="none"`);
+  }
+  for (const [artwork, dimensions] of [
+    [svg, sizes.filter(size => size > 48)],
+    [smallSvg, sizes.filter(size => size <= 48)],
+  ]) {
+    const source = join(temporary, "brand.svg");
+    await writeFile(source, artwork);
+    const result = spawnSync(process.execPath, [
+      join(root, "node_modules/@tauri-apps/cli/tauri.js"), "icon", source,
+      "--output", temporary, ...dimensions.flatMap(size => ["--png", String(size)]),
+    ], { cwd: root, encoding: "utf8", windowsHide: true });
+    if (result.error || result.status !== 0) throw new Error("Tauri icon rasterization failed", { cause: result.error });
+  }
   const images = await Promise.all(sizes.map(size => readFile(join(temporary, `${size}x${size}.png`))));
   const header = Buffer.alloc(6 + images.length * 16);
   header.writeUInt16LE(1, 2);

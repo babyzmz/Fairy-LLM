@@ -29,6 +29,26 @@ icon path and tray default-window-icon behavior.
 
 ## Evidence
 
+### Follow-up: small sidebar and blurry Windows titlebar
+
+- User reproduced undersized History branding and blurry native titlebar branding.
+  The header still reserved only 20px. Tauri 2.6.3 codegen `CachedIcon::new_ico`
+  decodes only ICO entry zero (16px), not the current window DPI's entry.
+- Increase the static header image to 32px. Derive optical small ICO variants
+  (16–48px) without halo/scanlines, with a tighter crop; preserve the pet artwork.
+- Load native small/big icons from the executable's multi-size resource at current
+  Windows DPI and refresh on DPI changes. Own/destroy only newly loaded handles;
+  leave Tauri-owned handles alone. No animation or periodic polling.
+- Regression: rendered header dimensions, tight small-icon opaque bounds,
+  resource loading at 96/120/144/192 DPI, and actual native HICON dimensions.
+  Native screenshot acceptance remains required; physical cross-monitor movement
+  is reported separately if unavailable.
+
+- Publication recheck: TypeScript passed; WorkspaceShell/brandIcons/SettingsApp
+  53 tests passed; native Windows ICO loader verified 96/120/144/192 DPI sizes.
+  Generation `--check` matched; Clippy all targets passed. No native UI input was
+  performed during publication; physical-DPI/titlebar visual checks remain pending.
+
 - Generated `desktop/src/fairyEye/brand.svg` and the existing Tauri ICO from
   `createEyeMarkup`; the animation implementation itself is unchanged. Added
   `node scripts/generate-brand-icons.mjs [--check]` (desktop working directory).

@@ -95,7 +95,7 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
   return (
     <aside className="history-sidebar" aria-label="History navigation">
       <div className="history-brand">
-        <img className="history-mark" src={fairyBrandIcon} alt="" width={20} height={20} draggable={false} />
+        <img className="history-mark" src={fairyBrandIcon} alt="" width={32} height={32} draggable={false} />
         <strong>Fairy</strong>
       </div>
       <label className="history-search">
