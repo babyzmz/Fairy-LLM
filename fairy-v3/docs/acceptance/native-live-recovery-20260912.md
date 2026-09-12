@@ -176,3 +176,12 @@ Each bounded repair ships with its regression and evidence in a local commit.
   TypeScript passed; three affected Vitest files 41 passed; targeted Ruff passed.
 - Real native post-fix acceptance remains pending; these are deterministic tests,
   not proof that a configured external provider now returns a usable response.
+
+### Repair 2: Companion launcher scope
+
+- The Settings launcher was incorrectly using the pet-input-only guard. Its own
+  navigation guard now accepts main and pet-input, denying render, Companion,
+  legacy Settings and unknown windows. General Core RPC permissions are unchanged.
+- Regression failed for main before the fix; `cargo test --offline --test
+  window_scope` now passes all 12 tests. Opening the native consent window is
+  pending; no capture permission or session consent has been changed.

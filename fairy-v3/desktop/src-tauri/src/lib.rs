@@ -381,6 +381,14 @@ pub fn authorize_pet_input_window(label: &str) -> Result<(), WindowScopeError> {
     }
 }
 
+pub fn authorize_companion_launcher(label: &str) -> Result<(), WindowScopeError> {
+    if ["main", PET_INPUT_LABEL].contains(&label) {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
+}
+
 pub fn authorize_pet_chat_reader(label: &str) -> Result<(), WindowScopeError> {
     if ["main", PET_INPUT_LABEL, PET_RENDER_LABEL].contains(&label) {
         Ok(())
@@ -3581,7 +3589,7 @@ async fn open_main_window(window: WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 async fn open_companion_window(window: WebviewWindow) -> Result<(), String> {
-    authorize_pet_input_window(window.label())
+    authorize_companion_launcher(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
     show_and_focus(&companion_window(window.app_handle())?)
 }

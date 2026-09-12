@@ -2,15 +2,27 @@ use fairy_core_bridge::CoreBridgeError;
 use fairy_desktop_v3::presence_coordinator::ExpansionDirection;
 use fairy_desktop_v3::{
     anchored_pet_core_frame, anchored_pet_frame, anchored_pet_input_frame,
-    authorize_core_rpc_window, authorize_pet_input_window, authorize_pet_render_window,
-    authorize_preferences_reader, authorize_settings_window, authorize_voice_control_window,
-    authorize_voice_health_window, authorize_voice_settings_window, auxiliary_window_policy,
-    bridge_failure_response, fairy_tray_action, presence_window_creation_specs,
-    resolve_desktop_data_dir, settings_method_allowed, FairyTrayAction, PetWindowFrame,
+    authorize_companion_launcher, authorize_core_rpc_window, authorize_pet_input_window,
+    authorize_pet_render_window, authorize_preferences_reader, authorize_settings_window,
+    authorize_voice_control_window, authorize_voice_health_window, authorize_voice_settings_window,
+    auxiliary_window_policy, bridge_failure_response, fairy_tray_action,
+    presence_window_creation_specs, resolve_desktop_data_dir, settings_method_allowed,
+    FairyTrayAction, PetWindowFrame,
 };
 use serde_json::json;
 use std::ffi::OsString;
 use std::path::PathBuf;
+
+#[test]
+fn companion_navigation_is_available_to_main_but_not_render_or_untrusted_windows() {
+    assert!(authorize_companion_launcher("main").is_ok());
+    assert!(authorize_companion_launcher("pet-input").is_ok());
+    for label in ["pet-render", "companion", "settings", "unknown"] {
+        assert!(authorize_companion_launcher(label).is_err());
+    }
+    assert!(authorize_core_rpc_window("pet-input").is_err());
+    assert!(authorize_pet_input_window("main").is_err());
+}
 
 #[test]
 fn only_the_main_window_can_call_core_rpc() {
