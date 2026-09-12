@@ -49,6 +49,13 @@ pub const REALTIME_WORKER_EVENT: &str = "fairy-realtime-event";
 const REALTIME_PROTOCOL: &str = "fairy-realtime-worker-v2";
 const WORKER_STOP_GRACE: Duration = Duration::from_millis(80);
 
+/// Host-validated resource policy and the ownership token for this startup.
+pub struct RealtimeStartResources {
+    pub presence_max_minutes: u16,
+    pub local_keep_warm_minutes: u8,
+    pub reservation: Option<crate::model_resources::ModelReservation>,
+}
+
 #[derive(Clone, Debug)]
 pub struct RealtimeWorkerLaunch {
     pub program: PathBuf,
@@ -220,6 +227,8 @@ pub enum RealtimeWorkerError {
 }
 
 struct WorkerProcess {
+    audio_lease: Option<crate::audio_focus::RealtimeAudioLease>,
+    model_reservation: Arc<Mutex<Option<crate::model_resources::ModelReservation>>>,
     child: Child,
     input: Arc<Mutex<ChildStdin>>,
     session_id: Option<String>,
@@ -227,7 +236,17 @@ struct WorkerProcess {
     terminal: Arc<AtomicBool>,
 }
 
+impl Drop for WorkerProcess {
+    fn drop(&mut self) {
+        if let Ok(mut reservation) = self.model_reservation.lock() {
+            reservation.take();
+        }
+    }
+}
+
 struct WorkerGovernanceHandles {
+    resources: Arc<crate::model_resources::ModelResources>,
+    model_reservation: Arc<Mutex<Option<crate::model_resources::ModelReservation>>>,
     assistance: Arc<RealtimeAssistanceRouter>,
     usage: Arc<Mutex<RealtimeWorkerUsage>>,
     active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
@@ -320,6 +339,8 @@ enum DialogueGovernance {
 }
 
 pub struct RealtimeWorkerManager {
+    closed: AtomicBool,
+    audio_focus: Arc<crate::audio_focus::AudioFocus>,
     launch: RealtimeWorkerLaunch,
     assistance: Arc<RealtimeAssistanceRouter>,
     process: Mutex<Option<WorkerProcess>>,
@@ -343,6 +364,8 @@ impl RealtimeWorkerManager {
             launch.local_omni.manifest_digest.clone(),
         );
         Self {
+            audio_focus: Arc::new(crate::audio_focus::AudioFocus::default()),
+            closed: AtomicBool::new(false),
             launch,
             assistance,
             process: Mutex::new(None),
@@ -410,6 +433,11 @@ impl RealtimeWorkerManager {
         }
     }
 
+    pub fn with_audio_focus(mut self, focus: Arc<crate::audio_focus::AudioFocus>) -> Self {
+        self.audio_focus = focus;
+        self
+    }
+
     pub fn wake_requirements(
         &self,
     ) -> Option<(RealtimeBackendKind, RealtimeActivityProfile, bool)> {
@@ -428,18 +456,9 @@ impl RealtimeWorkerManager {
         input: RealtimeWorkerStartInput,
         credential: Option<Zeroizing<String>>,
         persona_snapshot: Zeroizing<String>,
-        presence_max_minutes: u16,
-        local_keep_warm_minutes: u8,
+        resources: RealtimeStartResources,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
-        self.start_segment(
-            app,
-            input,
-            credential,
-            persona_snapshot,
-            presence_max_minutes,
-            local_keep_warm_minutes,
-            false,
-        )
+        self.start_segment(app, input, credential, persona_snapshot, false, resources)
     }
 
     pub fn continue_session(
@@ -448,31 +467,25 @@ impl RealtimeWorkerManager {
         input: RealtimeWorkerStartInput,
         credential: Option<Zeroizing<String>>,
         persona_snapshot: Zeroizing<String>,
-        presence_max_minutes: u16,
-        local_keep_warm_minutes: u8,
+        resources: RealtimeStartResources,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
-        self.start_segment(
-            app,
-            input,
-            credential,
-            persona_snapshot,
-            presence_max_minutes,
-            local_keep_warm_minutes,
-            true,
-        )
+        self.start_segment(app, input, credential, persona_snapshot, true, resources)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn start_segment(
         &self,
         app: &AppHandle,
         input: RealtimeWorkerStartInput,
         credential: Option<Zeroizing<String>>,
         persona_snapshot: Zeroizing<String>,
-        presence_max_minutes: u16,
-        local_keep_warm_minutes: u8,
         continuation_approved: bool,
+        resources: RealtimeStartResources,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+        let RealtimeStartResources {
+            presence_max_minutes,
+            local_keep_warm_minutes,
+            reservation,
+        } = resources;
         validate_capture_scope(&input)?;
         if input.backend == RealtimeBackendKind::CloudLive && credential.is_none() {
             return Err(RealtimeWorkerError::Protocol);
@@ -503,12 +516,24 @@ impl RealtimeWorkerManager {
             .process
             .lock()
             .map_err(|_| RealtimeWorkerError::Protocol)?;
+        if self.closed.load(Ordering::Acquire) {
+            return Err(RealtimeWorkerError::Unavailable);
+        }
         if let Some(process) = guard.as_mut() {
             if !reap_finished_process(process) {
                 return Err(RealtimeWorkerError::Busy);
             }
             *guard = None;
         }
+        // This guard covers startup failures too; only the running process retains it.
+        let audio_lease = self
+            .audio_focus
+            .reserve_realtime()
+            .map_err(|_| RealtimeWorkerError::Busy)?;
+        if input.backend == RealtimeBackendKind::LocalMiniCpmO45 && reservation.is_none() {
+            return Err(RealtimeWorkerError::Unavailable);
+        }
+        let model_reservation = Arc::new(Mutex::new(reservation));
         if let Ok(mut usage) = self.usage.lock() {
             *usage = RealtimeWorkerUsage::default();
         }
@@ -645,6 +670,8 @@ impl RealtimeWorkerManager {
             &self.launch,
             app.clone(),
             WorkerGovernanceHandles {
+                resources: Arc::clone(&self.audio_focus.model_resources),
+                model_reservation: Arc::clone(&model_reservation),
                 assistance: Arc::clone(&self.assistance),
                 usage: Arc::clone(&self.usage),
                 active_identity: Arc::clone(&self.active_identity),
@@ -758,6 +785,7 @@ impl RealtimeWorkerManager {
             channels.clear();
         }
         process.session_id = Some(input.session_id);
+        process.audio_lease = Some(audio_lease);
         let status = RealtimeWorkerStatus {
             running: true,
             session_id: process.session_id.clone(),
@@ -1224,6 +1252,7 @@ impl RealtimeWorkerManager {
         if process.session_id.as_deref() != Some(input.session_id.as_str()) {
             return Err(RealtimeWorkerError::Protocol);
         }
+        let mut loading = None;
         let transition = {
             let mut coordinator = self
                 .coordinator
@@ -1241,6 +1270,16 @@ impl RealtimeWorkerManager {
             let next_segment = (coordinator.backend() == RealtimeBackendKind::CloudLive
                 || coordinator.local_backend_unloaded())
             .then(|| Uuid::new_v4().to_string());
+            if coordinator.backend() == RealtimeBackendKind::LocalMiniCpmO45
+                && coordinator.local_backend_unloaded()
+            {
+                loading = Some(
+                    self.audio_focus
+                        .model_resources
+                        .reserve("minicpm", None)
+                        .map_err(|_| RealtimeWorkerError::Busy)?,
+                );
+            }
             coordinator
                 .prepare_wake(next_segment)
                 .map_err(|_| RealtimeWorkerError::Protocol)?
@@ -1360,10 +1399,18 @@ impl RealtimeWorkerManager {
                 .map_err(|_| RealtimeWorkerError::Protocol)?;
             let previous = active.clone();
             *active = Some(next_identity);
+            let mut reservation = process
+                .model_reservation
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
             if send_command(&process.input, &command).is_err() {
                 *active = previous.clone();
                 previous
             } else {
+                if loading.is_some() {
+                    *reservation = loading.take();
+                }
+                drop(reservation);
                 drop(active);
                 drop(guard);
                 return Ok(self.status());
@@ -1855,12 +1902,30 @@ fn validate_capture_scope(input: &RealtimeWorkerStartInput) -> Result<(), Realti
     .map_err(|_| RealtimeWorkerError::Protocol)
 }
 
-impl Drop for RealtimeWorkerManager {
-    fn drop(&mut self) {
+impl RealtimeWorkerManager {
+    pub fn shutdown(&self) {
+        self.closed.store(true, Ordering::Release);
         self.assistance.shutdown();
         if let Ok(mut guard) = self.process.lock() {
             if let Some(process) = guard.as_mut() {
                 process.expected_shutdown.store(true, Ordering::Release);
+                process.terminal.store(true, Ordering::Release);
+                if let Some(session_id) = process.session_id.as_ref() {
+                    let _ = send_command(
+                        &process.input,
+                        &HostCommand::Stop {
+                            session_id: session_id.clone(),
+                        },
+                    );
+                    // Let the domain owner close audio/capture and its Omni child first.
+                    let deadline = Instant::now() + WORKER_STOP_GRACE;
+                    while Instant::now() < deadline {
+                        if matches!(process.child.try_wait(), Ok(Some(_))) {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(4));
+                    }
+                }
                 let _ = process.child.kill();
                 let _ = process.child.wait();
             }
@@ -1870,12 +1935,20 @@ impl Drop for RealtimeWorkerManager {
     }
 }
 
+impl Drop for RealtimeWorkerManager {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 fn spawn_worker(
     launch: &RealtimeWorkerLaunch,
     app: AppHandle,
     governance: WorkerGovernanceHandles,
 ) -> Result<WorkerProcess, RealtimeWorkerError> {
     let WorkerGovernanceHandles {
+        resources,
+        model_reservation,
         assistance,
         usage,
         active_identity,
@@ -1923,6 +1996,7 @@ fn spawn_worker(
     let reader_expected_shutdown = Arc::clone(&expected_shutdown);
     let terminal = Arc::new(AtomicBool::new(false));
     let reader_terminal = Arc::clone(&terminal);
+    let reader_reservation = Arc::clone(&model_reservation);
     let tick_input = Arc::clone(&input);
     let tick_coordinator = Arc::clone(&coordinator);
     let tick_expected_shutdown = Arc::clone(&expected_shutdown);
@@ -1962,6 +2036,16 @@ fn spawn_worker(
                     if !coordinator_allows_worker_event(&value, &coordinator) {
                         continue;
                     }
+                    if value.get("type").and_then(Value::as_str) == Some("session_state")
+                        && matches!(
+                            value.get("status").and_then(Value::as_str),
+                            Some("active" | "failed" | "stopped" | "cancelled" | "completed")
+                        )
+                    {
+                        if let Ok(mut reservation) = reader_reservation.lock() {
+                            reservation.take();
+                        }
+                    }
                     observe_media_projection(
                         &value,
                         &reader_capture_scope,
@@ -1979,6 +2063,8 @@ fn spawn_worker(
                         &sidecar_supervisor,
                         &recovery,
                         &local_omni,
+                        &resources,
+                        &reader_reservation,
                     ) {
                         continue;
                     }
@@ -2198,6 +2284,9 @@ fn spawn_worker(
                     let _ = app.emit(REALTIME_WORKER_EVENT, value);
                 }
                 Ok(None) | Err(_) => {
+                    if let Ok(mut reservation) = reader_reservation.lock() {
+                        reservation.take();
+                    }
                     if !reader_expected_shutdown.load(Ordering::Acquire) {
                         if let Some(projection) =
                             govern_host_presence(RealtimePresenceState::Error, &coordinator)
@@ -2244,6 +2333,8 @@ fn spawn_worker(
     });
     match ready_rx.recv_timeout(Duration::from_secs(5)) {
         Ok(true) => Ok(WorkerProcess {
+            audio_lease: None,
+            model_reservation,
             child,
             input,
             session_id: None,
@@ -2632,6 +2723,8 @@ fn handle_local_sidecar_failure(
     sidecar_supervisor: &Mutex<RealtimeSidecarSupervisor>,
     recovery: &Mutex<Option<RealtimeRecoveryEnvelope>>,
     local_omni: &LocalOmniLaunch,
+    resources: &Arc<crate::model_resources::ModelResources>,
+    reservation: &Mutex<Option<crate::model_resources::ModelReservation>>,
 ) -> bool {
     let Ok(WorkerEvent::LocalSidecarFailure {
         session_id,
@@ -2643,6 +2736,9 @@ fn handle_local_sidecar_failure(
     else {
         return false;
     };
+    if let Ok(mut previous) = reservation.lock() {
+        previous.take();
+    }
 
     let pending_wake_failure = coordinator.lock().ok().and_then(|mut coordinator| {
         let coordinator = coordinator.as_mut()?;
@@ -2786,10 +2882,23 @@ fn handle_local_sidecar_failure(
         standby_wake: false,
         carryover: None,
     };
+    let loading = match resources.reserve("minicpm", None) {
+        Ok(loading) => loading,
+        Err(_) => {
+            quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
+            return true;
+        }
+    };
+    let Ok(mut retained) = reservation.lock() else {
+        quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
+        return true;
+    };
     if send_command(input, &command).is_err() {
         quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
         return true;
     }
+    *retained = Some(loading);
+    drop(retained);
     let _ = app.emit(
         REALTIME_WORKER_EVENT,
         presence_projection_payload(recovery_projection),

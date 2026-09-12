@@ -9,8 +9,14 @@ const mocks = vi.hoisted(() => {
       channels.push(this as { onmessage(value: unknown): void });
     }
   }
-  return { invoke: vi.fn(), channels, Channel };
+  return { invoke: vi.fn(), channels, Channel,
+    focusListeners: new Set<(value: { sequence: number; realtime_active: boolean }) => void>() };
 });
+
+vi.mock("./audioFocus", () => ({ subscribeAudioFocus: (callback: (value: { sequence: number; realtime_active: boolean }) => void) => {
+  mocks.focusListeners.add(callback);
+  return () => mocks.focusListeners.delete(callback);
+} }));
 
 type MockChannel<T> = { onmessage(value: T): void };
 
@@ -46,6 +52,7 @@ describe("native voice channel", () => {
   beforeEach(() => {
     mocks.invoke.mockReset();
     mocks.channels.length = 0;
+    mocks.focusListeners.clear();
     posted.length = 0;
     port.postMessage.mockClear();
     port.onmessage = null;
@@ -100,6 +107,35 @@ describe("native voice channel", () => {
 
     port.onmessage?.({ data: { type: "drained", sessionId: "session-1" } } as MessageEvent);
     await expect(playback.finished).resolves.toBeUndefined();
+  });
+
+  it("realtime preempts ordinary speech and ignores old PCM and stop handles", async () => {
+    let next = 0;
+    mocks.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "desktop_preferences_get") return { voice_volume_percent: 80, voice_rate_percent: 100 };
+      if (command === "voice_session_start") {
+        const id = `focus-${++next}`;
+        (args?.events as MockChannel<Record<string, unknown>>).onmessage({
+          type: "started", session_id: id, sample_rate: 24_000, channels: 1, scope_digest: "c".repeat(64),
+        });
+        return { id };
+      }
+      return undefined;
+    });
+    const input = { task_id: "task-focus", turn_id: "turn-focus", message_id: "message-focus",
+      start_offset: 0, end_offset: 4, idempotency_key: "voice:focus" };
+    const old = await startNativeVoice(input);
+    const oldPcm = mocks.channels[1];
+    for (const deliver of [...mocks.focusListeners]) deliver({ sequence: 10, realtime_active: true });
+    await expect(old.finished).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith("voice_session_cancel", { sessionId: "focus-1" });
+    const current = await startNativeVoice({ ...input, idempotency_key: "voice:focus-new" });
+    const count = posted.length;
+    oldPcm.onmessage(new Uint8Array([0, 0]));
+    old.stop();
+    expect(posted).toHaveLength(count);
+    current.stop();
+    await current.finished;
   });
 
   it("clears buffered audio before requesting cancellation", async () => {

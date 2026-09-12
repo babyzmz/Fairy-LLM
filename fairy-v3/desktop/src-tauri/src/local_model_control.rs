@@ -56,6 +56,7 @@ struct BackgroundOperationContext {
 }
 
 pub struct LocalModelControl {
+    resources: Arc<crate::model_resources::ModelResources>,
     manager: Arc<Mutex<Option<OmniModelManager>>>,
     status: Arc<Mutex<OmniModelInstallState>>,
     operation: Arc<Mutex<Option<ActiveOperation>>>,
@@ -75,6 +76,7 @@ impl LocalModelControl {
         let readiness = LocalReadinessService::production(models_root, runtime_root, manifest)
             .map_err(public_readiness_error)?;
         Ok(Self {
+            resources: Arc::new(crate::model_resources::ModelResources::default()),
             manager: Arc::new(Mutex::new(Some(manager))),
             status: Arc::new(Mutex::new(status)),
             operation: Arc::new(Mutex::new(None)),
@@ -88,6 +90,14 @@ impl LocalModelControl {
             .lock()
             .map(|status| status.clone())
             .map_err(|_| "OMNI_MODEL_STATUS_UNAVAILABLE".to_owned())
+    }
+
+    pub fn with_resources(
+        mut self,
+        resources: Arc<crate::model_resources::ModelResources>,
+    ) -> Self {
+        self.resources = resources;
+        self
     }
 
     pub fn readiness(
@@ -239,6 +249,7 @@ impl LocalModelControl {
         let status = Arc::clone(&self.status);
         let operation = Arc::clone(&self.operation);
         let readiness = Arc::clone(&self.readiness);
+        let resources = Arc::clone(&self.resources);
         let event_sequence = Arc::clone(&self.event_sequence);
         tauri::async_runtime::spawn_blocking(move || {
             let outcome = catch_unwind(AssertUnwindSafe(|| {
@@ -259,6 +270,9 @@ impl LocalModelControl {
                 }
 
                 manager.begin_runtime_self_test()?;
+                let _reservation = resources
+                    .reserve("omni_self_test", None)
+                    .map_err(OmniModelManagerError::Verification)?;
                 replace_shared_status(&status, manager.status().clone())?;
                 publish_progress(
                     &app,

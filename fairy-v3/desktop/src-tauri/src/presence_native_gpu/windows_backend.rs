@@ -1,4 +1,7 @@
 use std::cmp::Ordering;
+#[path = "dda_ownership.rs"]
+mod dda_ownership;
+use dda_ownership::DdaExclusionLease;
 #[path = "input_surface.rs"]
 mod input_surface;
 use input_surface::InputCompositionSurface;
@@ -102,6 +105,7 @@ pub(super) struct WindowsNativeGpuSession {
     render_control: Arc<NativeRenderControl>,
     status: Arc<Mutex<NativeGpuStatus>>,
     _timer_resolution: TimerResolutionGuard,
+    _dda_exclusions: Vec<DdaExclusionLease>,
 }
 
 struct TimerResolutionGuard {
@@ -154,19 +158,23 @@ impl WindowsNativeGpuSession {
             status.monitor_handoff = MonitorHandoffState::Preparing;
         });
         let (device, context, mut dda_binding) = create_native_d3d_device(monitor_handle, &status)?;
+        let mut dda_exclusions = Vec::new();
         if dda_binding.is_some() {
             let mut exclusion_applied = true;
             for raw_hwnd in [config.render_hwnd, config.input_hwnd] {
-                let hwnd = HWND(raw_hwnd as *mut c_void);
-                if let Err(error) = set_window_excluded_from_dda(hwnd, true) {
-                    update_status(&status, |status| {
-                        status.dda_exclusion = DdaExclusionStatus::Failed;
-                        status.fallback_reason =
-                            Some(format!("PRESENCE_DDA_WINDOW_EXCLUSION_FAILED: {error}"));
-                    });
-                    exclusion_applied = false;
-                    dda_binding = None;
-                    break;
+                match DdaExclusionLease::acquire(raw_hwnd) {
+                    Ok(lease) => dda_exclusions.push(lease),
+                    Err(error) => {
+                        update_status(&status, |status| {
+                            status.dda_exclusion = DdaExclusionStatus::Failed;
+                            status.fallback_reason =
+                                Some(format!("PRESENCE_DDA_WINDOW_EXCLUSION_FAILED: {error}"));
+                        });
+                        exclusion_applied = false;
+                        dda_binding = None;
+                        dda_exclusions.clear();
+                        break;
+                    }
                 }
             }
             if exclusion_applied {
@@ -220,6 +228,7 @@ impl WindowsNativeGpuSession {
             render_control,
             status,
             _timer_resolution: timer_resolution,
+            _dda_exclusions: dda_exclusions,
         })
     }
 

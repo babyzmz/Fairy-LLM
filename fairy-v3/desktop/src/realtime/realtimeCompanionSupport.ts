@@ -137,6 +137,16 @@ export function credentialProviderFor(
 
 export function realtimeProviderErrorMessage(code?: string | null): string {
   switch (code) {
+    case "MODEL_START_CAPACITY_EXCEEDED":
+      return "Another local model is starting. Wait for it to finish, then retry; no active session has been stopped.";
+    case "MODEL_INSUFFICIENT_VRAM":
+    case "VOICE_INSUFFICIENT_VRAM":
+    case "LOCAL_VRAM_INSUFFICIENT":
+    case "LOCAL_FREE_VRAM_INSUFFICIENT":
+      return "There is not enough available GPU memory. Close idle GPU applications or select text-only output, then retry.";
+    case "AUDIO_FOCUS_UNAVAILABLE":
+    case "AUDIO_FOCUS_BUSY":
+      return "Audio is owned by another session. Stop that session before starting this one.";
     case "REALTIME_PROVIDER_AUTHENTICATION_FAILED":
       return "The realtime provider rejected the API key. Update it in Settings.";
     case "REALTIME_PROVIDER_QUOTA_EXHAUSTED":

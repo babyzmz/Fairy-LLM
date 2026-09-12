@@ -692,7 +692,7 @@ const fn default_realtime_cloud_daily_minutes() -> u16 {
 }
 
 const fn default_realtime_local_keep_warm_minutes() -> u8 {
-    10
+    5
 }
 
 #[cfg(windows)]
@@ -1190,7 +1190,7 @@ mod tests {
         );
         assert_eq!(defaults.realtime_presence_max_minutes, 240);
         assert_eq!(defaults.realtime_cloud_daily_limit_minutes, 180);
-        assert_eq!(defaults.realtime_local_keep_warm_minutes, 10);
+        assert_eq!(defaults.realtime_local_keep_warm_minutes, 5);
         assert_eq!(
             defaults.realtime_capture_mode,
             RealtimeCaptureMode::SelectedWindow

@@ -4,6 +4,7 @@ import type { VoiceSession, VoiceSessionStartInput } from "../core/client";
 import type { DesktopPreferences } from "../settings/client";
 import { publishPresenceVoiceLevel } from "../presence/transport/voiceLevelEvents";
 import workletUrl from "./fairy-pcm-worklet.js?url&no-inline";
+import { subscribeAudioFocus } from "./audioFocus";
 
 export type NativeVoiceEvent =
   | { type: "started"; session_id: string; sample_rate: number; channels: number; scope_digest: string }
@@ -27,6 +28,7 @@ interface WorkletEvent {
 }
 
 interface PendingPlayback {
+  cancel?: () => void;
   sessionId: string | null;
   terminal: boolean;
   receivedBytes: number;
@@ -42,6 +44,8 @@ interface PendingPlayback {
 }
 
 class NativeVoiceHost {
+  private epoch = 0;
+  private nodeReady: Promise<AudioWorkletNode> | null = null;
   private context: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
   private readonly pending = new Map<string, PendingPlayback>();
@@ -75,13 +79,21 @@ class NativeVoiceHost {
       | "ambient_voice_cancel",
     args: Record<string, unknown>,
   ): Promise<NativeVoicePlayback> {
+    const epoch = this.epoch;
     const node = await this.readyNode();
     const preferences = await invoke<DesktopPreferences>("desktop_preferences_get");
     await this.context?.resume();
     const playback = pendingPlayback();
+    const realtime = command === "realtime_voice_start";
+    const closeFocus = subscribeAudioFocus((focus) => {
+      if (epoch === this.epoch && focus.realtime_active !== realtime) this.stopAll(node);
+    });
+    void playback.finished.then(closeFocus, closeFocus);
+    const cancelled = () => epoch !== this.epoch || playback.terminal;
     const events = new Channel<NativeVoiceEvent>();
     const audio = new Channel<NativePcmChunk>();
     events.onmessage = (event) => {
+      if (cancelled()) return;
       if (event.type === "started") {
         this.attachSession(playback, event.session_id);
         node.port.postMessage({
@@ -112,12 +124,14 @@ class NativeVoiceHost {
       }
     };
     audio.onmessage = (chunk) => {
+      if (cancelled()) return;
       const pcm = transferablePcm(chunk);
       if (playback.sessionId === null) playback.queuedPcm.push(pcm);
       else this.appendPcm(node, playback, pcm);
     };
     let session: VoiceSession;
     try {
+      if (cancelled()) throw new Error("VOICE_PLAYBACK_CANCELLED");
       session = await invoke<VoiceSession>(command, { ...args, audio, events });
     } catch (error) {
       const failure = normalizedError(error, "VOICE_WORKER_UNAVAILABLE");
@@ -125,13 +139,22 @@ class NativeVoiceHost {
       playback.rejectFinished(failure);
       throw failure;
     }
+    playback.cancel = () => { void invoke(cancelCommand, { sessionId: session.id }).catch(() => undefined); };
+    if (cancelled()) {
+      playback.cancel();
+      playback.terminal = true;
+      playback.queuedPcm = [];
+      playback.resolveReady();
+      playback.resolveFinished();
+      return { readyForNext: playback.readyForNext, finished: playback.finished, stop() {} };
+    }
     this.attachSession(playback, session.id);
     return {
       readyForNext: playback.readyForNext,
       finished: playback.finished,
       stop: () => {
+        if (epoch !== this.epoch || playback.terminal) return;
         this.stopAll(node);
-        void invoke(cancelCommand, { sessionId: session.id });
       },
     };
   }
@@ -170,9 +193,12 @@ class NativeVoiceHost {
   }
 
   private stopAll(node: AudioWorkletNode): void {
+    this.epoch += 1;
     node.port.postMessage({ type: "clear" });
     for (const playback of this.pending.values()) {
       playback.terminal = true;
+      playback.queuedPcm = [];
+      playback.cancel?.();
       playback.resolveReady();
       playback.resolveFinished();
     }
@@ -180,9 +206,12 @@ class NativeVoiceHost {
   }
 
   private failAll(node: AudioWorkletNode | null, error: Error): void {
+    this.epoch += 1;
     node?.port.postMessage({ type: "clear" });
     for (const playback of this.pending.values()) {
       playback.terminal = true;
+      playback.queuedPcm = [];
+      playback.cancel?.();
       playback.rejectReady(error);
       playback.rejectFinished(error);
     }
@@ -191,8 +220,17 @@ class NativeVoiceHost {
 
   private async readyNode(): Promise<AudioWorkletNode> {
     if (this.node !== null) return this.node;
+    this.nodeReady ??= this.createNode().catch((error) => {
+      this.nodeReady = null;
+      throw error;
+    });
+    return this.nodeReady;
+  }
+
+  private async createNode(): Promise<AudioWorkletNode> {
     const context = new AudioContext({ latencyHint: "interactive" });
-    await context.audioWorklet.addModule(workletUrl);
+    try { await context.audioWorklet.addModule(workletUrl); }
+    catch (error) { await context.close(); throw error; }
     const node = new AudioWorkletNode(context, "fairy-pcm-ring", {
       numberOfInputs: 0,
       numberOfOutputs: 1,
@@ -208,6 +246,7 @@ class NativeVoiceHost {
       const playback = this.pending.get(sessionId);
       if (playback === undefined) return;
       if (event.data.type === "drained") {
+        playback.terminal = true;
         publishPresenceVoiceLevel(0);
         playback.resolveFinished();
         this.pending.delete(sessionId);

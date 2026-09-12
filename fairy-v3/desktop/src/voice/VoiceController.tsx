@@ -32,6 +32,8 @@ import {
   startNativeVoice,
 } from "./nativeVoice";
 import { SentenceQueue } from "./sentenceQueue";
+import { subscribeAudioFocus } from "./audioFocus";
+import { isTauri } from "@tauri-apps/api/core";
 
 const MAX_RECORDING_BYTES = 20 * 1024 * 1024;
 const MAX_AUTO_PLAYBACK_QUEUE_ITEMS = 8;
@@ -126,6 +128,8 @@ export function VoiceController({
   const [recordingStatusMessage, setRecordingStatusMessage] = useState<string | null>(null);
   const [voiceRepliesEnabled, setVoiceRepliesEnabled] = useState(false);
   const [petMuted, setPetMuted] = useState(false);
+  const [realtimeOwnsAudio, setRealtimeOwnsAudio] = useState(isTauri);
+  const realtimeAudioRef = useRef(realtimeOwnsAudio);
   const recordingRef = useRef<ScopedRecording | null>(null);
   const recordingGeneration = useRef(0);
   const playbackRef = useRef<AudioPlayback | null>(null);
@@ -147,14 +151,15 @@ export function VoiceController({
     (!profile.credential_required || profile.credential_configured) &&
     health?.status !== "unavailable";
   const sttAvailable =
+    !realtimeOwnsAudio &&
     environment.supported &&
     conversationId !== null &&
     providerAvailable &&
     profile.capabilities.includes("stt");
   const nativeTtsAvailable = environment.startNativePlayback !== undefined;
   const ttsAvailable =
-    nativeTtsAvailable ||
-    (environment.supported && providerAvailable && profile?.capabilities.includes("tts") === true);
+    !realtimeOwnsAudio && (nativeTtsAvailable ||
+    (environment.supported && providerAvailable && profile?.capabilities.includes("tts") === true));
 
   const stopSpeaking = useCallback(() => {
     playbackEpoch.current += 1;
@@ -173,6 +178,18 @@ export function VoiceController({
       stopSpeaking();
     }
   }, [speakingMessageId, stopSpeaking]);
+
+  useEffect(() => subscribeAudioFocus((focus) => {
+    realtimeAudioRef.current = focus.realtime_active;
+    setRealtimeOwnsAudio(focus.realtime_active);
+    if (focus.realtime_active) {
+      stopSpeaking();
+      recordingGeneration.current += 1;
+      recordingRef.current?.session?.cancel();
+      recordingRef.current = null;
+      setRecordingState("idle");
+    }
+  }), [stopSpeaking]);
 
   useEffect(() => {
     const update = (event: Event) => {
@@ -207,6 +224,10 @@ export function VoiceController({
 
   const startRecording = useCallback(
     async (onTranscript: (text: string) => void) => {
+      if (realtimeAudioRef.current) {
+        setRecordingStatusMessage("Realtime Companion currently owns the microphone");
+        return;
+      }
       if (!sttAvailable || conversationId === null || profile === null) {
         setRecordingStatusMessage("Speech transcription unavailable");
         return;
@@ -283,6 +304,7 @@ export function VoiceController({
 
   const speak = useCallback(
     async (message: Message) => {
+      if (realtimeAudioRef.current) return;
       if (
         !ttsAvailable ||
         message.role !== "assistant" ||
@@ -379,6 +401,7 @@ export function VoiceController({
     async (text: string, presentationId: string) => {
       const normalized = text.trim();
       if (
+        realtimeAudioRef.current ||
         normalized === "" ||
         petMuted ||
         environment.startAmbientPlayback === undefined ||
@@ -473,6 +496,8 @@ export function VoiceController({
       autoFlushed.current = true;
       chunks.push(...sentenceQueue.current.flush(turn.id));
     }
+    // Consume event coordinates while suppressed; do not replay a backlog on release.
+    if (realtimeOwnsAudio || realtimeAudioRef.current) return;
     for (const chunk of chunks) {
       const epoch = playbackEpoch.current;
       const characters = chunk.endOffset - chunk.startOffset;
@@ -535,7 +560,7 @@ export function VoiceController({
         }
       });
     }
-  }, [environment, events, petMuted, petTaskId, stopSpeaking, turn, voiceRepliesEnabled]);
+  }, [environment, events, petMuted, petTaskId, realtimeOwnsAudio, stopSpeaking, turn, voiceRepliesEnabled]);
 
   useEffect(
     () => () => {

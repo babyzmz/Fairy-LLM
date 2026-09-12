@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import ModuleType
@@ -110,9 +111,7 @@ class CosyVoice3Runtime:
             pass
         try:
             onnxruntime = importlib.import_module("onnxruntime")
-            onnx_cuda_available = (
-                "CUDAExecutionProvider" in onnxruntime.get_available_providers()
-            )
+            onnx_cuda_available = "CUDAExecutionProvider" in onnxruntime.get_available_providers()
         except Exception:
             pass
         if model_ready:
@@ -199,11 +198,20 @@ class CosyVoice3Runtime:
                 self._ready = False
                 self._error_code = error.error_code
                 raise
-            except Exception:
+            except Exception as error:
                 self._model = None
                 self._model_digest = None
                 self._ready = False
-                self._error_code = "VOICE_WORKER_LOAD_FAILED"
+                torch = sys.modules.get("torch")
+                oom_type = getattr(getattr(torch, "cuda", None), "OutOfMemoryError", None)
+                self._error_code = (
+                    "VOICE_INSUFFICIENT_VRAM"
+                    if oom_type is not None and isinstance(error, oom_type)
+                    else "VOICE_WORKER_LOAD_FAILED"
+                )
+                with suppress(Exception):  # Preserve the original startup failure.
+                    if torch is not None and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                 raise
 
     def _prepare_trt_plan(self) -> dict[str, object]:

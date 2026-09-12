@@ -172,7 +172,7 @@ pub const fn map_cloud_provider(
     }
 }
 
-const fn local_reason_code(reason: LocalBetaReadinessReason) -> &'static str {
+pub(crate) const fn local_reason_code(reason: LocalBetaReadinessReason) -> &'static str {
     match reason {
         LocalBetaReadinessReason::Eligible => "LOCAL_BACKEND_NOT_READY",
         LocalBetaReadinessReason::ModelMissing => "LOCAL_MODEL_MISSING",

@@ -1501,6 +1501,12 @@ describe("mergeCaptionDelta", () => {
 });
 
 describe("realtimeProviderErrorMessage", () => {
+  it("distinguishes actual memory pressure from a bounded model startup", () => {
+    expect(realtimeProviderErrorMessage("LOCAL_FREE_VRAM_INSUFFICIENT")).toContain("GPU memory");
+    expect(realtimeProviderErrorMessage("VOICE_INSUFFICIENT_VRAM")).toContain("GPU memory");
+    expect(realtimeProviderErrorMessage("MODEL_START_CAPACITY_EXCEEDED")).toContain("Another local model");
+    expect(realtimeProviderErrorMessage("AUDIO_FOCUS_UNAVAILABLE")).toContain("another session");
+  });
   it("turns safe worker codes into actionable user messages", () => {
     expect(realtimeProviderErrorMessage("REALTIME_PROVIDER_QUOTA_EXHAUSTED"))
       .toContain("balance or quota");

@@ -1,4 +1,6 @@
 use std::env;
+mod audio_focus;
+mod model_resources;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -87,9 +89,9 @@ pub mod omni_runtime_protocol;
 pub mod omni_runtime_self_test;
 mod pet_chat_broker;
 mod pet_chat_events;
+mod pet_chat_transport;
 pub mod presence_backdrop;
 pub mod presence_coordinator;
-mod pet_chat_transport;
 pub mod presence_interaction;
 pub mod presence_native_gpu;
 pub mod presence_renderer_supervisor;
@@ -738,6 +740,9 @@ async fn omni_model_verify(
 ) -> Result<OmniModelInstallState, String> {
     authorize_local_model_mutation(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
+    if state.voice.audio_focus.snapshot().realtime_active {
+        return Err("LOCAL_MODEL_IN_USE".to_owned());
+    }
     let result = state.local_model.start_verify(window.app_handle())?;
     state
         .realtime
@@ -841,16 +846,23 @@ async fn realtime_worker_start_segment(
     {
         return Err("REALTIME_RESOLUTION_STALE".to_owned());
     }
-    let local_ready =
+    let local_report =
         if input.backend == fairy_realtime_worker::RealtimeBackendKind::LocalMiniCpmO45 {
-            state
-                .local_model
-                .readiness(input.activity_profile, false)?
-                .capability
-                .local_beta_eligible
+            Some(state.local_model.readiness(input.activity_profile, true)?)
         } else {
-            false
+            None
         };
+    let local_ready = local_report
+        .as_ref()
+        .is_some_and(|report| report.capability.local_beta_eligible);
+    if let Some(report) = local_report
+        .as_ref()
+        .filter(|report| !report.capability.local_beta_eligible)
+    {
+        return Err(
+            realtime_backend_resolver::local_reason_code(report.capability.reason).to_owned(),
+        );
+    }
     validate_realtime_activation(&input, local_ready).map_err(str::to_owned)?;
     if input.backend == fairy_realtime_worker::RealtimeBackendKind::CloudLive {
         enforce_realtime_cloud_daily_limit(state, preferences.realtime_cloud_daily_limit_minutes)
@@ -870,29 +882,42 @@ async fn realtime_worker_start_segment(
     };
     let credential = credential.map(zeroize::Zeroizing::new);
     let persona_snapshot = zeroize::Zeroizing::new(persona_snapshot);
+    let reservation = if let Some(report) = local_report {
+        Some(
+            state
+                .voice
+                .audio_focus
+                .model_resources
+                .reserve(
+                    "minicpm",
+                    report
+                        .capability
+                        .available_budget_bytes
+                        .zip(report.capability.required_budget_bytes),
+                )
+                .map_err(str::to_owned)?,
+        )
+    } else {
+        None
+    };
     emit_realtime_startup_stage(
         app,
         &input.session_id,
         RealtimeStartupStage::StartingBackendRuntime,
     );
+    let resources = realtime_worker::RealtimeStartResources {
+        presence_max_minutes: preferences.realtime_presence_max_minutes,
+        local_keep_warm_minutes: preferences.realtime_local_keep_warm_minutes,
+        reservation,
+    };
     let status = if continuation {
-        state.realtime.continue_session(
-            app,
-            input,
-            credential,
-            persona_snapshot,
-            preferences.realtime_presence_max_minutes,
-            preferences.realtime_local_keep_warm_minutes,
-        )
+        state
+            .realtime
+            .continue_session(app, input, credential, persona_snapshot, resources)
     } else {
-        state.realtime.start(
-            app,
-            input,
-            credential,
-            persona_snapshot,
-            preferences.realtime_presence_max_minutes,
-            preferences.realtime_local_keep_warm_minutes,
-        )
+        state
+            .realtime
+            .start(app, input, credential, persona_snapshot, resources)
     }
     .map_err(|error| error.to_string())?;
     Ok(status)
@@ -1098,7 +1123,7 @@ async fn realtime_worker_wake(
     {
         state
             .local_model
-            .readiness(profile, false)?
+            .readiness(profile, true)?
             .capability
             .local_beta_eligible
     } else {
@@ -5221,6 +5246,34 @@ async fn voice_worker_health(
 }
 
 #[tauri::command]
+fn audio_focus_status(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<audio_focus::AudioFocusSnapshot, String> {
+    authorize_voice_health_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    Ok(state.voice.audio_focus.snapshot())
+}
+
+#[tauri::command]
+async fn runtime_diagnostics_get(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    if window.label() != "main" {
+        return Err("Window is not authorized".to_owned());
+    }
+    let core = call_core(
+        &state,
+        json!({
+            "jsonrpc": "2.0", "id": -10_050, "method": "transport.diagnostics", "params": {}
+        }),
+    )
+    .await;
+    Ok(json!({"schema_version": 1, "core": core, "audio": state.voice.diagnostics()}))
+}
+
+#[tauri::command]
 async fn voice_worker_prepare(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
@@ -5241,7 +5294,7 @@ async fn voice_worker_stop(
 ) -> Result<Value, String> {
     authorize_voice_control_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
-    if state.realtime.status().running {
+    if state.voice.audio_focus.snapshot().realtime_active {
         return Err("VOICE_WORKER_IN_USE".to_owned());
     }
     let voice = Arc::clone(&state.voice);
@@ -6043,17 +6096,32 @@ pub fn run() {
             let realtime_assistance = Arc::new(realtime_assistance::RealtimeAssistanceRouter::new(
                 Arc::clone(&core),
             ));
-            let realtime = Arc::new(RealtimeWorkerManager::new(
-                realtime_launch,
-                realtime_assistance,
-            ));
+            let realtime = Arc::new(
+                RealtimeWorkerManager::new(realtime_launch, realtime_assistance)
+                    .with_audio_focus(Arc::clone(&voice.audio_focus)),
+            );
+            let idle_voice = Arc::downgrade(&voice);
+            let idle_realtime = Arc::downgrade(&realtime);
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(5));
+                let (Some(voice), Some(realtime)) = (idle_voice.upgrade(), idle_realtime.upgrade())
+                else {
+                    break;
+                };
+                // Reaps terminal workers and releases their audio ownership on crash.
+                let _ = realtime.status();
+                if let Err(error) = voice.release_if_idle() {
+                    eprintln!("voice idle release: {}", error.public_code());
+                }
+            });
             let local_model = Arc::new(
                 LocalModelControl::new(
                     &data_dir.join("models"),
                     &resource_dir.join("runtime"),
                     omni_manifest,
                 )
-                .map_err(std::io::Error::other)?,
+                .map_err(std::io::Error::other)?
+                .with_resources(Arc::clone(&voice.audio_focus.model_resources)),
             );
             let preferences_store = DesktopPreferencesStore::new(&data_dir);
             let startup_preferences = preferences_store.load_for_startup()?;
@@ -6207,6 +6275,8 @@ pub fn run() {
             main_view_navigate,
             background_task_notify,
             voice_worker_health,
+            audio_focus_status,
+            runtime_diagnostics_get,
             voice_worker_prepare,
             voice_worker_stop,
             voice_model_install,
@@ -6279,6 +6349,15 @@ pub fn run() {
                 },
             );
             stop_native_presence(app);
+            // AppHandle-backed managers can outlive WebView teardown. Explicit exit
+            // must close their owned children, not rely on Arc destruction order.
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(state) = app.try_state::<DesktopState>() {
+                    let _ = state.local_model.cancel(app);
+                    state.realtime.shutdown();
+                    state.voice.shutdown();
+                }
+            }
         }
         _ => {}
     });

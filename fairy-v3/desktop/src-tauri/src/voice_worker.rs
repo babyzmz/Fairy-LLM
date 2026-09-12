@@ -4,10 +4,10 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -155,14 +155,18 @@ pub struct VoiceLifecycleSnapshot {
 struct VoiceLifecycleState {
     snapshot: VoiceLifecycleSnapshot,
     queued_characters: usize,
+    idle_since: Option<Instant>,
 }
 
 pub struct VoiceWorkerManager {
+    pub audio_focus: Arc<crate::audio_focus::AudioFocus>,
     launch: VoiceWorkerLaunch,
     app: Option<AppHandle>,
     process: Mutex<Option<WorkerProcess>>,
     prepare_lock: Mutex<()>,
     operation_generation: AtomicU64,
+    closed: AtomicBool,
+    idle_unloads: AtomicU64,
     lifecycle: Mutex<VoiceLifecycleState>,
     cancellations: Mutex<HashSet<String>>,
 }
@@ -179,11 +183,18 @@ impl VoiceWorkerManager {
     fn with_app(launch: VoiceWorkerLaunch, app: Option<AppHandle>) -> Self {
         let now = unix_time_ms();
         Self {
+            audio_focus: Arc::new(
+                app.clone()
+                    .map(crate::audio_focus::AudioFocus::with_app)
+                    .unwrap_or_default(),
+            ),
             launch,
             app,
             process: Mutex::new(None),
             prepare_lock: Mutex::new(()),
             operation_generation: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
+            idle_unloads: AtomicU64::new(0),
             lifecycle: Mutex::new(VoiceLifecycleState {
                 snapshot: VoiceLifecycleSnapshot {
                     sequence: 0,
@@ -195,6 +206,7 @@ impl VoiceWorkerManager {
                     transitioned_at_unix_ms: now,
                 },
                 queued_characters: 0,
+                idle_since: None,
             }),
             cancellations: Mutex::new(HashSet::new()),
         }
@@ -249,7 +261,7 @@ impl VoiceWorkerManager {
             Some(connection) => connection,
             None => {
                 self.transition_if_current(requested_generation, "starting_worker", None);
-                self.connection()?
+                self.connection_for_generation(requested_generation)?
             }
         };
         if self.lifecycle_snapshot().lifecycle_state == "ready" {
@@ -264,6 +276,11 @@ impl VoiceWorkerManager {
             return Ok(current);
         }
         self.transition_if_current(requested_generation, "warming", None);
+        let _reservation = self
+            .audio_focus
+            .model_resources
+            .reserve("cosyvoice", None)
+            .map_err(|code| VoiceWorkerError::Worker(code.to_owned()))?;
         let response = send_request(
             connection.address,
             "POST",
@@ -302,8 +319,16 @@ impl VoiceWorkerManager {
     }
 
     pub fn stop(&self) -> Result<Value, VoiceWorkerError> {
-        self.operation_generation.fetch_add(1, Ordering::AcqRel);
-        self.transition("stopping", None);
+        {
+            let mut lifecycle = self.lifecycle.lock().map_err(|_| {
+                VoiceWorkerError::Unavailable("lifecycle lock is poisoned".to_owned())
+            })?;
+            self.operation_generation.fetch_add(1, Ordering::AcqRel);
+            lifecycle.snapshot.lifecycle_state = "stopping".to_owned();
+            lifecycle.idle_since = None;
+            advance_lifecycle_sequence(&mut lifecycle.snapshot);
+        }
+        self.emit_lifecycle(&self.lifecycle_snapshot());
         let mut guard = self
             .process
             .lock()
@@ -320,7 +345,18 @@ impl VoiceWorkerManager {
         Ok(self.with_lifecycle(cold_voice_health(&self.launch)))
     }
 
+    pub fn shutdown(&self) {
+        self.closed.store(true, Ordering::Release);
+        if let Err(error) = self.stop() {
+            eprintln!("voice shutdown: {}", error.public_code());
+        }
+    }
+
     pub fn install_model(&self) -> Result<Value, VoiceWorkerError> {
+        let _prepare_guard = self
+            .prepare_lock
+            .lock()
+            .map_err(|_| VoiceWorkerError::Unavailable("prepare lock is poisoned".to_owned()))?;
         let connection = self.connection()?;
         let (status, _, mut reader) = send_request(
             connection.address,
@@ -344,26 +380,41 @@ impl VoiceWorkerManager {
         audio: Channel<Response>,
         events: Channel<VoiceStreamEvent>,
     ) -> Result<(), VoiceWorkerError> {
+        let realtime_audio = session.task_id == "realtime";
+        let focus_generation = self
+            .audio_focus
+            .admit(realtime_audio)
+            .map_err(|code| VoiceWorkerError::Worker(code.to_owned()))?;
         if session.status != "prepared" {
             return Err(VoiceWorkerError::Protocol(
                 "voice session is not prepared".to_owned(),
             ));
         }
-        if let Ok(mut cancellations) = self.cancellations.lock() {
-            cancellations.remove(&session.id);
-        }
-        let mut lease = self.queue_playback(session.validated_text.chars().count())?;
-        let health = self.prepare()?;
-        if health.get("status").and_then(Value::as_str) != Some("ready") {
-            return Err(VoiceWorkerError::Worker("VOICE_WORKER_STOPPED".to_owned()));
-        }
+        // An explicit cancellation arriving before the stream must not be erased.
         if self.take_cancellation(&session.id) {
             let _ = events.send(VoiceStreamEvent::Cancelled {
                 session_id: session.id,
             });
             return Ok(());
         }
-        let connection = self.connection()?;
+        let mut lease = self.queue_playback(session.validated_text.chars().count())?;
+        let health = self.prepare_for_generation(lease.generation)?;
+        if health.get("status").and_then(Value::as_str) != Some("ready") {
+            return Err(VoiceWorkerError::Worker("VOICE_WORKER_STOPPED".to_owned()));
+        }
+        self.transition_if_current(lease.generation, "ready", None);
+        if self.take_cancellation(&session.id)
+            || !self
+                .audio_focus
+                .is_current(focus_generation, realtime_audio)
+            || self.operation_generation.load(Ordering::Acquire) != lease.generation
+        {
+            let _ = events.send(VoiceStreamEvent::Cancelled {
+                session_id: session.id,
+            });
+            return Ok(());
+        }
+        let connection = self.connection_for_generation(lease.generation)?;
         let token = secure_token()?;
         register_token(&connection, &token)?;
         let priority = if session.message_id.is_none()
@@ -429,7 +480,29 @@ impl VoiceWorkerManager {
         let mut trailing_byte = None;
         let mut buffer = vec![0_u8; STREAM_CHUNK_BYTES];
         loop {
+            if !self
+                .audio_focus
+                .is_current(focus_generation, realtime_audio)
+                || self.operation_generation.load(Ordering::Acquire) != lease.generation
+            {
+                let _ = self.cancel(&session.id);
+                let _ = events.send(VoiceStreamEvent::Cancelled {
+                    session_id: session.id,
+                });
+                return Ok(());
+            }
             let read = reader.read(&mut buffer)?;
+            if !self
+                .audio_focus
+                .is_current(focus_generation, realtime_audio)
+                || self.operation_generation.load(Ordering::Acquire) != lease.generation
+            {
+                let _ = self.cancel(&session.id);
+                let _ = events.send(VoiceStreamEvent::Cancelled {
+                    session_id: session.id,
+                });
+                return Ok(());
+            }
             if read == 0 {
                 break;
             }
@@ -483,10 +556,15 @@ impl VoiceWorkerManager {
         if characters == 0 || characters > 2_000 {
             return Err(VoiceWorkerError::Worker("VOICE_REQUEST_INVALID".to_owned()));
         }
-        let snapshot = {
+        let (snapshot, generation) = {
             let mut lifecycle = self.lifecycle.lock().map_err(|_| {
                 VoiceWorkerError::Unavailable("lifecycle lock is poisoned".to_owned())
             })?;
+            if self.closed.load(Ordering::Acquire)
+                || lifecycle.snapshot.lifecycle_state == "stopping"
+            {
+                return Err(VoiceWorkerError::Worker("VOICE_WORKER_STOPPED".to_owned()));
+            }
             if lifecycle.snapshot.queued_playback_count >= MAX_QUEUED_PLAYBACKS
                 || lifecycle.queued_characters.saturating_add(characters) > MAX_QUEUED_CHARACTERS
             {
@@ -496,8 +574,12 @@ impl VoiceWorkerManager {
             }
             lifecycle.snapshot.queued_playback_count += 1;
             lifecycle.queued_characters += characters;
+            lifecycle.idle_since = None;
             advance_lifecycle_sequence(&mut lifecycle.snapshot);
-            lifecycle.snapshot.clone()
+            (
+                lifecycle.snapshot.clone(),
+                self.operation_generation.load(Ordering::Acquire),
+            )
         };
         self.emit_lifecycle(&snapshot);
         Ok(VoicePlaybackLease {
@@ -505,7 +587,7 @@ impl VoiceWorkerManager {
             characters,
             active: false,
             released: false,
-            generation: self.operation_generation.load(Ordering::Acquire),
+            generation,
         })
     }
 
@@ -545,10 +627,25 @@ impl VoiceWorkerManager {
     }
 
     fn connection(&self) -> Result<WorkerConnection, VoiceWorkerError> {
+        self.connection_for_generation(self.operation_generation.load(Ordering::Acquire))
+    }
+
+    fn connection_for_generation(
+        &self,
+        generation: u64,
+    ) -> Result<WorkerConnection, VoiceWorkerError> {
         let mut guard = self
             .process
             .lock()
             .map_err(|_| VoiceWorkerError::Unavailable("worker lock is poisoned".to_owned()))?;
+        if self.closed.load(Ordering::Acquire)
+            || self.operation_generation.load(Ordering::Acquire) != generation
+            || self.lifecycle_snapshot().lifecycle_state == "stopping"
+        {
+            return Err(VoiceWorkerError::Worker(
+                "VOICE_PLAYBACK_CANCELLED".to_owned(),
+            ));
+        }
         if let Some(process) = guard.as_mut() {
             if process.child.try_wait()?.is_none() {
                 return Ok(WorkerConnection {
@@ -591,6 +688,15 @@ impl VoiceWorkerManager {
         let snapshot = self.lifecycle_snapshot();
         if let Some(object) = health.as_object_mut() {
             object.insert("sequence".to_owned(), json!(snapshot.sequence));
+            object.insert(
+                "model_reservation".to_owned(),
+                json!(self.audio_focus.model_resources.snapshot()),
+            );
+            object.insert("idle_unload_seconds".to_owned(), json!(300));
+            object.insert(
+                "idle_unloads".to_owned(),
+                json!(self.idle_unloads.load(Ordering::Relaxed)),
+            );
             object.insert(
                 "lifecycle_state".to_owned(),
                 json!(snapshot.lifecycle_state),
@@ -640,16 +746,28 @@ impl VoiceWorkerManager {
         lifecycle_state: &str,
         error_code: Option<&str>,
     ) {
-        if self.operation_generation.load(Ordering::Acquire) == generation {
-            self.transition(lifecycle_state, error_code);
-        }
+        self.transition_generation(Some(generation), lifecycle_state, error_code);
     }
 
     fn transition(&self, lifecycle_state: &str, error_code: Option<&str>) {
+        self.transition_generation(None, lifecycle_state, error_code);
+    }
+
+    fn transition_generation(
+        &self,
+        generation: Option<u64>,
+        lifecycle_state: &str,
+        error_code: Option<&str>,
+    ) {
         let snapshot = {
             let Ok(mut lifecycle) = self.lifecycle.lock() else {
                 return;
             };
+            if generation
+                .is_some_and(|value| self.operation_generation.load(Ordering::Acquire) != value)
+            {
+                return;
+            }
             if lifecycle.snapshot.lifecycle_state == lifecycle_state
                 && lifecycle.snapshot.error_code.as_deref() == error_code
             {
@@ -673,6 +791,10 @@ impl VoiceWorkerManager {
             let Ok(mut lifecycle) = self.lifecycle.lock() else {
                 return;
             };
+            if self.operation_generation.load(Ordering::Acquire) != generation {
+                return;
+            }
+            lifecycle.idle_since = None;
             lifecycle.snapshot.queued_playback_count =
                 lifecycle.snapshot.queued_playback_count.saturating_sub(1);
             lifecycle.queued_characters = lifecycle.queued_characters.saturating_sub(characters);
@@ -692,6 +814,9 @@ impl VoiceWorkerManager {
             let Ok(mut lifecycle) = self.lifecycle.lock() else {
                 return;
             };
+            if self.operation_generation.load(Ordering::Acquire) != generation {
+                return;
+            }
             if active {
                 lifecycle.snapshot.active_consumer_count =
                     lifecycle.snapshot.active_consumer_count.saturating_sub(1);
@@ -708,6 +833,11 @@ impl VoiceWorkerManager {
             {
                 lifecycle.snapshot.lifecycle_state = "ready".to_owned();
             }
+            if lifecycle.snapshot.active_consumer_count == 0
+                && lifecycle.snapshot.queued_playback_count == 0
+            {
+                lifecycle.idle_since = Some(Instant::now());
+            }
             advance_lifecycle_sequence(&mut lifecycle.snapshot);
             lifecycle.snapshot.clone()
         };
@@ -722,6 +852,7 @@ impl VoiceWorkerManager {
             lifecycle.snapshot.active_consumer_count = 0;
             lifecycle.snapshot.queued_playback_count = 0;
             lifecycle.queued_characters = 0;
+            lifecycle.idle_since = None;
             advance_lifecycle_sequence(&mut lifecycle.snapshot);
             lifecycle.snapshot.clone()
         };
@@ -732,6 +863,74 @@ impl VoiceWorkerManager {
         if let Some(app) = &self.app {
             let _ = app.emit(VOICE_WORKER_LIFECYCLE_EVENT, snapshot);
         }
+    }
+
+    /// Called by one host maintenance loop. Never starts or warms a worker.
+    pub fn release_if_idle(&self) -> Result<bool, VoiceWorkerError> {
+        let Ok(_prepare) = self.prepare_lock.try_lock() else {
+            return Ok(false);
+        };
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| VoiceWorkerError::Unavailable("lifecycle lock is poisoned".to_owned()))?;
+        if lifecycle.snapshot.active_consumer_count != 0
+            || lifecycle.snapshot.queued_playback_count != 0
+            || !matches!(
+                lifecycle.snapshot.lifecycle_state.as_str(),
+                "ready" | "failed" | "stopped"
+            )
+        {
+            lifecycle.idle_since = None;
+            return Ok(false);
+        }
+        let since = lifecycle.idle_since.get_or_insert_with(Instant::now);
+        if since.elapsed() < Duration::from_secs(300) {
+            return Ok(false);
+        }
+        // Use try_lock: connection failure reports can take the locks in reverse order.
+        let Ok(mut process) = self.process.try_lock() else {
+            return Ok(false);
+        };
+        if process.is_none() {
+            lifecycle.idle_since = None;
+            return Ok(false);
+        }
+        if let Some(mut worker) = process.take() {
+            self.operation_generation.fetch_add(1, Ordering::AcqRel);
+            if let Err(error) = worker.child.kill() {
+                if worker.child.try_wait()?.is_none() {
+                    *process = Some(worker);
+                    return Err(error.into());
+                }
+            }
+            worker.child.wait()?;
+            self.idle_unloads.fetch_add(1, Ordering::Relaxed);
+        }
+        lifecycle.idle_since = None;
+        lifecycle.snapshot.lifecycle_state = "stopped".to_owned();
+        lifecycle.snapshot.started_at_unix_ms = None;
+        lifecycle.snapshot.error_code = None;
+        advance_lifecycle_sequence(&mut lifecycle.snapshot);
+        let snapshot = lifecycle.snapshot.clone();
+        drop(process);
+        drop(lifecycle);
+        self.emit_lifecycle(&snapshot);
+        Ok(true)
+    }
+
+    pub fn diagnostics(&self) -> Value {
+        let snapshot = self.lifecycle_snapshot();
+        json!({
+            "state": snapshot.lifecycle_state,
+            "generation": self.operation_generation.load(Ordering::Acquire),
+            "active_consumers": snapshot.active_consumer_count,
+            "queued_requests": snapshot.queued_playback_count,
+            "idle_unload_seconds": 300,
+            "idle_unloads": self.idle_unloads.load(Ordering::Relaxed),
+            "realtime_audio": self.audio_focus.snapshot(),
+            "model_reservation": self.audio_focus.model_resources.snapshot(),
+        })
     }
 }
 
@@ -925,39 +1124,50 @@ fn spawn_worker(launch: &VoiceWorkerLaunch) -> Result<WorkerProcess, VoiceWorker
         command.creation_flags(0x0800_0000);
     }
     let mut child = command.spawn()?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| VoiceWorkerError::Protocol("worker stdout is unavailable".to_owned()))?;
-    let (handshake_sender, handshake_receiver) = mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        let result = reader.read_line(&mut line).map(|_| line);
-        let _ = handshake_sender.send(result);
-    });
-    let line = match handshake_receiver.recv_timeout(Duration::from_secs(30)) {
-        Ok(result) => result?,
-        Err(_) => {
+    let handshake = read_worker_handshake(&mut child);
+    let handshake = match handshake {
+        Ok(handshake) => handshake,
+        Err(error) => {
+            // JSON/IO/protocol failures need the same cleanup as timeouts.
             let _ = child.kill();
             let _ = child.wait();
-            return Err(VoiceWorkerError::Unavailable(
-                "worker handshake timed out".to_owned(),
-            ));
+            return Err(error);
         }
     };
-    let handshake: WorkerHandshake = serde_json::from_str(line.trim())?;
-    if handshake.protocol != HANDSHAKE_PROTOCOL || handshake.port == 0 {
-        let _ = child.kill();
-        return Err(VoiceWorkerError::Protocol(
-            "worker handshake is invalid".to_owned(),
-        ));
-    }
     Ok(WorkerProcess {
         child,
         address: SocketAddr::from(([127, 0, 0, 1], handshake.port)),
         bootstrap_token,
     })
+}
+
+fn read_worker_handshake(child: &mut Child) -> Result<WorkerHandshake, VoiceWorkerError> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| VoiceWorkerError::Protocol("worker stdout is unavailable".to_owned()))?;
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout.take(8_193));
+        let mut line = String::new();
+        let result = reader.read_line(&mut line).map(|_| line);
+        let _ = sender.send(result);
+    });
+    let line = receiver
+        .recv_timeout(Duration::from_secs(30))
+        .map_err(|_| VoiceWorkerError::Unavailable("worker handshake timed out".to_owned()))??;
+    if line.len() > 8_192 {
+        return Err(VoiceWorkerError::Protocol(
+            "worker handshake is too large".to_owned(),
+        ));
+    }
+    let handshake: WorkerHandshake = serde_json::from_str(line.trim())?;
+    if handshake.protocol != HANDSHAKE_PROTOCOL || handshake.port == 0 {
+        return Err(VoiceWorkerError::Protocol(
+            "worker handshake is invalid".to_owned(),
+        ));
+    }
+    Ok(handshake)
 }
 
 fn validate_launch(launch: &VoiceWorkerLaunch) -> Result<(), VoiceWorkerError> {
@@ -1189,9 +1399,14 @@ pub fn bundled_voice_launch(
 }
 
 #[cfg(test)]
+#[path = "voice_process_tests.rs"]
+mod process_tests;
+
+#[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
 
     use super::{
         bundled_voice_launch, fill_secure_random, worker_error_message, worker_response_error,
@@ -1320,6 +1535,62 @@ mod tests {
 
         assert!(manager.process.lock().expect("worker lock").is_none());
         assert!(manager.take_cancellation("session-before-start"));
+    }
+
+    #[test]
+    fn old_playback_release_does_not_decrement_a_new_generation() {
+        let manager = VoiceWorkerManager::new(test_launch("voice-count-fence"));
+        let mut old = manager.queue_playback(12).unwrap();
+        old.activate();
+        manager.stop().unwrap();
+        let new = manager.queue_playback(7).unwrap();
+        drop(old);
+        assert_eq!(manager.lifecycle_snapshot().queued_playback_count, 1);
+        assert_eq!(manager.lifecycle_snapshot().active_consumer_count, 0);
+        assert_eq!(manager.lifecycle.lock().unwrap().queued_characters, 7);
+        drop(new);
+        assert_eq!(manager.lifecycle_snapshot().queued_playback_count, 0);
+    }
+
+    #[test]
+    fn idle_maintenance_does_not_start_cold_workers_or_interrupt_consumers() {
+        let manager = VoiceWorkerManager::new(test_launch("voice-idle"));
+        assert!(!manager.release_if_idle().unwrap());
+        assert!(manager.process.lock().unwrap().is_none());
+        manager.transition("ready", None);
+        manager.lifecycle.lock().unwrap().idle_since =
+            Some(Instant::now() - Duration::from_secs(301));
+        let mut lease = manager.queue_playback(10).unwrap();
+        assert!(manager.lifecycle.lock().unwrap().idle_since.is_none());
+        assert!(!manager.release_if_idle().unwrap());
+        lease.activate();
+        assert!(!manager.release_if_idle().unwrap());
+        let realtime = manager.audio_focus.reserve_realtime().unwrap();
+        drop(lease);
+        manager.lifecycle.lock().unwrap().idle_since =
+            Some(Instant::now() - Duration::from_secs(301));
+        assert!(!manager.release_if_idle().unwrap());
+        drop(realtime);
+        assert!(manager.process.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn stale_prepare_cannot_spawn_after_stop() {
+        let manager = VoiceWorkerManager::new(test_launch("voice-stale-prepare"));
+        let old = manager.operation_generation.load(Ordering::Acquire);
+        manager.stop().unwrap();
+        assert!(manager.connection_for_generation(old).is_err());
+        assert!(manager.process.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn explicit_host_shutdown_rejects_late_requests_without_starting_a_process() {
+        let manager = VoiceWorkerManager::new(test_launch("voice-shutdown"));
+        manager.shutdown();
+        manager.shutdown();
+        assert!(manager.queue_playback(1).is_err());
+        assert!(manager.connection().is_err());
+        assert!(manager.process.lock().unwrap().is_none());
     }
 
     fn test_launch(label: &str) -> VoiceWorkerLaunch {

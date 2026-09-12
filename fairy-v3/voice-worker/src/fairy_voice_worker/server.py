@@ -7,6 +7,7 @@ import os
 import threading
 import time
 import warnings
+from contextlib import suppress
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -86,8 +87,7 @@ class VoiceWorkerState:
                 raise VoiceQueueError("VOICE_REQUEST_DUPLICATE")
             if (
                 self._queued_count() >= MAX_QUEUED_PLAYBACKS
-                or sum(self._queued_characters.values()) + characters
-                > MAX_QUEUED_CHARACTERS
+                or sum(self._queued_characters.values()) + characters > MAX_QUEUED_CHARACTERS
             ):
                 raise VoiceQueueError("VOICE_PLAYBACK_QUEUE_FULL")
             cancellation = threading.Event()
@@ -96,11 +96,7 @@ class VoiceWorkerState:
                 cancellation.set()
             self._cancellations[session_id] = cancellation
             self._queued_characters[session_id] = characters
-            queue = (
-                self._manual_queue
-                if priority == "manual"
-                else self._automatic_queue
-            )
+            queue = self._manual_queue if priority == "manual" else self._automatic_queue
             queue.append(session_id)
             self._queue_condition.notify_all()
             return cancellation
@@ -119,10 +115,7 @@ class VoiceWorkerState:
                     self._remove_queued(session_id)
                     self._queue_condition.notify_all()
                     return False
-                if (
-                    self._active_session is None
-                    and self._next_queued_session() == session_id
-                ):
+                if self._active_session is None and self._next_queued_session() == session_id:
                     if self._manual_queue and self._manual_queue[0] == session_id:
                         self._manual_queue.pop(0)
                         self._manual_streak += 1
@@ -163,19 +156,15 @@ class VoiceWorkerState:
 
     def _remove_queued(self, session_id: str) -> None:
         for queue in (self._manual_queue, self._automatic_queue):
-            try:
+            with suppress(ValueError):
                 queue.remove(session_id)
-            except ValueError:
-                pass
         self._queued_characters.pop(session_id, None)
 
     def _queued_count(self) -> int:
         return len(self._manual_queue) + len(self._automatic_queue)
 
     def _next_queued_session(self) -> str | None:
-        if self._manual_queue and (
-            self._manual_streak < 3 or not self._automatic_queue
-        ):
+        if self._manual_queue and (self._manual_streak < 3 or not self._automatic_queue):
             return self._manual_queue[0]
         if self._automatic_queue:
             return self._automatic_queue[0]
@@ -299,9 +288,7 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
             )
         except (KeyError, ValueError, VoiceQueueError) as error:
             error_code = (
-                error.error_code
-                if isinstance(error, VoiceQueueError)
-                else "VOICE_REQUEST_INVALID"
+                error.error_code if isinstance(error, VoiceQueueError) else "VOICE_REQUEST_INVALID"
             )
             status = (
                 HTTPStatus.TOO_MANY_REQUESTS
@@ -444,6 +431,7 @@ def main() -> None:
         pass
     finally:
         server.server_close()
+
 
 if __name__ == "__main__":
     main()

@@ -92,7 +92,10 @@ impl CoreAssistanceClient for SharedCoreAssistanceClient {
             .core
             .lock()
             .map_err(|_| CoreAssistanceError::Unavailable)?;
-        let bridge = guard.as_ref().ok_or(CoreAssistanceError::Unavailable)?.clone();
+        let bridge = guard
+            .as_ref()
+            .ok_or(CoreAssistanceError::Unavailable)?
+            .clone();
         drop(guard);
         let response = bridge
             .call(json!({

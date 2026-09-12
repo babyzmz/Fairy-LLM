@@ -14,14 +14,19 @@ fn old_preferences_default_to_liquid_without_resetting_any_existing_value() {
     };
     let mut old = serde_json::to_value(&before).unwrap();
     old.as_object_mut().unwrap().remove("pet_form");
-    old.as_object_mut().unwrap().remove("chat_fairy_eye_enabled");
+    old.as_object_mut()
+        .unwrap()
+        .remove("chat_fairy_eye_enabled");
     let loaded: DesktopPreferences = serde_json::from_value(old.clone()).unwrap();
     assert_eq!(loaded.pet_form, PetForm::LiquidGlass);
     assert!(loaded.chat_fairy_eye_enabled);
     assert_eq!(loaded.schema_version, 11);
     let mut roundtrip = serde_json::to_value(loaded).unwrap();
     roundtrip.as_object_mut().unwrap().remove("pet_form");
-    roundtrip.as_object_mut().unwrap().remove("chat_fairy_eye_enabled");
+    roundtrip
+        .as_object_mut()
+        .unwrap()
+        .remove("chat_fairy_eye_enabled");
     assert_eq!(old, roundtrip);
 }
 
@@ -33,7 +38,8 @@ fn form_and_chat_visibility_roundtrip_independently() {
         pet_optics_mode: PetOpticsMode::Enhanced,
         ..DesktopPreferences::default()
     };
-    let loaded: DesktopPreferences = serde_json::from_slice(&serde_json::to_vec(&preferences).unwrap()).unwrap();
+    let loaded: DesktopPreferences =
+        serde_json::from_slice(&serde_json::to_vec(&preferences).unwrap()).unwrap();
     assert_eq!(loaded.pet_form, PetForm::HddEye);
     assert!(!loaded.chat_fairy_eye_enabled);
     assert_eq!(loaded.pet_optics_mode, PetOpticsMode::Enhanced);
