@@ -2094,7 +2094,8 @@ async fn provider_openrouter_configure(
 fn model_catalog_refresh_request() -> Value {
     json!({
         "jsonrpc": "2.0",
-        "id": "provider-openrouter-validation",
+        // CoreBridge assigns a unique generation/sequence ID on the wire.
+        "id": 1,
         "method": "models.catalog.refresh",
         "params": {}
     })
@@ -2140,6 +2141,11 @@ async fn restore_openrouter_candidate(
 mod provider_validation_tests {
     use super::catalog_refresh_is_configured;
     use serde_json::json;
+
+    #[test]
+    fn catalog_validation_uses_the_bridge_integer_request_contract() {
+        assert!(super::model_catalog_refresh_request()["id"].as_i64().is_some());
+    }
 
     #[test]
     fn accepts_only_a_fresh_configured_catalog() {
