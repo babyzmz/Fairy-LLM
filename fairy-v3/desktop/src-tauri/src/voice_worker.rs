@@ -1414,6 +1414,32 @@ mod tests {
     };
 
     #[test]
+    #[ignore = "requires the existing local GPU Python runtime and an explicit probe directory"]
+    fn live_development_voice_health() {
+        let directory = std::env::var_os("FAIRY_VOICE_PROBE_DIR")
+            .map(PathBuf::from)
+            .expect("set FAIRY_VOICE_PROBE_DIR to an isolated probe directory");
+        assert!(directory.is_absolute());
+        let manager = VoiceWorkerManager::new(super::development_voice_launch(&directory));
+        let prepare = std::env::var("FAIRY_VOICE_PROBE_PREPARE").as_deref() == Ok("1");
+        let result = if prepare {
+            manager.prepare()
+        } else {
+            manager.health()
+        };
+        manager.shutdown();
+        match result {
+            Ok(health) => {
+                assert!(health.get("status").is_some());
+                if prepare {
+                    assert_eq!(health["status"], "ready");
+                }
+            }
+            Err(error) => panic!("Voice launch/health failed: {error}"),
+        }
+    }
+
+    #[test]
     fn secure_random_fills_distinct_nonzero_tokens() {
         let mut first = [0_u8; 32];
         let mut second = [0_u8; 32];

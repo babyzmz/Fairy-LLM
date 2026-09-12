@@ -127,6 +127,21 @@ describe("SettingsApp", () => {
     expect(await screen.findByText("Ready at 24 kHz")).toBeVisible();
   });
 
+  it("does not diagnose missing CUDA when the voice host reports an I/O failure", async () => {
+    const invoke = settingsInvoke({ voiceHealth: {
+      ...unavailableVoiceHealth(),
+      error_code: "VOICE_WORKER_IO_ERROR",
+    } });
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Voice/ }));
+
+    expect(await screen.findByText("VOICE_WORKER_IO_ERROR")).toBeVisible();
+    expect(screen.queryByText("A CUDA GPU runtime is required")).not.toBeInTheDocument();
+    expect(screen.getByText("Voice worker communication failed. Retry to reconnect; GPU readiness has not been confirmed."))
+      .toBeVisible();
+  });
+
   it("commits normalized Realtime exclusions only after composition finishes", async () => {
     const invoke = settingsInvoke();
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);

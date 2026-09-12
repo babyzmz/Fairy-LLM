@@ -693,9 +693,7 @@ function SettingsCategory(props: SettingsCategoryProps) {
             : "error"}
       />
       <div className="settings-section-command">
-        <span>{data.voiceHealth.lifecycle_state === "stopped" && data.voiceHealth.status === "idle"
-          ? "Stopped. Start it now, or Fairy will wait for Ready on the first reply."
-          : data.voiceHealth.device_name ?? "A CUDA GPU runtime is required"}</span>
+        <span>{voiceHealthDetail(data.voiceHealth)}</span>
         {voiceOperation === "preparing" ? (
           <button className="secondary-command" type="button" onClick={() => {
             setVoiceOperation("stopping");
@@ -1126,6 +1124,18 @@ function voiceHealthLabel(health: VoiceWorkerHealth): string {
     return "ONNX Runtime CUDA provider unavailable";
   }
   return health.error_code ?? "Voice unavailable";
+}
+
+function voiceHealthDetail(health: VoiceWorkerHealth): string {
+  if (health.lifecycle_state === "stopped" && health.status === "idle") {
+    return "Stopped. Start it now, or Fairy will wait for Ready on the first reply.";
+  }
+  if (health.error_code === "VOICE_WORKER_IO_ERROR") {
+    return "Voice worker communication failed. Retry to reconnect; GPU readiness has not been confirmed.";
+  }
+  if (health.device_name) return health.device_name;
+  if (health.status === "cuda_unavailable") return "A CUDA GPU runtime is required";
+  return "Device details are unavailable until the voice worker completes its runtime check.";
 }
 
 function rendererHealthLabel(health: PresenceRendererHealth): string {
